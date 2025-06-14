@@ -291,9 +291,11 @@ client.on("message", async (msg) => {
     for (const id in data) {
       const u = data[id];
       teks += `👤 ${u.masuk?.nama || kontak[id]}\n`;
-      teks += `🕘 Masuk: ${u.masuk?.waktu || "❌"} (${
-        u.masuk?.status || "-"
-      })\n`;
+      teks += `🕘 Masuk: ${u.masuk?.waktu || "❌"} (${u.masuk?.status || "-"})\n`;
+if (u.masuk?.status === 'Terlambat') {
+  const menit = hitungTelat(u.masuk.waktu, jamResmi.masuk);
+  teks += `⏱ Telat: ${menit} menit\n`;
+}
       teks += `🕓 Pulang: ${u.pulang?.waktu || "❌"} (${
         u.pulang?.status || "-"
       })\n\n`;
@@ -311,9 +313,11 @@ client.on("message", async (msg) => {
     for (const id in data) {
       const u = data[id];
       teks += `👤 ${u.masuk?.nama || kontak[id]}\n`;
-      teks += `🕘 Masuk: ${u.masuk?.waktu || "❌"} (${
-        u.masuk?.status || "-"
-      })\n`;
+      teks += `🕘 ${log.masuk?.waktu || "❌"} (${log.masuk?.status || "-"})\n`;
+if (log.masuk?.status === 'Terlambat') {
+  const menit = hitungTelat(log.masuk.waktu, jamResmi.masuk);
+  teks += `⏱ Telat: ${menit} menit\n`;
+}
       teks += `🕓 Pulang: ${u.pulang?.waktu || "❌"} (${
         u.pulang?.status || "-"
       })\n\n`;
@@ -334,9 +338,11 @@ client.on("message", async (msg) => {
         for (const id in storage[tgl]) {
           const log = storage[tgl][id];
           teks += `🗓️ ${tgl} - ${kontak[id] || id}\n`;
-          teks += `🕘 ${log.masuk?.waktu || "❌"} (${
-            log.masuk?.status || "-"
-          })\n`;
+          teks += `🕘 ${log.masuk?.waktu || "❌"} (${log.masuk?.status || "-"})\n`;
+if (log.masuk?.status === 'Terlambat') {
+  const menit = hitungTelat(log.masuk.waktu, jamResmi.masuk);
+  teks += `⏱ Telat: ${menit} menit\n`;
+}
           teks += `🕓 ${log.pulang?.waktu || "❌"} (${
             log.pulang?.status || "-"
           })\n\n`;
