@@ -43,6 +43,13 @@ function saveRequests(list) {
   saveJSON(REQUESTS_PATH, list);
 }
 
+function hitungTelat(waktuMasuk, jamResmi = '09:00:00') {
+  const masuk = moment(waktuMasuk, 'HH:mm:ss');
+  const resmi = moment(jamResmi, 'HH:mm:ss');
+  const selisih = masuk.diff(resmi, 'minutes');
+  return selisih > 0 ? selisih : 0;
+}
+
 const client = new Client({
     authStrategy: new LocalAuth(), // Simpan sesi login secara lokal
     puppeteer: {
