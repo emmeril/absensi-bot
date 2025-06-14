@@ -358,14 +358,19 @@ if (body === "!export hari ini") {
   if (role !== "admin") return msg.reply("❌ Hanya admin.");
   const data = storage[waktu.tanggal];
   if (!data) return msg.reply("❌ Tidak ada data.");
-  const hasil = Object.entries(data).map(([id, u]) => ({
+  const hasil = Object.entries(data).map(([id, u]) => {
+  const telat = (u.masuk?.status === 'Terlambat') ? hitungTelat(u.masuk.waktu, jamResmi.masuk) : 0;
+  return {
     Tanggal: waktu.tanggal,
     Nama: kontak[id],
     Masuk: u.masuk?.waktu || "",
     StatusMasuk: u.masuk?.status || "",
+    Terlambat: telat > 0 ? 1 : 0,
+    MenitTelat: telat,
     Pulang: u.pulang?.waktu || "",
     StatusPulang: u.pulang?.status || "",
-  }));
+  };
+});
   const path = exportExcel(hasil, waktu.tanggal);
   const media = MessageMedia.fromFilePath(path);
   msg.reply(media, msg.from, { caption: `✅ File export *${waktu.tanggal}*` });
@@ -377,14 +382,19 @@ if (body.startsWith("!export tanggal")) {
   const tanggal = body.split(" ")[2];
   const data = storage[tanggal];
   if (!data) return msg.reply(`❌ Tidak ada data untuk ${tanggal}`);
-  const hasil = Object.entries(data).map(([id, u]) => ({
+  const hasil = Object.entries(data).map(([id, u]) => {
+  const telat = (u.masuk?.status === 'Terlambat') ? hitungTelat(u.masuk.waktu, jamResmi.masuk) : 0;
+  return {
     Tanggal: tanggal,
     Nama: kontak[id],
     Masuk: u.masuk?.waktu || "",
     StatusMasuk: u.masuk?.status || "",
+    Terlambat: telat > 0 ? 1 : 0,
+    MenitTelat: telat,
     Pulang: u.pulang?.waktu || "",
     StatusPulang: u.pulang?.status || "",
-  }));
+  };
+});
   const path = exportExcel(hasil, tanggal);
   const media = MessageMedia.fromFilePath(path);
   msg.reply(media, msg.from, { caption: `✅ File export *${tanggal}*` });
@@ -403,13 +413,17 @@ if (body.startsWith("!export bulan")) {
       for (const id in storage[tgl]) {
         const u = storage[tgl][id];
         hasil.push({
-          Tanggal: tgl,
-          Nama: kontak[id],
-          Masuk: u.masuk?.waktu || "",
-          StatusMasuk: u.masuk?.status || "",
-          Pulang: u.pulang?.waktu || "",
-          StatusPulang: u.pulang?.status || "",
-        });
+          const telat = (log.masuk?.status === 'Terlambat') ? hitungTelat(log.masuk.waktu, jamResmi.masuk) : 0;
+hasil.push({
+    Tanggal: tgl,
+    Nama: kontak[id] || id,
+    Masuk: log.masuk?.waktu || "",
+    StatusMasuk: log.masuk?.status || "",
+    Terlambat: telat > 0 ? 1 : 0,
+    MenitTelat: telat,
+    Pulang: log.pulang?.waktu || "",
+    StatusPulang: log.pulang?.status || ""
+});
       }
     }
   }
