@@ -403,34 +403,64 @@ if (body.startsWith("!export tanggal")) {
 // Export Bulan
 if (body.startsWith("!export bulan")) {
   if (role !== "admin") return msg.reply("❌ Hanya admin.");
-  const bulan = body.split(" ")[2];
+  const bulan = body.split(" ")[2]; // MM-YYYY
   const hasil = [];
+  const ringkasan = {};
+
   for (const tgl in storage) {
     if (
       tgl.slice(5, 7) === bulan.slice(0, 2) &&
       tgl.slice(0, 4) === bulan.slice(3, 7)
     ) {
       for (const id in storage[tgl]) {
-        const u = storage[tgl][id];
+        const log = storage[tgl][id];
+        const nama = kontak[id] || log.masuk?.nama || id;
+        const telat =
+          log.masuk?.status === "Terlambat"
+            ? hitungTelat(log.masuk.waktu, jamResmi.masuk)
+            : 0;
+
         hasil.push({
-          const telat = (log.masuk?.status === 'Terlambat') ? hitungTelat(log.masuk.waktu, jamResmi.masuk) : 0;
-hasil.push({
-    Tanggal: tgl,
-    Nama: kontak[id] || id,
-    Masuk: log.masuk?.waktu || "",
-    StatusMasuk: log.masuk?.status || "",
-    Terlambat: telat > 0 ? 1 : 0,
-    MenitTelat: telat,
-    Pulang: log.pulang?.waktu || "",
-    StatusPulang: log.pulang?.status || ""
-});
+          Tanggal: tgl,
+          Nama: nama,
+          Masuk: log.masuk?.waktu || "",
+          StatusMasuk: log.masuk?.status || "",
+          Terlambat: telat > 0 ? 1 : 0,
+          MenitTelat: telat,
+          Pulang: log.pulang?.waktu || "",
+          StatusPulang: log.pulang?.status || "",
+        });
+
+        ringkasan[nama] = ringkasan[nama] || {
+          Nama: nama,
+          Hadir: 0,
+          Telat: 0,
+          TotalMenit: 0,
+        };
+        ringkasan[nama].Hadir++;
+        if (telat > 0) {
+          ringkasan[nama].Telat++;
+          ringkasan[nama].TotalMenit += telat;
+        }
       }
     }
   }
-  if (!hasil.length) return msg.reply("❌ Tidak ada data.");
-  const path = exportExcel(hasil, bulan);
-  const media = MessageMedia.fromFilePath(path);
-  msg.reply(media, msg.from, { caption: `✅ File export *${bulan}*` });
+
+  if (!hasil.length) return msg.reply("❌ Tidak ada data untuk bulan ini.");
+
+  const sheet1 = XLSX.utils.json_to_sheet(hasil);
+  const sheet2 = XLSX.utils.json_to_sheet(Object.values(ringkasan));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, sheet1, "Rekap");
+  XLSX.utils.book_append_sheet(wb, sheet2, "Ringkasan");
+
+  const filePath = `./exports/Rekap-${bulan}.xlsx`;
+  XLSX.writeFile(wb, filePath);
+
+  const media = MessageMedia.fromFilePath(filePath);
+  msg.reply(media, msg.from, {
+    caption: `✅ File export *${bulan}* berhasil dengan sheet Ringkasan Keterlambatan.`,
+  });
 }
 
 
