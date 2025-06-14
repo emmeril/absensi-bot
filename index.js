@@ -43,7 +43,14 @@ function saveRequests(list) {
   saveJSON(REQUESTS_PATH, list);
 }
 
-const client = new Client({ authStrategy: new LocalAuth() });
+const client = new Client({
+    authStrategy: new LocalAuth(), // Simpan sesi login secara lokal
+    puppeteer: {
+        args: ['--no-sandbox', '--disable-setuid-sandbox'], // ✅ Fix error root user
+        headless: true
+    }
+});
+
 const pendingAbsen = {};
 const pendingKontak = {};
 const pendingLokasi = {};
