@@ -4,6 +4,8 @@ const qrcode = require("qrcode-terminal");
 const moment = require("moment");
 const haversine = require("haversine-distance");
 const XLSX = require("xlsx");
+const axios = require("axios");
+
 
 const STORAGE_PATH = "./storage.json";
 const KONTAK_PATH = "./kontak.json";
@@ -12,6 +14,8 @@ const LOKASI_PATH = "./lokasi.json";
 const JAM_PATH = "./jam.json";
 const EXPORTS_DIR = "./exports";
 const REQUESTS_PATH = "./pending_requests.json";
+const PENDING_FOTO_PATH = './pending_selfie.json';
+const FACE_DB = './face_db';
 
 function loadJSON(path, fallback = {}) {
   return fs.existsSync(path) ? JSON.parse(fs.readFileSync(path)) : fallback;
@@ -50,12 +54,32 @@ function hitungTelat(waktuMasuk, jamResmi = "09:00:00") {
   return selisih > 0 ? selisih : 0;
 }
 
+function loadPendingFoto() {
+  return loadJSON(PENDING_FOTO_PATH, {});
+}
+function savePendingFoto(data) {
+  saveJSON(PENDING_FOTO_PATH, data);
+}
+
+const pendingFoto = loadPendingFoto();
+
+async function verifikasiWajah(userId, fotoBase64) {
+  try {
+    const res = await axios.post("http://localhost:5000/verify-face", {
+      id: userId.replace("@c.us", ""),
+      photo: fotoBase64,
+    });
+    return res.data?.match === true;
+  } catch (e) {
+    console.error("[FaceVerify ERROR]", e.response?.data || e.message);
+    return false;
+  }
+}
+
+
 const client = new Client({
   authStrategy: new LocalAuth(), // Simpan sesi login secara lokal
-  puppeteer: {
-    args: ["--no-sandbox", "--disable-setuid-sandbox"], // ✅ Fix error root user
-    headless: true,
-  },
+
 });
 
 const pendingAbsen = {};
@@ -113,23 +137,51 @@ client.on("message", async (msg) => {
 
   // Daftar kontak
 
-  if (body.startsWith("!daftar")) {
-    if (kontak[sender]) return msg.reply("✅ Kamu sudah terdaftar.");
+if (body.startsWith("!daftar") && msg.hasMedia && msg.type === "image") {
+  if (kontak[sender]) return msg.reply("✅ Kamu sudah terdaftar.");
 
-    const nama = msg.body.slice(8).trim();
-    if (!nama || nama.length < 3) return msg.reply("⚠️ Nama terlalu pendek.");
+  const nama = body.slice(8).trim();
+  if (!nama || nama.length < 3)
+    return msg.reply("⚠️ Format salah. Kirim *foto selfie* dengan caption: *!daftar Nama Lengkap*");
 
-    const requests = loadRequests();
-    if (requests.find((r) => r.id === sender)) {
-      return msg.reply(
-        "📨 Permintaan kamu sudah dikirim. Tunggu admin menyetujui."
-      );
-    }
+  const requests = loadRequests();
+  if (requests.find((r) => r.id === sender))
+    return msg.reply("📨 Permintaan kamu sudah dikirim. Tunggu admin menyetujui.");
 
-    requests.push({ id: sender, nama });
+  const media = await msg.downloadMedia();
+  if (!media || !media.data) return msg.reply("❌ Gagal membaca foto.");
+
+  const nomor = sender.replace("@c.us", "");
+  const filePath = `${FACE_DB}/${nomor}.jpg`;
+  fs.writeFileSync(filePath, Buffer.from(media.data, "base64"));
+
+  requests.push({ id: sender, nama });
+  saveRequests(requests);
+
+  msg.reply("✅ Foto selfie dan nama diterima. Permintaan akses dikirim ke admin.");
+}
+
+if (msg.type === "image" && pendingFoto[sender]) {
+  const media = await msg.downloadMedia();
+  if (!media || !media.data) return msg.reply("❌ Gagal membaca foto.");
+
+  const nomor = sender.replace("@c.us", "");
+  const filePath = `${FACE_DB}/${nomor}.jpg`;
+  fs.writeFileSync(filePath, Buffer.from(media.data, "base64"));
+
+  // Simpan ke pending_requests
+  const requests = loadRequests();
+  if (!requests.find((r) => r.id === sender)) {
+    requests.push({ id: sender, nama: pendingFoto[sender].nama });
     saveRequests(requests);
-    msg.reply("📩 Permintaan akses dikirim ke admin. Tunggu persetujuan.");
   }
+
+  delete pendingFoto[sender];
+  savePendingFoto(pendingFoto);
+
+  msg.reply("✅ Foto selfie diterima. Permintaan kamu dikirim ke admin.");
+}
+
 
   if (body === "!lihat daftar") {
     if (role !== "admin") return msg.reply("❌ Hanya admin.");
@@ -209,18 +261,26 @@ client.on("message", async (msg) => {
       `📸 Kirim foto dan lokasi untuk absen ${pendingAbsen[sender].tipe}.`
     );
   }
-  if (msg.hasMedia && pendingAbsen[sender]) {
-    const media = await msg.downloadMedia();
-    pendingAbsen[sender].foto = media;
+ if (msg.hasMedia && pendingAbsen[sender]) {
+  const media = await msg.downloadMedia();
+  if (!media || media.mimetype !== "image/jpeg")
+    return msg.reply("❌ Hanya foto dengan format JPEG yang didukung.");
 
-    if (!pendingAbsen[sender].lokasi) {
-      return msg.reply(
-        "✅ Foto diterima.\n📍 Sekarang kirim lokasi untuk absen."
-      );
-    } else {
-      return msg.reply("✅ Foto diterima dan lokasi sudah ada.");
-    }
+  const cocok = await verifikasiWajah(sender, media.data);
+  if (!cocok) {
+    delete pendingAbsen[sender];
+    return msg.reply("❌ Wajah tidak dikenali. Gunakan selfie asli kamu.");
   }
+
+  pendingAbsen[sender].foto = media;
+
+  if (!pendingAbsen[sender].lokasi) {
+    return msg.reply("✅ Foto dikenali.\n📍 Sekarang kirim lokasi untuk absen.");
+  } else {
+    return msg.reply("✅ Foto dan lokasi sudah lengkap. Kamu bisa kirim perintah absen.");
+  }
+}
+
 
   if (msg.type === "location" && pendingAbsen[sender]) {
     const lokasi = {
