@@ -65,7 +65,7 @@ const pendingFoto = loadPendingFoto();
 
 async function verifikasiWajah(userId, fotoBase64) {
   try {
-    const res = await axios.post("http://localhost:5000/verify-face", {
+    const res = await axios.post("http://38.47.176.155:5000/verify-face", {
       id: userId.replace("@c.us", ""),
       photo: fotoBase64,
     });
@@ -78,6 +78,10 @@ async function verifikasiWajah(userId, fotoBase64) {
 
 const client = new Client({
   authStrategy: new LocalAuth(), // Simpan sesi login secara lokal
+  puppeteer: {
+    args: ["--no-sandbox", "--disable-setuid-sandbox"], // ✅ Fix error root user
+    headless: true,
+  },
 });
 
 const pendingAbsen = {};
@@ -154,7 +158,7 @@ client.on("message", async (msg) => {
 
     const nomor = sender.replace("@c.us", "");
     const filePath = `${FACE_DB}/${nomor}.jpg`;
-    const recPath =  `${FACE_REC}/${nomor}.jpg`;
+    const recPath = `${FACE_REC}/${nomor}.jpg`;
     fs.writeFileSync(filePath, Buffer.from(media.data, "base64"));
 
     if (!fs.existsSync(recPath)) {
