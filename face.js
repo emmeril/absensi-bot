@@ -14,7 +14,7 @@ app.use(express.json({ limit: '10mb' }));
 faceapi.env.monkeyPatch({ Canvas, Image, ImageData });
 
 const MODEL_PATH = path.join(__dirname, 'models');
-const DB_PATH = path.join(__dirname, 'face_db');
+const DB_PATH = path.join(__dirname, 'face_rec');
 
 // Load model once on startup
 Promise.all([

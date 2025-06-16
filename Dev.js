@@ -17,6 +17,7 @@ const REQUESTS_PATH = "./pending_requests.json";
 const PENDING_FOTO_PATH = './pending_selfie.json';
 const FACE_DB = './face_db';
 
+
 function loadJSON(path, fallback = {}) {
   return fs.existsSync(path) ? JSON.parse(fs.readFileSync(path)) : fallback;
 }
@@ -152,8 +153,18 @@ if (body.startsWith("!daftar") && msg.hasMedia && msg.type === "image") {
   if (!media || !media.data) return msg.reply("❌ Gagal membaca foto.");
 
   const nomor = sender.replace("@c.us", "");
-  const filePath = `${FACE_DB}/${nomor}.jpg`;
-  fs.writeFileSync(filePath, Buffer.from(media.data, "base64"));
+  const fileName = `${nomor}.jpg`;
+
+  const facePath = `${FACE_DB}/${fileName}`;
+  const recPath = `./foto_rec/${fileName}`;
+
+  // ✅ Simpan atau replace ke face_db (selalu)
+  fs.writeFileSync(facePath, Buffer.from(media.data, "base64"));
+
+  // ✅ Simpan ke foto_rec hanya jika belum ada
+  if (!fs.existsSync(recPath)) {
+    fs.writeFileSync(recPath, Buffer.from(media.data, "base64"));
+  }
 
   requests.push({ id: sender, nama });
   saveRequests(requests);
@@ -161,15 +172,24 @@ if (body.startsWith("!daftar") && msg.hasMedia && msg.type === "image") {
   msg.reply("✅ Foto selfie dan nama diterima. Permintaan akses dikirim ke admin.");
 }
 
+
 if (msg.type === "image" && pendingFoto[sender]) {
   const media = await msg.downloadMedia();
   if (!media || !media.data) return msg.reply("❌ Gagal membaca foto.");
 
   const nomor = sender.replace("@c.us", "");
-  const filePath = `${FACE_DB}/${nomor}.jpg`;
+  const fileName = `${nomor}.jpg`;
+  const filePath = `${FACE_DB}/${fileName}`;
+  const recPath = `./foto_rec/${fileName}`;
+
+  // ✅ Simpan ke face_db (selalu overwrite)
   fs.writeFileSync(filePath, Buffer.from(media.data, "base64"));
 
-  // Simpan ke pending_requests
+  // ✅ Simpan ke foto_rec jika belum ada
+  if (!fs.existsSync(recPath)) {
+    fs.writeFileSync(recPath, Buffer.from(media.data, "base64"));
+  }
+
   const requests = loadRequests();
   if (!requests.find((r) => r.id === sender)) {
     requests.push({ id: sender, nama: pendingFoto[sender].nama });
@@ -181,6 +201,7 @@ if (msg.type === "image" && pendingFoto[sender]) {
 
   msg.reply("✅ Foto selfie diterima. Permintaan kamu dikirim ke admin.");
 }
+
 
 
   if (body === "!lihat daftar") {
