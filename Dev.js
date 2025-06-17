@@ -426,7 +426,7 @@ client.on("message", async (msg) => {
 
     const roles = loadRoles();
     for (const id in roles) {
-      if (roles[id] === "admin" && id !== sender) {
+      if (roles[id] === "admin") {
         await client.sendMessage(id, mediaMsg, {
           caption: `🕘 *${
             kontak[sender] || sender
