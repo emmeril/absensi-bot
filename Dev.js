@@ -179,6 +179,7 @@ client.on("message", async (msg) => {
     const roles = loadRoles();
     for (const id in roles) {
       if (roles[id] === "admin" && id !== sender) {
+        const nomor = id.replace("@c.us", "");
         client.sendMessage(
           id,
           `🔔 *Permintaan Akses Baru*\nNama: *${nama}*\nNomor: ${nomor}\n\nKetik: !approve ${nomor}`
