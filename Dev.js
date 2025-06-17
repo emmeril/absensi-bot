@@ -280,6 +280,11 @@ client.on("message", async (msg) => {
         ""
       )}) ditambahkan ke kontak.`
     );
+    // Kirim notifikasi ke user yang disetujui
+    await client.sendMessage(
+      approved.id,
+      `✅ Pendaftaran kamu telah disetujui.\nSelamat bergabung, *${approved.nama}*!`
+    );
   }
 
   // Set lokasi
