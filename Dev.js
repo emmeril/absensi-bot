@@ -130,9 +130,15 @@ client.on("message", async (msg) => {
     if (!no) return msg.reply("⚠️ Format: !setadmin 628xxxx");
 
     const targetId = no + "@c.us";
-    const alreadyHasAdmin = Object.values(roles).includes("admin") || Object.values(roles).includes("superadmin");
+    const alreadyHasAdmin =
+      Object.values(roles).includes("admin") ||
+      Object.values(roles).includes("superadmin");
 
-    if (alreadyHasAdmin && roles[sender] !== "admin" && roles[sender] !== "superadmin") {
+    if (
+      alreadyHasAdmin &&
+      roles[sender] !== "admin" &&
+      roles[sender] !== "superadmin"
+    ) {
       return msg.reply("❌ Hanya admin yang bisa menambahkan admin.");
     }
 
@@ -153,7 +159,10 @@ client.on("message", async (msg) => {
     }
 
     const id = `${nomor}@c.us`;
+
     if (!roles[id]) return msg.reply("❌ Nomor tersebut belum punya role.");
+    if (roles[id] === "superadmin")
+      return msg.reply("❌ Tidak bisa menghapus Super Admin.");
     if (roles[id] !== "admin")
       return msg.reply("❌ Nomor tersebut bukan admin biasa.");
 
@@ -312,7 +321,8 @@ client.on("message", async (msg) => {
 
   // Lihat daftar kontak
   if (body === "!kontak list") {
-    if (role !== "admin" || role !== "superadmin") return msg.reply("❌ Hanya admin.");
+    if (role !== "admin" || role !== "superadmin")
+      return msg.reply("❌ Hanya admin.");
     const entries = Object.entries(kontak);
     if (!entries.length) return msg.reply("📭 Kontak masih kosong.");
 
@@ -327,7 +337,8 @@ client.on("message", async (msg) => {
 
   // Hapus kontak berdasarkan nomor
   if (body.startsWith("!hapus kontak")) {
-    if (role !== "admin" || role !== "superadmin") return msg.reply("❌ Hanya admin.");
+    if (role !== "admin" || role !== "superadmin")
+      return msg.reply("❌ Hanya admin.");
 
     const nomor = body.split(" ")[2];
     if (!nomor || !/^\d{9,}$/.test(nomor)) {
@@ -346,7 +357,8 @@ client.on("message", async (msg) => {
 
   // Set lokasi
   if (body === "!setlokasi") {
-    if (role !== "admin" || role !== "superadmin") return msg.reply("❌ Hanya admin.");
+    if (role !== "admin" || role !== "superadmin")
+      return msg.reply("❌ Hanya admin.");
     pendingLokasi[sender] = true;
     return msg.reply("📍 Kirim lokasi sekarang.");
   }
@@ -361,7 +373,8 @@ client.on("message", async (msg) => {
 
   // Set jam kerja
   if (body.startsWith("!setjam")) {
-    if (role !== "admin" || role !== "superadmin") return msg.reply("❌ Hanya admin.");
+    if (role !== "admin" || role !== "superadmin")
+      return msg.reply("❌ Hanya admin.");
     const [, jenis, jam] = msg.body.split(" ");
     if (!["masuk", "pulang"].includes(jenis) || !/^\d{2}:\d{2}$/.test(jam)) {
       return msg.reply(
@@ -471,7 +484,8 @@ client.on("message", async (msg) => {
 
   // Rekap tanggal
   if (body.startsWith("!rekap tanggal")) {
-    if (role !== "admin" || role !== "superadmin") return msg.reply("❌ Hanya admin.");
+    if (role !== "admin" || role !== "superadmin")
+      return msg.reply("❌ Hanya admin.");
 
     const split = body.trim().split(" ");
     if (split.length < 3 || !/^\d{4}-\d{2}-\d{2}$/.test(split[2])) {
@@ -508,7 +522,8 @@ client.on("message", async (msg) => {
 
   // Rekap bulan
   if (body.startsWith("!rekap bulan")) {
-    if (role !== "admin" || role !== "superadmin") return msg.reply("❌ Hanya admin.");
+    if (role !== "admin" || role !== "superadmin")
+      return msg.reply("❌ Hanya admin.");
 
     const split = body.trim().split(" ");
     if (split.length < 3 || !/^\d{2}-\d{4}$/.test(split[2])) {
@@ -554,7 +569,8 @@ client.on("message", async (msg) => {
 
   // Export Hari Ini
   if (body === "!export hari ini") {
-    if (role !== "admin" || role !== "superadmin") return msg.reply("❌ Hanya admin.");
+    if (role !== "admin" || role !== "superadmin")
+      return msg.reply("❌ Hanya admin.");
     const data = storage[waktu.tanggal];
     if (!data) return msg.reply("❌ Tidak ada data.");
     const hasil = Object.entries(data).map(([id, u]) => {
@@ -582,7 +598,8 @@ client.on("message", async (msg) => {
 
   // Export Tanggal
   if (body.startsWith("!export tanggal")) {
-    if (role !== "admin" || role !== "superadmin") return msg.reply("❌ Hanya admin.");
+    if (role !== "admin" || role !== "superadmin")
+      return msg.reply("❌ Hanya admin.");
 
     const split = body.trim().split(" ");
     if (split.length < 3 || !/^\d{4}-\d{2}-\d{2}$/.test(split[2])) {
@@ -619,7 +636,8 @@ client.on("message", async (msg) => {
 
   // Export Bulan
   if (body.startsWith("!export bulan")) {
-    if (role !== "admin" || role !== "superadmin") return msg.reply("❌ Hanya admin.");
+    if (role !== "admin" || role !== "superadmin")
+      return msg.reply("❌ Hanya admin.");
 
     const split = body.trim().split(" ");
     if (split.length < 3 || !/^\d{2}-\d{4}$/.test(split[2])) {
@@ -691,7 +709,8 @@ client.on("message", async (msg) => {
 
   // Belum absen
   if (body === "!belum absen") {
-    if (role !== "admin" || role !== "superadmin") return msg.reply("❌ Hanya admin.");
+    if (role !== "admin" || role !== "superadmin")
+      return msg.reply("❌ Hanya admin.");
     const data = storage[waktu.tanggal] || {};
     const belumMasuk = [],
       belumPulang = [];
