@@ -176,11 +176,23 @@ client.on("message", async (msg) => {
       "✅ Foto selfie dan nama diterima. Permintaan akses dikirim ke admin."
     );
     // Kirim notifikasi ke semua admin
+    // const roles = loadRoles();
+    // for (const id in roles) {
+    //   if (roles[id] === "admin" && id !== sender) {
+    //     const nomor = id.replace("@c.us", "");
+    //     console.log(`[INFO] Mengirim notifikasi ke admin: ${id}`);
+    //     await client.sendMessage(
+    //       id,
+    //       `🔔 *Permintaan Akses Baru*\nNama: *${nama}*\nNomor: ${nomor}\n\nKetik: !approve ${nomor}`
+    //     );
+    //   }
+    // }
+
     const roles = loadRoles();
     for (const id in roles) {
-      if (roles[id] === "admin" && id !== sender) {
+      if (roles[id] === "admin") {
         const nomor = id.replace("@c.us", "");
-        console.log(`[INFO] Mengirim notifikasi ke admin: ${id}`);
+        // console.log(`[INFO] Mengirim notifikasi ke admin: ${id}`);
         await client.sendMessage(
           id,
           `🔔 *Permintaan Akses Baru*\nNama: *${nama}*\nNomor: ${nomor}\n\nKetik: !approve ${nomor}`
