@@ -77,7 +77,7 @@ async function verifikasiWajah(userId, fotoBase64) {
 }
 
 function loadRoles() {
-  return loadJSON(ROLES_PATH, {});
+  return loadJSON(ROLE_PATH, {});
 }
 
 const client = new Client({
