@@ -130,9 +130,9 @@ client.on("message", async (msg) => {
     if (!no) return msg.reply("⚠️ Format: !setadmin 628xxxx");
 
     const targetId = no + "@c.us";
-    const alreadyHasAdmin = Object.values(roles).includes("admin");
+    const alreadyHasAdmin = Object.values(roles).includes("admin" || "superadmin");
 
-    if (alreadyHasAdmin && roles[sender] !== "admin") {
+    if (alreadyHasAdmin && roles[sender] !== "admin" || "superadmin") {
       return msg.reply("❌ Hanya admin yang bisa menambahkan admin.");
     }
 
