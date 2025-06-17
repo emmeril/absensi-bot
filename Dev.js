@@ -112,7 +112,7 @@ client.on("message", async (msg) => {
   const waktu = getWaktu();
   const role = roles[sender] || "user";
 
-  if (!kontak[sender] && role !== "admin" || "superadmin") {
+  if (!kontak[sender] && role !== "admin" && role !== "superadmin") {
     const allowed = ["!setadmin", "!daftar"];
     if (!allowed.some((cmd) => body.startsWith(cmd))) {
       return msg.reply(
