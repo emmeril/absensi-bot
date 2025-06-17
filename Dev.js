@@ -287,6 +287,40 @@ client.on("message", async (msg) => {
     );
   }
 
+  // Lihat daftar kontak
+  if (body === "!kontak list") {
+    if (role !== "admin") return msg.reply("❌ Hanya admin.");
+    const entries = Object.entries(kontak);
+    if (!entries.length) return msg.reply("📭 Kontak masih kosong.");
+
+    let teks = "📋 *Daftar Kontak Terdaftar:*\n\n";
+    let no = 1;
+    for (const [id, nama] of entries) {
+      const nomor = id.replace("@c.us", "");
+      teks += `${no++}. ${nama} - ${nomor}\n`;
+    }
+    msg.reply(teks);
+  }
+
+  // Hapus kontak berdasarkan nomor
+  if (body.startsWith("!hapus kontak")) {
+    if (role !== "admin") return msg.reply("❌ Hanya admin.");
+
+    const nomor = body.split(" ")[2];
+    if (!nomor || !/^\d{9,}$/.test(nomor)) {
+      return msg.reply("⚠️ Format salah. Gunakan: *!hapus kontak 628xxxxx*");
+    }
+
+    const id = `${nomor}@c.us`;
+    if (!kontak[id]) return msg.reply(`❌ Kontak ${nomor} tidak ditemukan.`);
+
+    const nama = kontak[id];
+    delete kontak[id];
+    saveJSON(KONTAK_PATH, kontak);
+
+    msg.reply(`🗑️ Kontak *${nama}* (${nomor}) berhasil dihapus.`);
+  }
+
   // Set lokasi
   if (body === "!setlokasi") {
     if (role !== "admin") return msg.reply("❌ Hanya admin.");
