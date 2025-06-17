@@ -414,7 +414,26 @@ client.on("message", async (msg) => {
 
     saveJSON(STORAGE_PATH, storage);
     delete pendingAbsen[sender];
-    return msg.reply(`✅ Absen ${tipe} dicatat (${status})`);
+
+    msg.reply(`✅ Absen ${tipe} dicatat (${status})`);
+
+    // Kirim notifikasi ke semua admin
+    const mediaMsg = new MessageMedia(
+      absen.foto.mimetype,
+      absen.foto.data,
+      `${sender.replace("@c.us", "")}.jpg`
+    );
+
+    const roles = loadRoles();
+    for (const id in roles) {
+      if (roles[id] === "admin" && id !== sender) {
+        await client.sendMessage(id, mediaMsg, {
+          caption: `🕘 *${
+            kontak[sender] || sender
+          }* telah absen *${tipe}*\nStatus: *${status}*\nJam: ${waktu.jam}`,
+        });
+      }
+    }
   }
 
   // Rekap hari ini
