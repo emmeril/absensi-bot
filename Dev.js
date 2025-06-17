@@ -150,6 +150,7 @@ client.on("message", async (msg) => {
   // Hapus admin
   if (body.startsWith("!hapus admin")) {
     const roles = loadRoles();
+
     if (roles[sender] !== "superadmin")
       return msg.reply("❌ Hanya Super Admin.");
 
