@@ -141,6 +141,28 @@ client.on("message", async (msg) => {
     return msg.reply(`✅ ${no} sekarang menjadi admin.`);
   }
 
+  // Hapus admin
+  if (body.startsWith("!hapus admin")) {
+    const roles = loadRoles();
+    if (roles[sender] !== "superadmin")
+      return msg.reply("❌ Hanya Super Admin.");
+
+    const nomor = body.split(" ")[2];
+    if (!nomor || !/^\d{9,}$/.test(nomor)) {
+      return msg.reply("⚠️ Format salah. Gunakan: *!hapus admin 628xxxxx*");
+    }
+
+    const id = `${nomor}@c.us`;
+    if (!roles[id]) return msg.reply("❌ Nomor tersebut belum punya role.");
+    if (roles[id] !== "admin")
+      return msg.reply("❌ Nomor tersebut bukan admin biasa.");
+
+    delete roles[id];
+    saveRoles(roles);
+
+    msg.reply(`🗑️ Role admin dari ${nomor} telah dicabut.`);
+  }
+
   // Daftar kontak
   if (body.startsWith("!daftar") && msg.hasMedia && msg.type === "image") {
     if (kontak[sender]) return msg.reply("✅ Kamu sudah terdaftar.");
