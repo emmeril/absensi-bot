@@ -238,6 +238,7 @@ client.on("message", async (msg) => {
     msg.reply(daftar);
   }
 
+  // Setujui permintaan
   if (body.startsWith("!approve")) {
     if (role !== "admin") return msg.reply("❌ Hanya admin.");
 
@@ -249,17 +250,20 @@ client.on("message", async (msg) => {
     let approved;
 
     if (/^\d+$/.test(arg)) {
-      // Mode urutan: !approve 1
-      const index = parseInt(arg) - 1;
-      if (isNaN(index) || index < 0 || index >= requests.length) {
-        return msg.reply("⚠️ Nomor permintaan tidak valid.");
+      if (arg.length <= 2) {
+        // Mode urutan pendek: !approve 1
+        const index = parseInt(arg) - 1;
+        if (isNaN(index) || index < 0 || index >= requests.length) {
+          return msg.reply("⚠️ Nomor permintaan tidak valid.");
+        }
+        approved = requests.splice(index, 1)[0];
+      } else {
+        // Mode nomor HP (angka panjang)
+        const index = requests.findIndex((r) => r.id.includes(arg));
+        if (index === -1)
+          return msg.reply(`❌ Tidak ada permintaan dari ${arg}`);
+        approved = requests.splice(index, 1)[0];
       }
-      approved = requests.splice(index, 1)[0];
-    } else if (/^\d{9,}$/.test(arg)) {
-      // Mode by nomor HP: !approve 628xxxx
-      const index = requests.findIndex((r) => r.id.includes(arg));
-      if (index === -1) return msg.reply(`❌ Tidak ada permintaan dari ${arg}`);
-      approved = requests.splice(index, 1)[0];
     } else {
       return msg.reply(
         "⚠️ Format salah. Gunakan *!approve 1* atau *!approve 628xxxxx*"
