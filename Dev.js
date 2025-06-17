@@ -257,8 +257,7 @@ client.on("message", async (msg) => {
       approved = requests.splice(index, 1)[0];
     } else if (/^\d{9,}$/.test(arg)) {
       // Mode by nomor HP: !approve 628xxxx
-      const id = `${arg}@c.us`;
-      const index = requests.findIndex((r) => r.id === id);
+      const index = requests.findIndex((r) => r.id.includes(arg));
       if (index === -1) return msg.reply(`❌ Tidak ada permintaan dari ${arg}`);
       approved = requests.splice(index, 1)[0];
     } else {
