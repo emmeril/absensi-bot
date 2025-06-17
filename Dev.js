@@ -240,14 +240,33 @@ client.on("message", async (msg) => {
 
   if (body.startsWith("!approve")) {
     if (role !== "admin") return msg.reply("❌ Hanya admin.");
-    const index = parseInt(body.split(" ")[1]) - 1;
+
+    const arg = body.split(" ")[1];
+    if (!arg)
+      return msg.reply("⚠️ Gunakan: *!approve 1* atau *!approve 628xxxxx*");
 
     const requests = loadRequests();
-    if (isNaN(index) || index < 0 || index >= requests.length) {
-      return msg.reply("⚠️ Nomor permintaan tidak valid.");
+    let approved;
+
+    if (/^\d+$/.test(arg)) {
+      // Mode urutan: !approve 1
+      const index = parseInt(arg) - 1;
+      if (isNaN(index) || index < 0 || index >= requests.length) {
+        return msg.reply("⚠️ Nomor permintaan tidak valid.");
+      }
+      approved = requests.splice(index, 1)[0];
+    } else if (/^\d{9,}$/.test(arg)) {
+      // Mode by nomor HP: !approve 628xxxx
+      const id = `${arg}@c.us`;
+      const index = requests.findIndex((r) => r.id === id);
+      if (index === -1) return msg.reply(`❌ Tidak ada permintaan dari ${arg}`);
+      approved = requests.splice(index, 1)[0];
+    } else {
+      return msg.reply(
+        "⚠️ Format salah. Gunakan *!approve 1* atau *!approve 628xxxxx*"
+      );
     }
 
-    const approved = requests.splice(index, 1)[0];
     kontak[approved.id] = approved.nama;
     saveJSON(KONTAK_PATH, kontak);
     saveRequests(requests);
