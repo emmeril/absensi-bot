@@ -350,7 +350,7 @@ client.on("message", async (msg) => {
       60000
     );
     return msg.reply(
-      `📸 Kirim foto dan lokasi untuk absen ${pendingAbsen[sender].tipe}.`
+      `📸 Kirim foto Selfi untuk absen ${pendingAbsen[sender].tipe}.`
     );
   }
   if (msg.hasMedia && pendingAbsen[sender]) {
