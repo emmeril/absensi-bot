@@ -4,6 +4,7 @@ const qrcode = require("qrcode-terminal");
 const moment = require("moment");
 const haversine = require("haversine-distance");
 const XLSX = require("xlsx");
+const axios = require("axios");
 
 const STORAGE_PATH = "./storage.json";
 const KONTAK_PATH = "./kontak.json";
@@ -12,6 +13,9 @@ const LOKASI_PATH = "./lokasi.json";
 const JAM_PATH = "./jam.json";
 const EXPORTS_DIR = "./exports";
 const REQUESTS_PATH = "./pending_requests.json";
+const PENDING_FOTO_PATH = "./pending_selfie.json";
+const FACE_DB = "./face_db";
+const FACE_REC = "./face_rec";
 
 function loadJSON(path, fallback = {}) {
   return fs.existsSync(path) ? JSON.parse(fs.readFileSync(path)) : fallback;
@@ -43,12 +47,41 @@ function saveRequests(list) {
   saveJSON(REQUESTS_PATH, list);
 }
 
+function hitungTelat(waktuMasuk, jamResmi = "09:00:00") {
+  const masuk = moment(waktuMasuk, "HH:mm:ss");
+  const resmi = moment(jamResmi, "HH:mm:ss");
+  const selisih = masuk.diff(resmi, "minutes");
+  return selisih > 0 ? selisih : 0;
+}
+
+function loadPendingFoto() {
+  return loadJSON(PENDING_FOTO_PATH, {});
+}
+function savePendingFoto(data) {
+  saveJSON(PENDING_FOTO_PATH, data);
+}
+
+const pendingFoto = loadPendingFoto();
+
+async function verifikasiWajah(userId, fotoBase64) {
+  try {
+    const res = await axios.post("http://38.47.176.155:5000/verify-face", {
+      id: userId.replace("@c.us", ""),
+      photo: fotoBase64,
+    });
+    return res.data?.match === true;
+  } catch (e) {
+    console.error("[FaceVerify ERROR]", e.response?.data || e.message);
+    return false;
+  }
+}
+
 const client = new Client({
-    authStrategy: new LocalAuth(), // Simpan sesi login secara lokal
-    puppeteer: {
-        args: ['--no-sandbox', '--disable-setuid-sandbox'], // ✅ Fix error root user
-        headless: true
-    }
+  authStrategy: new LocalAuth(), // Simpan sesi login secara lokal
+  puppeteer: {
+    args: ["--no-sandbox", "--disable-setuid-sandbox"], // ✅ Fix error root user
+    headless: true,
+  },
 });
 
 const pendingAbsen = {};
@@ -104,46 +137,71 @@ client.on("message", async (msg) => {
     return msg.reply(`✅ ${no} sekarang menjadi admin.`);
   }
 
-  // Tambah kontak
-  //   if (body === "!tambah kontak") {
-  //     if (role !== "admin") return msg.reply("❌ Hanya admin.");
-  //     pendingKontak[sender] = true;
-  //     return msg.reply("📥 Kirim kontak sekarang.");
-  //   }
-
-  // if ((msg.type === 'contact' || msg.type === 'multi_contact') && pendingKontak[sender]) {
-  //     const contactItems = msg.vCards || msg.contacts;
-  //     if (!contactItems || !contactItems.length) return msg.reply('❌ Kontak tidak terbaca.');
-
-  //     const nomor = contactItems[0]?.id?.user || contactItems[0]?.number;
-  //     const nama = contactItems[0]?.name || contactItems[0]?.pushname || nomor;
-
-  //     if (nomor) {
-  //         const id = nomor.replace('+', '') + '@c.us';
-  //         kontak[id] = nama;
-  //         saveJSON(KONTAK_PATH, kontak);
-  //         delete pendingKontak[sender];
-  //         return msg.reply(`✅ Kontak *${nama}* ditambahkan.`);
-  //     }
-  //     return msg.reply('❌ Gagal membaca nomor.');
-  // }
-
-  if (body.startsWith("!daftar")) {
+  // Daftar kontak
+  if (body.startsWith("!daftar") && msg.hasMedia && msg.type === "image") {
     if (kontak[sender]) return msg.reply("✅ Kamu sudah terdaftar.");
 
-    const nama = msg.body.slice(8).trim();
-    if (!nama || nama.length < 3) return msg.reply("⚠️ Nama terlalu pendek.");
+    const nama = body.slice(8).trim();
+    if (!nama || nama.length < 3)
+      return msg.reply(
+        "⚠️ Format salah. Kirim *foto selfie* dengan caption: *!daftar Nama Lengkap*"
+      );
 
     const requests = loadRequests();
-    if (requests.find((r) => r.id === sender)) {
+    if (requests.find((r) => r.id === sender))
       return msg.reply(
         "📨 Permintaan kamu sudah dikirim. Tunggu admin menyetujui."
       );
+
+    const media = await msg.downloadMedia();
+    if (!media || !media.data) return msg.reply("❌ Gagal membaca foto.");
+
+    const nomor = sender.replace("@c.us", "");
+    const filePath = `${FACE_DB}/${nomor}.jpg`;
+    const recPath = `${FACE_REC}/${nomor}.jpg`;
+    fs.writeFileSync(filePath, Buffer.from(media.data, "base64"));
+
+    if (!fs.existsSync(recPath)) {
+      fs.writeFileSync(recPath, Buffer.from(media.data, "base64"));
     }
 
     requests.push({ id: sender, nama });
     saveRequests(requests);
-    msg.reply("📩 Permintaan akses dikirim ke admin. Tunggu persetujuan.");
+
+    msg.reply(
+      "✅ Foto selfie dan nama diterima. Permintaan akses dikirim ke admin."
+    );
+  }
+
+  if (msg.type === "image" && pendingFoto[sender]) {
+    const media = await msg.downloadMedia();
+    if (!media || !media.data) return msg.reply("❌ Gagal membaca foto.");
+
+    const nomor = sender.replace("@c.us", "");
+    const filePath = `${FACE_DB}/${nomor}.jpg`;
+    fs.writeFileSync(filePath, Buffer.from(media.data, "base64"));
+
+    // Simpan ke pending_requests
+    const requests = loadRequests();
+    if (!requests.find((r) => r.id === sender)) {
+      requests.push({ id: sender, nama: pendingFoto[sender].nama });
+      saveRequests(requests);
+    }
+
+    delete pendingFoto[sender];
+    savePendingFoto(pendingFoto);
+
+    msg.reply("✅ Foto selfie diterima. Permintaan kamu dikirim ke admin.");
+    // Kirim notifikasi ke semua admin
+    const roles = loadRoles();
+    for (const id in roles) {
+      if (roles[id] === "admin" && id !== sender) {
+        client.sendMessage(
+          id,
+          `🔔 *Permintaan Akses Baru*\nNama: *${nama}*\nNomor: ${nomor}\n\nKetik: !approve ${nomor}`
+        );
+      }
+    }
   }
 
   if (body === "!lihat daftar") {
@@ -226,14 +284,25 @@ client.on("message", async (msg) => {
   }
   if (msg.hasMedia && pendingAbsen[sender]) {
     const media = await msg.downloadMedia();
+    if (!media || media.mimetype !== "image/jpeg")
+      return msg.reply("❌ Hanya foto dengan format JPEG yang didukung.");
+
+    const cocok = await verifikasiWajah(sender, media.data);
+    if (!cocok) {
+      delete pendingAbsen[sender];
+      return msg.reply("❌ Wajah tidak dikenali. Gunakan selfie asli kamu.");
+    }
+
     pendingAbsen[sender].foto = media;
 
     if (!pendingAbsen[sender].lokasi) {
       return msg.reply(
-        "✅ Foto diterima.\n📍 Sekarang kirim lokasi untuk absen."
+        "✅ Foto dikenali.\n📍 Sekarang kirim lokasi untuk absen."
       );
     } else {
-      return msg.reply("✅ Foto diterima dan lokasi sudah ada.");
+      return msg.reply(
+        "✅ Foto dan lokasi sudah lengkap. Kamu bisa kirim perintah absen."
+      );
     }
   }
 
@@ -287,6 +356,10 @@ client.on("message", async (msg) => {
       teks += `🕘 Masuk: ${u.masuk?.waktu || "❌"} (${
         u.masuk?.status || "-"
       })\n`;
+      if (u.masuk?.status === "Terlambat") {
+        const menit = hitungTelat(u.masuk.waktu, jamResmi.masuk);
+        teks += `⏱ Telat: ${menit} menit\n`;
+      }
       teks += `🕓 Pulang: ${u.pulang?.waktu || "❌"} (${
         u.pulang?.status || "-"
       })\n\n`;
@@ -297,115 +370,222 @@ client.on("message", async (msg) => {
   // Rekap tanggal
   if (body.startsWith("!rekap tanggal")) {
     if (role !== "admin") return msg.reply("❌ Hanya admin.");
-    const tanggal = body.split(" ")[2];
+
+    const split = body.trim().split(" ");
+    if (split.length < 3 || !/^\d{4}-\d{2}-\d{2}$/.test(split[2])) {
+      return msg.reply("⚠️ Format salah. Gunakan: *!rekap tanggal YYYY-MM-DD*");
+    }
+
+    const tanggal = split[2];
     const data = storage[tanggal];
-    if (!data) return msg.reply(`❌ Tidak ada data untuk ${tanggal}`);
+    if (!data) return msg.reply(`❌ Tidak ada data untuk tanggal ${tanggal}`);
+
     let teks = `📅 Rekap ${tanggal}:\n\n`;
+
     for (const id in data) {
       const u = data[id];
-      teks += `👤 ${u.masuk?.nama || kontak[id]}\n`;
+      const nama = u.masuk?.nama || kontak[id] || id;
+
+      teks += `👤 ${nama}\n`;
       teks += `🕘 Masuk: ${u.masuk?.waktu || "❌"} (${
         u.masuk?.status || "-"
       })\n`;
+
+      if (u.masuk?.status === "Terlambat") {
+        const menit = hitungTelat(u.masuk.waktu, jamResmi.masuk);
+        teks += `⏱ Telat: ${menit} menit\n`;
+      }
+
       teks += `🕓 Pulang: ${u.pulang?.waktu || "❌"} (${
         u.pulang?.status || "-"
       })\n\n`;
     }
+
     msg.reply(teks);
   }
 
   // Rekap bulan
   if (body.startsWith("!rekap bulan")) {
     if (role !== "admin") return msg.reply("❌ Hanya admin.");
-    const bulan = body.split(" ")[2];
+
+    const split = body.trim().split(" ");
+    if (split.length < 3 || !/^\d{2}-\d{4}$/.test(split[2])) {
+      return msg.reply("⚠️ Format salah. Gunakan: *!rekap bulan MM-YYYY*");
+    }
+
+    const bulan = split[2];
     let teks = `📅 Rekap Bulan ${bulan}:\n\n`;
+    let ditemukan = false;
+
     for (const tgl in storage) {
       if (
+        typeof tgl === "string" &&
+        tgl.length === 10 &&
         tgl.slice(5, 7) === bulan.slice(0, 2) &&
         tgl.slice(0, 4) === bulan.slice(3, 7)
       ) {
         for (const id in storage[tgl]) {
           const log = storage[tgl][id];
-          teks += `🗓️ ${tgl} - ${kontak[id] || id}\n`;
-          teks += `🕘 ${log.masuk?.waktu || "❌"} (${
+          const nama = log.masuk?.nama || kontak[id] || id;
+
+          teks += `🗓️ ${tgl} - ${nama}\n`;
+          teks += `🕘 Masuk: ${log.masuk?.waktu || "❌"} (${
             log.masuk?.status || "-"
           })\n`;
-          teks += `🕓 ${log.pulang?.waktu || "❌"} (${
+
+          if (log.masuk?.status === "Terlambat") {
+            const menit = hitungTelat(log.masuk.waktu, jamResmi.masuk);
+            teks += `⏱ Telat: ${menit} menit\n`;
+          }
+
+          teks += `🕓 Pulang: ${log.pulang?.waktu || "❌"} (${
             log.pulang?.status || "-"
           })\n\n`;
+          ditemukan = true;
         }
       }
     }
-    msg.reply(teks || "❌ Tidak ada data.");
+
+    if (!ditemukan) return msg.reply(`❌ Tidak ada data untuk bulan ${bulan}`);
+    msg.reply(teks);
   }
 
-  // Export hari ini
   // Export Hari Ini
-if (body === "!export hari ini") {
-  if (role !== "admin") return msg.reply("❌ Hanya admin.");
-  const data = storage[waktu.tanggal];
-  if (!data) return msg.reply("❌ Tidak ada data.");
-  const hasil = Object.entries(data).map(([id, u]) => ({
-    Tanggal: waktu.tanggal,
-    Nama: kontak[id],
-    Masuk: u.masuk?.waktu || "",
-    StatusMasuk: u.masuk?.status || "",
-    Pulang: u.pulang?.waktu || "",
-    StatusPulang: u.pulang?.status || "",
-  }));
-  const path = exportExcel(hasil, waktu.tanggal);
-  const media = MessageMedia.fromFilePath(path);
-  msg.reply(media, msg.from, { caption: `✅ File export *${waktu.tanggal}*` });
-}
+  if (body === "!export hari ini") {
+    if (role !== "admin") return msg.reply("❌ Hanya admin.");
+    const data = storage[waktu.tanggal];
+    if (!data) return msg.reply("❌ Tidak ada data.");
+    const hasil = Object.entries(data).map(([id, u]) => {
+      const telat =
+        u.masuk?.status === "Terlambat"
+          ? hitungTelat(u.masuk.waktu, jamResmi.masuk)
+          : 0;
+      return {
+        Tanggal: waktu.tanggal,
+        Nama: kontak[id],
+        Masuk: u.masuk?.waktu || "",
+        StatusMasuk: u.masuk?.status || "",
+        Terlambat: telat > 0 ? 1 : 0,
+        MenitTelat: telat,
+        Pulang: u.pulang?.waktu || "",
+        StatusPulang: u.pulang?.status || "",
+      };
+    });
+    const path = exportExcel(hasil, waktu.tanggal);
+    const media = MessageMedia.fromFilePath(path);
+    msg.reply(media, msg.from, {
+      caption: `✅ File export *${waktu.tanggal}*`,
+    });
+  }
 
-// Export Tanggal
-if (body.startsWith("!export tanggal")) {
-  if (role !== "admin") return msg.reply("❌ Hanya admin.");
-  const tanggal = body.split(" ")[2];
-  const data = storage[tanggal];
-  if (!data) return msg.reply(`❌ Tidak ada data untuk ${tanggal}`);
-  const hasil = Object.entries(data).map(([id, u]) => ({
-    Tanggal: tanggal,
-    Nama: kontak[id],
-    Masuk: u.masuk?.waktu || "",
-    StatusMasuk: u.masuk?.status || "",
-    Pulang: u.pulang?.waktu || "",
-    StatusPulang: u.pulang?.status || "",
-  }));
-  const path = exportExcel(hasil, tanggal);
-  const media = MessageMedia.fromFilePath(path);
-  msg.reply(media, msg.from, { caption: `✅ File export *${tanggal}*` });
-}
+  // Export Tanggal
+  if (body.startsWith("!export tanggal")) {
+    if (role !== "admin") return msg.reply("❌ Hanya admin.");
 
-// Export Bulan
-if (body.startsWith("!export bulan")) {
-  if (role !== "admin") return msg.reply("❌ Hanya admin.");
-  const bulan = body.split(" ")[2];
-  const hasil = [];
-  for (const tgl in storage) {
-    if (
-      tgl.slice(5, 7) === bulan.slice(0, 2) &&
-      tgl.slice(0, 4) === bulan.slice(3, 7)
-    ) {
-      for (const id in storage[tgl]) {
-        const u = storage[tgl][id];
-        hasil.push({
-          Tanggal: tgl,
-          Nama: kontak[id],
-          Masuk: u.masuk?.waktu || "",
-          StatusMasuk: u.masuk?.status || "",
-          Pulang: u.pulang?.waktu || "",
-          StatusPulang: u.pulang?.status || "",
-        });
+    const split = body.trim().split(" ");
+    if (split.length < 3 || !/^\d{4}-\d{2}-\d{2}$/.test(split[2])) {
+      return msg.reply(
+        "⚠️ Format salah. Gunakan: *!export tanggal YYYY-MM-DD*"
+      );
+    }
+
+    const tanggal = split[2];
+    const data = storage[tanggal];
+    if (!data) return msg.reply(`❌ Tidak ada data untuk tanggal ${tanggal}`);
+
+    const hasil = Object.entries(data).map(([id, u]) => {
+      const telat =
+        u.masuk?.status === "Terlambat"
+          ? hitungTelat(u.masuk.waktu, jamResmi.masuk)
+          : 0;
+      return {
+        Tanggal: tanggal,
+        Nama: kontak[id],
+        Masuk: u.masuk?.waktu || "",
+        StatusMasuk: u.masuk?.status || "",
+        Terlambat: telat > 0 ? 1 : 0,
+        MenitTelat: telat,
+        Pulang: u.pulang?.waktu || "",
+        StatusPulang: u.pulang?.status || "",
+      };
+    });
+
+    const path = exportExcel(hasil, tanggal);
+    const media = MessageMedia.fromFilePath(path);
+    msg.reply(media, msg.from, { caption: `✅ File export *${tanggal}*` });
+  }
+
+  // Export Bulan
+  if (body.startsWith("!export bulan")) {
+    if (role !== "admin") return msg.reply("❌ Hanya admin.");
+
+    const split = body.trim().split(" ");
+    if (split.length < 3 || !/^\d{2}-\d{4}$/.test(split[2])) {
+      return msg.reply("⚠️ Format salah. Gunakan: *!export bulan MM-YYYY*");
+    }
+
+    const bulan = split[2]; // MM-YYYY
+    const hasil = [];
+    const ringkasan = {};
+
+    for (const tgl in storage) {
+      if (
+        typeof tgl === "string" &&
+        tgl.length === 10 &&
+        tgl.slice(5, 7) === bulan.slice(0, 2) &&
+        tgl.slice(0, 4) === bulan.slice(3, 7)
+      ) {
+        for (const id in storage[tgl]) {
+          const log = storage[tgl][id];
+          const nama = kontak[id] || log.masuk?.nama || id;
+          const telat =
+            log.masuk?.status === "Terlambat"
+              ? hitungTelat(log.masuk.waktu, jamResmi.masuk)
+              : 0;
+
+          hasil.push({
+            Tanggal: tgl,
+            Nama: nama,
+            Masuk: log.masuk?.waktu || "",
+            StatusMasuk: log.masuk?.status || "",
+            Terlambat: telat > 0 ? 1 : 0,
+            MenitTelat: telat,
+            Pulang: log.pulang?.waktu || "",
+            StatusPulang: log.pulang?.status || "",
+          });
+
+          ringkasan[nama] = ringkasan[nama] || {
+            Nama: nama,
+            Hadir: 0,
+            Telat: 0,
+            TotalMenit: 0,
+          };
+          ringkasan[nama].Hadir++;
+          if (telat > 0) {
+            ringkasan[nama].Telat++;
+            ringkasan[nama].TotalMenit += telat;
+          }
+        }
       }
     }
-  }
-  if (!hasil.length) return msg.reply("❌ Tidak ada data.");
-  const path = exportExcel(hasil, bulan);
-  const media = MessageMedia.fromFilePath(path);
-  msg.reply(media, msg.from, { caption: `✅ File export *${bulan}*` });
-}
 
+    if (!hasil.length)
+      return msg.reply(`❌ Tidak ada data untuk bulan ${bulan}`);
+
+    const sheet1 = XLSX.utils.json_to_sheet(hasil);
+    const sheet2 = XLSX.utils.json_to_sheet(Object.values(ringkasan));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, sheet1, "Rekap");
+    XLSX.utils.book_append_sheet(wb, sheet2, "Ringkasan");
+
+    const filePath = `./exports/Rekap-${bulan}.xlsx`;
+    XLSX.writeFile(wb, filePath);
+
+    const media = MessageMedia.fromFilePath(filePath);
+    msg.reply(media, msg.from, {
+      caption: `✅ File export *${bulan}* berhasil dengan sheet Ringkasan Keterlambatan.`,
+    });
+  }
 
   // Belum absen
   if (body === "!belum absen") {
@@ -413,10 +593,14 @@ if (body.startsWith("!export bulan")) {
     const data = storage[waktu.tanggal] || {};
     const belumMasuk = [],
       belumPulang = [];
+
     for (const id in kontak) {
-      if (!data[id]?.masuk) belumMasuk.push(cetak(id));
-      if (!data[id]?.pulang) belumPulang.push(cetak(id));
+      const nomor = id.replace("@c.us", "");
+      const nama = kontak[id] || nomor;
+      if (!data[id]?.masuk) belumMasuk.push(`• ${nama} - ${nomor}`);
+      if (!data[id]?.pulang) belumPulang.push(`• ${nama} - ${nomor}`);
     }
+
     let teks = "📋 Belum Absen:\n\n";
     teks += `🚫 Masuk:\n${belumMasuk.join("\n") || "✅ Semua sudah masuk"}\n\n`;
     teks += `🚫 Pulang:\n${belumPulang.join("\n") || "✅ Semua sudah pulang"}`;
