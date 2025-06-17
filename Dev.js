@@ -191,11 +191,10 @@ client.on("message", async (msg) => {
     const roles = loadRoles();
     for (const id in roles) {
       if (roles[id] === "admin") {
-        const nomor = id.replace("@c.us", "");
-        // console.log(`[INFO] Mengirim notifikasi ke admin: ${id}`);
+        const userNomor = sender.replace("@c.us", "");
         await client.sendMessage(
           id,
-          `🔔 *Permintaan Akses Baru*\nNama: *${nama}*\nNomor: ${nomor}\n\nKetik: !approve ${nomor}`
+          `🔔 *Permintaan Akses Baru*\nNama: *${nama}*\nNomor: ${userNomor}\n\nKetik: !approve ${userNomor}`
         );
       }
     }
