@@ -76,6 +76,10 @@ async function verifikasiWajah(userId, fotoBase64) {
   }
 }
 
+function loadRoles() {
+  return loadJSON(ROLES_PATH, {});
+}
+
 const client = new Client({
   authStrategy: new LocalAuth(), // Simpan sesi login secara lokal
   puppeteer: {
