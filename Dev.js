@@ -410,6 +410,12 @@ client.on("message", async (msg) => {
 
   // Absen masuk/pulang
   if (body.startsWith("!masuk") || body.startsWith("!pulang")) {
+    if (!kontak[sender]) {
+      return msg.reply(
+        "❌ Nomor kamu belum terdaftar. Hubungi admin untuk mendaftar."
+      );
+    }
+
     const tipe = body.startsWith("!masuk") ? "masuk" : "pulang";
     const shiftArg = body.split(" ")[1]?.toLowerCase();
     const shifts = loadShifts();
@@ -432,8 +438,9 @@ client.on("message", async (msg) => {
 
   if (msg.hasMedia && pendingAbsen[sender]) {
     const media = await msg.downloadMedia();
-    if (!media || media.mimetype !== "image/jpeg")
+    if (!media || media.mimetype !== "image/jpeg") {
       return msg.reply("❌ Hanya foto dengan format JPEG yang didukung.");
+    }
 
     const cocok = await verifikasiWajah(sender, media.data);
     if (!cocok) {
@@ -503,7 +510,6 @@ client.on("message", async (msg) => {
 
     msg.reply(`✅ Absen ${tipe} dicatat (${status})`);
 
-    // Kirim notifikasi ke semua admin
     const mediaMsg = new MessageMedia(
       absen.foto.mimetype,
       absen.foto.data,
@@ -524,45 +530,59 @@ client.on("message", async (msg) => {
 
   // izin
   if (body.startsWith("!izin ")) {
-  const izinData = loadIzin();
-  const arg = body.slice(6).trim(); // ex: "hari ini sakit"
-  const alasan = arg.split(" ").slice(2).join(" ").trim();
-  let tanggal;
-
-  if (arg.startsWith("hari ini")) {
-    tanggal = waktu.tanggal;
-  } else if (/^\d{4}-\d{2}-\d{2}/.test(arg)) {
-    tanggal = arg.split(" ")[0];
-  } else {
-    return msg.reply(
-      "❌ Format salah. Gunakan: *!izin hari ini alasan* atau *!izin YYYY-MM-DD alasan*"
-    );
-  }
-
-  if (!alasan || alasan.length < 3)
-    return msg.reply("⚠️ Alasan izin terlalu singkat.");
-
-  izinData[tanggal] = izinData[tanggal] || {};
-  izinData[tanggal][sender] = {
-    alasan,
-    nama: kontak[sender] || sender,
-  };
-  saveIzin(izinData);
-
-  msg.reply(`✅ Izin untuk tanggal ${tanggal} dicatat.\nAlasan: ${alasan}`);
-
-  // 🔔 Kirim notifikasi ke semua admin
-  const roles = loadRoles();
-  for (const id in roles) {
-    if (roles[id] === "admin" && id !== sender) {
-      await client.sendMessage(
-        id,
-        `📩 *Pengajuan Izin Baru*\n👤 Nama: *${kontak[sender] || sender}*\n📅 Tanggal: ${tanggal}\n📌 Alasan: ${alasan}`
+    if (!kontak[sender]) {
+      return msg.reply(
+        "❌ Nomor kamu belum terdaftar. Tidak bisa mengajukan izin."
       );
     }
-  }
-}
 
+    const izinData = loadIzin();
+    const arg = body.slice(6).trim(); // ex: "hari ini sakit"
+    const alasan = arg.split(" ").slice(2).join(" ").trim();
+    let tanggal;
+
+    if (arg.startsWith("hari ini")) {
+      tanggal = waktu.tanggal;
+    } else if (/^\d{4}-\d{2}-\d{2}/.test(arg)) {
+      tanggal = arg.split(" ")[0];
+    } else {
+      return msg.reply(
+        "❌ Format salah. Gunakan: *!izin hari ini alasan* atau *!izin YYYY-MM-DD alasan*"
+      );
+    }
+
+    if (!alasan || alasan.length < 3)
+      return msg.reply("⚠️ Alasan izin terlalu singkat.");
+
+    // Cegah izin ganda
+    if (izinData[tanggal]?.[sender]) {
+      return msg.reply(
+        `⚠️ Kamu sudah mengajukan izin untuk tanggal ${tanggal}.`
+      );
+    }
+
+    izinData[tanggal] = izinData[tanggal] || {};
+    izinData[tanggal][sender] = {
+      alasan,
+      nama: kontak[sender] || sender,
+    };
+    saveIzin(izinData);
+
+    msg.reply(`✅ Izin untuk tanggal ${tanggal} dicatat.\nAlasan: ${alasan}`);
+
+    // 🔔 Kirim notifikasi ke semua admin
+    const roles = loadRoles();
+    for (const id in roles) {
+      if (roles[id] === "admin" && id !== sender) {
+        await client.sendMessage(
+          id,
+          `📩 *Pengajuan Izin Baru*\n👤 Nama: *${
+            kontak[sender] || sender
+          }*\n📅 Tanggal: ${tanggal}\n📌 Alasan: ${alasan}`
+        );
+      }
+    }
+  }
 
   // Rekap hari ini
   if (body === "!rekap hari ini") {
