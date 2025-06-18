@@ -68,7 +68,7 @@ const pendingFoto = loadPendingFoto();
 
 async function verifikasiWajah(userId, fotoBase64) {
   try {
-    const res = await axios.post("http://38.47.176.155:5000/verify-face", {
+    const res = await axios.post("http://localhost:5000/verify-face", {
       id: userId.replace("@c.us", ""),
       photo: fotoBase64,
     });
