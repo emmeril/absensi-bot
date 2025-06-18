@@ -83,6 +83,14 @@ function loadRoles() {
   return loadJSON(ROLE_PATH, {});
 }
 
+function toTitleCase(str) {
+  return str
+    .toLowerCase()
+    .split(" ")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
 const client = new Client({
   authStrategy: new LocalAuth(), // Simpan sesi login secara lokal
   puppeteer: {
@@ -164,7 +172,8 @@ client.on("message", async (msg) => {
   if (body.startsWith("!daftar") && msg.hasMedia && msg.type === "image") {
     if (kontak[sender]) return msg.reply("✅ Kamu sudah terdaftar.");
 
-    const nama = body.slice(8).trim();
+    const rawNama = body.slice(8).trim();
+    const nama = toTitleCase(rawNama);
     if (!nama || nama.length < 3)
       return msg.reply(
         "⚠️ Format salah. Kirim *foto selfie* dengan caption: *!daftar Nama Lengkap*"
