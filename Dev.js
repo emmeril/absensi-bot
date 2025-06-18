@@ -108,6 +108,12 @@ client.on("ready", () => {
   console.log("✅ Bot sudah terhubung ke WhatsApp.");
 });
 
+client.on("disconnected", (reason) => {
+  console.log("❌ WhatsApp disconnected:", reason);
+  fs.rmSync(".wwebjs_auth", { recursive: true, force: true });
+  process.exit(); // atau restart otomatis
+});
+
 client.on("message", async (msg) => {
   const sender = msg.author || msg.from;
   const body = msg.body.trim().toLowerCase();
