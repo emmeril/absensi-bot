@@ -1,0 +1,5 @@
+{
+  "shift1": { "masuk": "07:00", "pulang": "15:00" },
+  "shift2": { "masuk": "15:00", "pulang": "23:00" },
+  "shift3": { "masuk": "23:00", "pulang": "07:00" }
+}
