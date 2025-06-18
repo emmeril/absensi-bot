@@ -417,9 +417,17 @@ client.on("message", async (msg) => {
     }
 
     const tipe = body.startsWith("!masuk") ? "masuk" : "pulang";
-    const shiftArg = body.split(" ")[1]?.toLowerCase();
     const shifts = loadShifts();
-    const shift = shiftArg && shifts[shiftArg] ? shiftArg : null;
+    const shiftArg = body.split(" ")[1]?.toLowerCase();
+
+    // validasi shift harus cocok dengan key di shifts
+    if (shiftArg && !shifts[shiftArg]) {
+      return msg.reply(
+        `❌ Shift *${shiftArg}* tidak ditemukan.\nGunakan format: *!masuk shift1* / *!pulang shift2*`
+      );
+    }
+
+    const shift = shiftArg || null;
 
     pendingAbsen[sender] = {
       tipe,
