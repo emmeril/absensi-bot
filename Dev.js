@@ -5,6 +5,9 @@ const moment = require("moment");
 const haversine = require("haversine-distance");
 const XLSX = require("xlsx");
 const axios = require("axios");
+const express = require("express");
+const app = express();
+const PORT = 3200;
 
 const STORAGE_PATH = "./storage.json";
 const KONTAK_PATH = "./kontak.json";
@@ -92,8 +95,18 @@ const pendingAbsen = {};
 const pendingKontak = {};
 const pendingLokasi = {};
 
-client.on("qr", (qr) => qrcode.generate(qr, { small: true }));
-client.on("ready", () => console.log("✅ Bot siap digunakan"));
+client.on("qr", (qr) => {
+  qrCodeData = qr;
+  isReady = false;
+  console.log("📲 QR tersedia: buka http://localhost:3200/qr");
+});
+
+client.on("ready", () => {
+  isReady = true;
+  qrCodeData = null;
+  console.clear();
+  console.log("✅ Bot sudah terhubung ke WhatsApp.");
+});
 
 client.on("message", async (msg) => {
   const sender = msg.author || msg.from;
@@ -700,6 +713,76 @@ client.on("message", async (msg) => {
   function cetak(id) {
     return `- ${kontak[id] || id}`;
   }
+});
+
+let qrCodeData = null;
+let isReady = false;
+
+app.get("/qr", (req, res) => {
+  if (isReady) {
+    return res.send(`
+      <html>
+        <body style="display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;text-align:center;">
+          <div>
+            <h2>✅ Bot sudah terhubung ke WhatsApp.</h2>
+          </div>
+        </body>
+      </html>
+    `);
+  }
+
+  if (!qrCodeData) {
+    return res.send(`
+      <html>
+        <body style="display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;text-align:center;">
+          <div>
+            <h2>⏳ Menunggu QR Code...</h2>
+          </div>
+        </body>
+      </html>
+    `);
+  }
+
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(
+    qrCodeData
+  )}`;
+  res.send(`
+  <html>
+    <head>
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>QR Login Bot</title>
+      <style>
+        body {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          height: 100vh;
+          font-family: sans-serif;
+          text-align: center;
+          margin: 0;
+        }
+        img {
+          max-width: 90vw;
+          height: auto;
+        }
+        h2, p {
+          margin: 10px 0;
+        }
+      </style>
+    </head>
+    <body>
+      <div>
+        <h2>🔐 Scan QR WhatsApp:</h2>
+        <img src="${qrUrl}" />
+        <p>QR akan otomatis hilang setelah login.</p>
+      </div>
+    </body>
+  </html>
+`);
+});
+
+app.listen(PORT, () => {
+  console.log(`🌐 Akses QR di: http://localhost:${PORT}/qr`);
 });
 
 client.initialize();
