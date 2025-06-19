@@ -190,6 +190,62 @@ client.on("message", async (msg) => {
     return msg.reply(`✅ ${no} sekarang menjadi admin.`);
   }
 
+  // import kontak dari Excel
+  if (body === "!import kontak" && role === "admin") {
+    const XLSX = require("xlsx");
+    const path = "./imports/import.xlsx";
+    if (!fs.existsSync(path))
+      return msg.reply("❌ File import.xlsx tidak ditemukan.");
+
+    const wb = XLSX.readFile(path);
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const data = XLSX.utils.sheet_to_json(sheet);
+
+    let added = 0;
+    for (const row of data) {
+      const nomorRaw = ("" + row.Nomor).replace("+", "").replace(/\D/g, "");
+      const id = `${nomorRaw}@c.us`;
+
+      if (!kontak[id]) {
+        const nama = row.Nama;
+        kontak[id] = nama;
+        added++;
+
+        // Kirim pesan ke user yang baru ditambahkan
+        await client.sendMessage(
+          id,
+          `📣 Halo *${nama}*!\nKamu sudah didaftarkan ke sistem absensi.\n\nMohon segera kirim foto selfie kamu:\n1️⃣ Ketik: *!uploadfoto*\n2️⃣ Kirim foto selfie (.jpg)\n\nTerima kasih 🙏`
+        );
+      }
+    }
+
+    saveJSON(KONTAK_PATH, kontak);
+    msg.reply(
+      `✅ Berhasil import ${added} kontak dari Excel dan mengirim notifikasi ke mereka.`
+    );
+  }
+
+  // Upload foto selfie
+  if (body === "!uploadfoto") {
+    if (!kontak[sender]) return msg.reply("❌ Kamu belum terdaftar.");
+    pendingFoto[sender] = true;
+    return msg.reply("📸 Kirim foto selfie kamu sekarang.");
+  }
+
+  if (msg.hasMedia && pendingFoto[sender]) {
+    const media = await msg.downloadMedia();
+    if (!media || media.mimetype !== "image/jpeg")
+      return msg.reply("❌ Hanya file foto JPEG yang didukung.");
+
+    const nomor = sender.replace("@c.us", "");
+    const filePath = `${FACE_REC}/${nomor}.jpg`;
+
+    fs.writeFileSync(filePath, Buffer.from(media.data, "base64"));
+
+    delete pendingFoto[sender];
+    msg.reply("✅ Foto selfie kamu berhasil disimpan.");
+  }
+
   // Daftar kontak
   if (body.startsWith("!daftar") && msg.hasMedia && msg.type === "image") {
     if (kontak[sender]) return msg.reply("✅ Kamu sudah terdaftar.");
@@ -480,6 +536,13 @@ client.on("message", async (msg) => {
 
     const jarak = haversine(lokasi, lokasiKantor);
     if (jarak > 100) return msg.reply("❌ Di luar area kantor.");
+
+    const filePath = `${FACE_REC}/${sender.replace("@c.us", "")}.jpg`;
+    if (!fs.existsSync(filePath)) {
+      return msg.reply(
+        "❌ Foto selfie kamu belum tersedia. Kirim *!uploadfoto* dulu."
+      );
+    }
 
     const tipe = absen.tipe;
     const izinData = loadIzin();
