@@ -1237,6 +1237,47 @@ client.on("message", async (msg) => {
     );
   }
 
+  // menu atau help
+  if (body === "!menu" || body === "!help") {
+    let teks = `📖 *Menu Perintah Bot Absensi*\n\n`;
+    teks += `👤 *Pendaftaran dan Akun*\n`;
+    teks += `• !daftar Nama Lengkap (dengan foto)\n`;
+    teks += `• !uploadfoto - Kirim ulang selfie\n`;
+    teks += `• !cek status - Cek status absen kamu\n\n`;
+
+    teks += `🕘 *Absensi*\n`;
+    teks += `• !masuk [shift1/2/3] - Mulai absen masuk\n`;
+    teks += `• !pulang [shift1/2/3] - Mulai absen pulang\n`;
+    teks += `• !izin hari ini alasan\n`;
+    teks += `• !izin YYYY-MM-DD alasan\n\n`;
+
+    teks += `🛡️ *Admin Only*\n`;
+    teks += `• !setadmin 628xxxx\n`;
+    teks += `• !kontak list / !hapus kontak 628xxxx\n`;
+    teks += `• !approve 1 / !approve 628xxxx\n`;
+    teks += `• !lihat daftar - Lihat pendaftar\n`;
+    teks += `• !setlokasi - Kirim lokasi kantor\n`;
+    teks += `• !setjam masuk/pulang HH:MM\n`;
+    teks += `• !setshift shift1 07:00 15:00\n\n`;
+
+    teks += `📊 *Rekap dan Export*\n`;
+    teks += `• !rekap hari ini\n`;
+    teks += `• !rekap tanggal YYYY-MM-DD\n`;
+    teks += `• !rekap bulan MM-YYYY\n`;
+    teks += `• !export hari ini\n`;
+    teks += `• !export tanggal YYYY-MM-DD\n`;
+    teks += `• !export bulan MM-YYYY\n`;
+    teks += `• !belum absen\n\n`;
+
+    teks += `🛠️ *Lainnya*\n`;
+    teks += `• !import kontak (dengan file Excel)\n`;
+    teks += `• !backup - Backup semua data JSON\n`;
+    teks += `• !restore (dengan file zip backup)\n`;
+    teks += `• !role saya - Lihat role kamu\n`;
+
+    msg.reply(teks);
+  }
+
   function cetak(id) {
     return `- ${kontak[id] || id}`;
   }
