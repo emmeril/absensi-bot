@@ -526,7 +526,7 @@ client.on("message", async (msg) => {
 
     const roles = loadRoles();
     for (const id in roles) {
-      if (roles[id] === "admin" && id !== sender) {
+      if (roles[id] === "admin") {
         await client.sendMessage(id, mediaMsg, {
           caption: `🕘 *${kontak[sender] || sender}* telah absen *${tipe}* ${
             absen.shift ? `(Shift: ${absen.shift})` : ""
@@ -594,6 +594,7 @@ client.on("message", async (msg) => {
 
   // Rekap hari ini
   if (body === "!rekap hari ini") {
+    if (role !== "admin") return msg.reply("❌ Hanya admin.");
     const data = storage[waktu.tanggal] || {};
     const izinData = loadIzin()[waktu.tanggal] || {};
     let teks = `📅 Rekap ${waktu.tanggal}:\n\n`;
