@@ -664,6 +664,32 @@ client.on("message", async (msg) => {
     }
   }
 
+  // Cek status absensi
+  if (body === "!cek status") {
+    if (!kontak[sender]) return msg.reply("❌ Nomor kamu belum terdaftar.");
+
+    const dataHariIni = storage[waktu.tanggal] || {};
+    const log = dataHariIni[sender] || {};
+    const nama = kontak[sender];
+
+    let teks = `📋 Status Absensi ${waktu.tanggal}\n\n`;
+    teks += `👤 Nama: ${nama}\n`;
+
+    if (log.masuk) {
+      teks += `🕘 Masuk: ${log.masuk.waktu} (${log.masuk.status})\n`;
+    } else {
+      teks += `🕘 Masuk: ❌ Belum absen\n`;
+    }
+
+    if (log.pulang) {
+      teks += `🕓 Pulang: ${log.pulang.waktu} (${log.pulang.status})\n`;
+    } else {
+      teks += `🕓 Pulang: ❌ Belum absen\n`;
+    }
+
+    msg.reply(teks);
+  }
+
   // Rekap hari ini
   if (body === "!rekap hari ini") {
     if (role !== "admin") return msg.reply("❌ Hanya admin.");
