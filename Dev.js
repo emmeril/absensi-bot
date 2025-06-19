@@ -191,13 +191,21 @@ client.on("message", async (msg) => {
   }
 
   // import kontak dari Excel
-  if (body === "!import kontak" && role === "admin") {
-    const XLSX = require("xlsx");
-    const path = "./imports/import.xlsx";
-    if (!fs.existsSync(path))
-      return msg.reply("❌ File import.xlsx tidak ditemukan.");
+  if (
+    msg.hasMedia &&
+    msg._data?.mimetype?.includes("spreadsheetml") &&
+    msg.body.toLowerCase().startsWith("!import kontak")
+  ) {
+    if (role !== "admin") return msg.reply("❌ Hanya admin.");
 
-    const wb = XLSX.readFile(path);
+    const media = await msg.downloadMedia();
+    const buffer = Buffer.from(media.data, "base64");
+
+    const tempPath = "./temp-import.xlsx";
+    fs.writeFileSync(tempPath, buffer);
+
+    const XLSX = require("xlsx");
+    const wb = XLSX.readFile(tempPath);
     const sheet = wb.Sheets[wb.SheetNames[0]];
     const data = XLSX.utils.sheet_to_json(sheet);
 
@@ -209,20 +217,21 @@ client.on("message", async (msg) => {
       if (!kontak[id]) {
         const nama = row.Nama;
         kontak[id] = nama;
+
         added++;
 
-        // Kirim pesan ke user yang baru ditambahkan
+        // Kirim notifikasi ke user baru
         await client.sendMessage(
           id,
-          `📣 Halo *${nama}*!\nKamu sudah didaftarkan ke sistem absensi.\n\nMohon segera kirim foto selfie kamu:\n1️⃣ Ketik: *!uploadfoto*\n2️⃣ Kirim foto selfie (.jpg)\n\nTerima kasih 🙏`
+          `📣 Halo *${nama}*!\nKamu telah didaftarkan ke sistem absensi.\n\nSilakan kirim selfie kamu:\n1️⃣ Ketik *!uploadfoto*\n2️⃣ Kirim foto selfie (.jpg)\n\nTerima kasih 🙏`
         );
       }
     }
 
     saveJSON(KONTAK_PATH, kontak);
-    msg.reply(
-      `✅ Berhasil import ${added} kontak dari Excel dan mengirim notifikasi ke mereka.`
-    );
+
+    msg.reply(`✅ Import berhasil: ${added} kontak ditambahkan.`);
+    fs.unlinkSync(tempPath); // Hapus file setelah selesai
   }
 
   // Upload foto selfie
