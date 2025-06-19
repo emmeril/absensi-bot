@@ -6,6 +6,8 @@ const haversine = require("haversine-distance");
 const XLSX = require("xlsx");
 const axios = require("axios");
 const express = require("express");
+const AdmZip = require("adm-zip");
+const dayjs = require("dayjs");
 const app = express();
 const PORT = 3200;
 
@@ -1164,6 +1166,75 @@ client.on("message", async (msg) => {
     teks += `🚫 Masuk:\n${belumMasuk.join("\n") || "✅ Semua sudah masuk"}\n\n`;
     teks += `🚫 Pulang:\n${belumPulang.join("\n") || "✅ Semua sudah pulang"}`;
     msg.reply(teks);
+  }
+
+  // Backup data
+  if (body === "!backup") {
+    if (role !== "admin") return msg.reply("❌ Hanya admin.");
+
+    const zip = new AdmZip();
+    const backupDate = dayjs().format("YYYY-MM-DD");
+    const BACKUP_DIR = `./backups`;
+    const ZIP_PATH = `${BACKUP_DIR}/backup-${backupDate}.zip`;
+
+    if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR);
+
+    const files = [
+      STORAGE_PATH,
+      KONTAK_PATH,
+      ROLE_PATH,
+      LOKASI_PATH,
+      JAM_PATH,
+      REQUESTS_PATH,
+      PENDING_FOTO_PATH,
+      SHIFT_PATH,
+      IZIN_PATH,
+    ];
+
+    for (const file of files) {
+      if (fs.existsSync(file)) {
+        zip.addLocalFile(file);
+      }
+    }
+
+    zip.writeZip(ZIP_PATH);
+
+    const media = MessageMedia.fromFilePath(ZIP_PATH);
+    await msg.reply(media, msg.from, {
+      caption: `✅ Backup data berhasil.\nFile: *backup-${backupDate}.zip*`,
+    });
+  }
+
+  // Restore data
+  if (msg.hasMedia && msg.body.toLowerCase().startsWith("!restore")) {
+    if (role !== "admin") return msg.reply("❌ Hanya admin.");
+
+    const media = await msg.downloadMedia();
+    const buffer = Buffer.from(media.data, "base64");
+
+    const ZIP_PATH = "./temp-restore.zip";
+    fs.writeFileSync(ZIP_PATH, buffer);
+
+    const zip = new AdmZip(ZIP_PATH);
+    const entries = zip.getEntries();
+    let restored = 0;
+
+    for (const entry of entries) {
+      const fileName = entry.entryName;
+
+      // Cek hanya file .json (optional)
+      if (!fileName.endsWith(".json")) continue;
+
+      const fullPath = `./${fileName}`;
+      zip.extractEntryTo(entry, "./", false, true);
+      restored++;
+    }
+
+    fs.unlinkSync(ZIP_PATH);
+
+    msg.reply(
+      `✅ Restore berhasil. ${restored} file dipulihkan ke folder utama.`
+    );
   }
 
   function cetak(id) {
