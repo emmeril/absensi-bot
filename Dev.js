@@ -115,11 +115,25 @@ function saveIzin(data) {
   saveJSON(IZIN_PATH, data);
 }
 
+// const client = new Client({
+//   authStrategy: new LocalAuth(),
+//   puppeteer: {
+//     args: ["--no-sandbox", "--disable-setuid-sandbox"],
+//     headless: true,
+//   },
+// });
+
+//Texmux
 const client = new Client({
-  authStrategy: new LocalAuth(), // Simpan sesi login secara lokal
+  authStrategy: new LocalAuth(),
   puppeteer: {
-    args: ["--no-sandbox", "--disable-setuid-sandbox"], // ✅ Fix error root user
+    executablePath: "/usr/bin/chromium",
     headless: true,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+    ],
   },
 });
 
