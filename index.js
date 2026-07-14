@@ -37,6 +37,7 @@ const FACE_REC = "./face_rec";
 const IZIN_BUKTI_DIR = "./izin_bukti";
 const IZIN_PATH = "./izin.json";
 const KELAS_PATH = "./kelas.json";
+const USER_NAMES_PATH = "./user_names.json";
 
 const DEFAULT_ROLES = {
   "6287728972090@c.us": "admin",
@@ -58,6 +59,7 @@ const JSON_STORES = {
   [PENDING_FOTO_PATH]: { path: PENDING_FOTO_PATH, fallback: {} },
   [IZIN_PATH]: { path: IZIN_PATH, fallback: {} },
   [KELAS_PATH]: { path: KELAS_PATH, fallback: {} },
+  [USER_NAMES_PATH]: { path: USER_NAMES_PATH, fallback: {} },
 };
 
 let jsonCache = {};
@@ -157,6 +159,42 @@ async function verifikasiWajah(userId, fotoBase64) {
 
 function loadRoles() {
   return loadJSON(ROLE_PATH, {});
+}
+
+function dashboardUserName(id, role) {
+  const savedName = loadJSON(USER_NAMES_PATH, {})[id];
+  if (savedName) return savedName;
+
+  if (role === "wali_kelas") {
+    const wali = Object.values(loadKelas()).find((data) => data.waliKelas === id);
+    if (wali?.namaWali) return wali.namaWali;
+  }
+
+  return role === "admin" ? "Administrator" : "Wali Kelas";
+}
+
+async function saveDashboardUserName(id, name) {
+  const names = loadJSON(USER_NAMES_PATH, {});
+  names[id] = toTitleCase(String(name || "").trim());
+  await saveJSON(USER_NAMES_PATH, names);
+}
+
+async function resolveDashboardUserName(id, role) {
+  const knownName = dashboardUserName(id, role);
+  if (knownName !== "Administrator" && knownName !== "Wali Kelas") return knownName;
+
+  try {
+    const contact = await client.getContactById(id);
+    const whatsappName = contact.pushname || contact.name || contact.shortName;
+    if (whatsappName) {
+      await saveDashboardUserName(id, whatsappName);
+      return dashboardUserName(id, role);
+    }
+  } catch (error) {
+    console.warn(`[Dashboard] Nama WhatsApp ${id} tidak dapat dibaca:`, error.message);
+  }
+
+  return knownName;
 }
 
 async function ensureDefaultRoles() {
@@ -278,18 +316,14 @@ client.on("message", async (msg) => {
   const role = roles[sender] || "user";
 
   if (!kontak[sender] && !["admin", "wali_kelas"].includes(role)) {
-    const allowed = ["!setadmin"];
-    if (!allowed.some((cmd) => body.startsWith(cmd))) {
-      return msg.reply(
-        "❌ Nomor kamu belum terdaftar di absensi. Hubungi admin untuk didaftarkan."
-      );
-    }
+    return msg.reply(
+      "❌ Nomor kamu belum terdaftar di absensi. Hubungi admin untuk didaftarkan."
+    );
   }
 
   const commandDiizinkan =
     body === "!masuk" ||
     body === "!pulang" ||
-    body.startsWith("!setadmin") ||
     body === "!setlokasi" ||
     body === "!izin" ||
     body.startsWith("!izin ");
@@ -300,61 +334,6 @@ client.on("message", async (msg) => {
     return msg.reply(
       "🌐 Pengelolaan data sudah dipindahkan ke dashboard web.\n" +
         `Buka: http://localhost:${PORT}`
-    );
-  }
-
-  // Role info
-  if (body === "!role saya") return msg.reply(`🔐 Role kamu: *${role}*`);
-
-  // Set admin
-  if (body.startsWith("!setadmin")) {
-    const no = normalizeNomor(msg.body.trim().split(/\s+/)[1]);
-    if (!/^62\d{8,14}$/.test(no)) {
-      return msg.reply("⚠️ Format: !setadmin 628xxxx");
-    }
-
-    const targetId = `${no}@c.us`;
-    const alreadyHasAdmin = Object.values(roles).includes("admin");
-
-    if (alreadyHasAdmin && role !== "admin") {
-      return msg.reply("❌ Hanya admin yang bisa menambahkan admin.");
-    }
-
-    if (roles[targetId] === "admin") {
-      return msg.reply(`ℹ️ ${no} sudah menjadi admin.`);
-    }
-
-    roles[targetId] = "admin";
-    await saveJSON(ROLE_PATH, roles);
-    return msg.reply(`✅ ${no} sekarang menjadi admin.`);
-  }
-
-  // Tetapkan wali kelas. Nama kelas ditulis tanpa spasi, misalnya 7A atau XII-RPL-1.
-  if (body.startsWith("!setwali")) {
-    if (role !== "admin") return msg.reply("❌ Hanya admin.");
-
-    const parts = msg.body.trim().split(/\s+/);
-    const nomor = normalizeNomor(parts[1]);
-    const namaKelas = (parts[2] || "").toUpperCase();
-    const namaWali = toTitleCase(parts.slice(3).join(" ").trim());
-
-    if (!/^62\d{8,14}$/.test(nomor) || !namaKelas || !namaWali) {
-      return msg.reply(
-        "⚠️ Format: *!setwali 628xxxxx 7A Nama Wali Kelas*"
-      );
-    }
-
-    const waliId = `${nomor}@c.us`;
-    const dataKelas = loadKelas();
-    dataKelas[namaKelas] = dataKelas[namaKelas] || { siswa: {} };
-    dataKelas[namaKelas].waliKelas = waliId;
-    dataKelas[namaKelas].namaWali = namaWali;
-    if (roles[waliId] !== "admin") roles[waliId] = "wali_kelas";
-
-    await saveKelas(dataKelas);
-    await saveJSON(ROLE_PATH, roles);
-    return msg.reply(
-      `✅ *${namaWali}* (${nomor}) ditetapkan sebagai wali kelas *${namaKelas}*.`
     );
   }
 
@@ -386,7 +365,7 @@ client.on("message", async (msg) => {
     const dataKelas = loadKelas();
     if (!dataKelas[namaKelas]?.waliKelas) {
       return msg.reply(
-        `❌ Wali kelas *${namaKelas}* belum diatur. Gunakan *!setwali* terlebih dahulu.`
+        `❌ Wali kelas *${namaKelas}* belum diatur. Atur wali kelas melalui dashboard web.`
       );
     }
 
@@ -1498,7 +1477,7 @@ app.post("/api/auth/request-otp", async (req, res) => {
   }
 });
 
-app.post("/api/auth/verify", (req, res) => {
+app.post("/api/auth/verify", async (req, res) => {
   const nomor = normalizeNomor(req.body.nomor);
   const id = `${nomor}@c.us`;
   const otp = loginOtps.get(id);
@@ -1522,18 +1501,19 @@ app.post("/api/auth/verify", (req, res) => {
   }
   loginOtps.delete(id);
   const token = crypto.randomBytes(32).toString("hex");
-  webSessions.set(token, { id, nomor, role, expiresAt: Date.now() + 8 * 60 * 60_000 });
+  const nama = await resolveDashboardUserName(id, role);
+  webSessions.set(token, { id, nomor, nama, role, expiresAt: Date.now() + 8 * 60 * 60_000 });
   res.setHeader(
     "Set-Cookie",
     `absensi_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800`
   );
-  res.json({ ok: true, user: { nomor, role } });
+  res.json({ ok: true, user: { nomor, nama, role } });
 });
 
 app.get("/api/auth/me", (req, res) => {
   const user = webUser(req);
   if (!user) return res.status(401).json({ error: "Belum login." });
-  res.json({ nomor: user.nomor, role: user.role });
+  res.json({ nomor: user.nomor, nama: dashboardUserName(user.id, user.role), role: user.role });
 });
 
 app.post("/api/auth/logout", (req, res) => {
@@ -1592,7 +1572,11 @@ function dashboardData(user) {
     admins: user.role === "admin" ? Object.entries(roles)
       .filter(([, role]) => role === "admin")
       .map(([id]) => id.replace("@c.us", "")) : [],
-    currentUser: { nomor: user.nomor, role: user.role },
+    currentUser: {
+      nomor: user.nomor,
+      nama: dashboardUserName(user.id, user.role),
+      role: user.role,
+    },
     faceService: faceServiceStatus(),
   };
 }
@@ -1603,8 +1587,12 @@ app.get("/api/dashboard", (req, res) => {
 
 app.post("/api/admins", requireWebAdmin, async (req, res) => {
   const nomor = normalizeNomor(req.body.nomor);
+  const nama = toTitleCase(String(req.body.nama || "").trim());
   if (!/^62\d{8,14}$/.test(nomor)) {
     return res.status(400).json({ error: "Nomor WhatsApp admin belum valid." });
+  }
+  if (nama.length < 3) {
+    return res.status(400).json({ error: "Nama admin minimal 3 karakter." });
   }
 
   const id = `${nomor}@c.us`;
@@ -1615,7 +1603,8 @@ app.post("/api/admins", requireWebAdmin, async (req, res) => {
 
   roles[id] = "admin";
   await saveJSON(ROLE_PATH, roles);
-  res.status(201).json({ ok: true, nomor, role: "admin" });
+  await saveDashboardUserName(id, nama);
+  res.status(201).json({ ok: true, nomor, nama, role: "admin" });
 });
 
 app.delete("/api/admins/:number", requireWebAdmin, async (req, res) => {
@@ -1656,6 +1645,7 @@ app.post("/api/classes", requireWebAdmin, async (req, res) => {
   kelas[nama].namaWali = namaWali;
   const waliId = `${waliKelas}@c.us`;
   if (roles[waliId] !== "admin") roles[waliId] = "wali_kelas";
+  await saveDashboardUserName(waliId, namaWali);
   removeUnusedWaliRole(waliSebelumnya, kelas, roles);
   await saveKelas(kelas);
   await saveJSON(ROLE_PATH, roles);
