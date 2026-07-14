@@ -127,7 +127,7 @@
                 <button class="w-full rounded-xl bg-ink py-3 font-bold text-white">Tambahkan admin</button>
               </form>
               <div><p class="text-sm font-bold uppercase tracking-widest text-leaf">Akses dashboard</p><h2 class="mb-5 font-display text-2xl font-bold">Daftar admin</h2>
-                <div class="grid gap-3 sm:grid-cols-2"><template x-for="nomor in data.admins" :key="nomor"><article class="flex items-center gap-3 rounded-2xl border border-ink/10 p-4"><div class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-sun font-bold">A</div><div><h3 class="font-bold" x-text="nomor"></h3><p class="text-xs text-ink/50" x-text="nomor === user?.nomor ? 'Admin aktif · Anda' : 'Admin'"></p></div></article></template></div>
+                <div class="grid gap-3 sm:grid-cols-2"><template x-for="nomor in data.admins" :key="nomor"><article class="flex items-center gap-3 rounded-2xl border border-ink/10 p-4"><div class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-sun font-bold">A</div><div class="min-w-0 flex-1"><h3 class="truncate font-bold" x-text="nomor"></h3><p class="text-xs text-ink/50" x-text="nomor === user?.nomor ? 'Admin aktif · Anda' : 'Admin'"></p></div><button x-show="nomor !== user?.nomor" @click="removeAdmin(nomor)" class="rounded-lg bg-red-50 px-3 py-2 text-xs font-bold text-red-700">Hapus</button><span x-show="nomor === user?.nomor" class="rounded-lg bg-ink/5 px-3 py-2 text-xs font-bold text-ink/45">Akun Anda</span></article></template></div>
               </div>
             </div>
           </div>
@@ -168,6 +168,7 @@
           async uploadPhoto(number,event){ const file=event.target.files[0]; if(!file)return; const form=new FormData();form.append("photo",file); await this.act(()=>this.request(`/api/students/${number}/photo`,{method:"POST",body:form}),"Foto referensi tersimpan"); },
           savePermission(){ return this.act(async()=>{await this.request("/api/permissions",{method:"POST",body:JSON.stringify(this.permission)});this.permission={nomor:"",tanggal:this.data.tanggal,alasan:""};},"Izin tersimpan"); },
           saveAdmin(){ return this.act(async()=>{await this.request("/api/admins",{method:"POST",body:JSON.stringify(this.adminForm)});this.adminForm={nomor:""};},"Admin baru ditambahkan"); },
+          removeAdmin(nomor){ if(confirm(`Hapus akses admin ${nomor}?`)) return this.act(()=>this.request(`/api/admins/${nomor}`,{method:"DELETE"}),"Admin dihapus"); },
           saveTime(){ return this.act(()=>this.request("/api/settings/time",{method:"POST",body:JSON.stringify(this.time)}),"Jam sekolah diperbarui"); },
           async loadReport(){ try{this.report=await this.request(`/api/report?date=${this.reportDate}`);}catch(e){this.notify(e.message,"error");} },
         };

@@ -1618,6 +1618,28 @@ app.post("/api/admins", requireWebAdmin, async (req, res) => {
   res.status(201).json({ ok: true, nomor, role: "admin" });
 });
 
+app.delete("/api/admins/:number", requireWebAdmin, async (req, res) => {
+  const nomor = normalizeNomor(req.params.number);
+  if (!/^62\d{8,14}$/.test(nomor)) {
+    return res.status(400).json({ error: "Nomor WhatsApp admin belum valid." });
+  }
+
+  const id = `${nomor}@c.us`;
+  if (id === req.webUser.id) {
+    return res.status(400).json({ error: "Anda tidak dapat menghapus akun admin sendiri." });
+  }
+
+  const roles = loadRoles();
+  if (roles[id] !== "admin") {
+    return res.status(404).json({ error: "Admin tidak ditemukan." });
+  }
+
+  delete roles[id];
+  loginOtps.delete(id);
+  await saveJSON(ROLE_PATH, roles);
+  res.json({ ok: true, nomor });
+});
+
 app.post("/api/classes", requireWebAdmin, async (req, res) => {
   const nama = String(req.body.nama || "").trim().toUpperCase();
   const waliKelas = normalizeNomor(req.body.waliKelas);
