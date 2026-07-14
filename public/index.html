@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ruang Hadir - Dashboard Sekolah</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: { ink: "#172033", paper: "#f5f0e7", sun: "#f4b942", leaf: "#2f6b57" },
+            fontFamily: { display: ["Georgia", "serif"], body: ["Trebuchet MS", "sans-serif"] },
+            boxShadow: { card: "0 18px 50px rgba(23,32,51,.10)" },
+          },
+        },
+      };
+    </script>
+    <style>
+      [x-cloak] { display: none !important; }
+      body { background-image: radial-gradient(#17203312 1px, transparent 1px); background-size: 22px 22px; }
+      .paper-edge { background-image: linear-gradient(135deg, transparent 8px, #fff 8px); }
+    </style>
+  </head>
+  <body class="min-h-screen bg-paper font-body text-ink" x-data="dashboard()" x-init="init()">
+    <div class="fixed inset-x-0 top-0 -z-10 h-72 bg-gradient-to-br from-ink via-[#263653] to-leaf"></div>
+
+    <section x-show="authChecked && !user" x-cloak class="fixed inset-0 z-50 grid place-items-center bg-ink px-4">
+      <div class="absolute inset-0 opacity-20" style="background-image:radial-gradient(#fff 1px,transparent 1px);background-size:24px 24px"></div>
+      <div class="relative w-full max-w-md rounded-3xl bg-white p-7 shadow-2xl sm:p-9">
+        <div class="mb-7 flex items-center gap-3"><div class="grid h-12 w-12 place-items-center rounded-2xl bg-sun font-bold">RH</div><div><h1 class="font-display text-2xl font-bold">Masuk Ruang Hadir</h1><p class="text-sm text-ink/50">Admin dan wali kelas</p></div></div>
+        <form x-show="loginStep === 'number'" @submit.prevent="requestOtp" class="space-y-4"><label class="block text-sm font-bold">Nomor WhatsApp<input x-model="login.nomor" required placeholder="628..." class="mt-1 w-full rounded-xl border border-ink/15 px-4 py-3" /></label><button :disabled="authLoading" class="w-full rounded-xl bg-ink py-3 font-bold text-white disabled:opacity-50" x-text="authLoading ? 'Mengirim...' : 'Kirim OTP lewat WhatsApp'"></button></form>
+        <form x-show="loginStep === 'otp'" @submit.prevent="verifyOtp" class="space-y-4"><p class="rounded-xl bg-paper p-3 text-sm">Kode 6 digit sudah dikirim ke WhatsApp <strong x-text="login.nomor"></strong>.</p><label class="block text-sm font-bold">Kode OTP<input x-model="login.code" inputmode="numeric" maxlength="6" required placeholder="000000" class="mt-1 w-full rounded-xl border border-ink/15 px-4 py-3 text-center text-2xl tracking-[.35em]" /></label><button :disabled="authLoading" class="w-full rounded-xl bg-ink py-3 font-bold text-white disabled:opacity-50">Masuk ke dashboard</button><button type="button" @click="loginStep='number';login.code=''" class="w-full text-sm font-bold text-leaf">Ganti nomor</button></form>
+        <p x-show="loginError" class="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-700" x-text="loginError"></p>
+      </div>
+    </section>
+
+    <div x-show="user" x-cloak>
+    <header class="mx-auto flex max-w-7xl items-center justify-between px-5 py-6 text-white lg:px-8">
+      <div class="flex items-center gap-3">
+        <div class="grid h-11 w-11 place-items-center rounded-2xl bg-sun text-xl text-ink shadow-lg">RH</div>
+        <div>
+          <h1 class="font-display text-2xl font-bold tracking-tight">Ruang Hadir</h1>
+          <p class="text-xs uppercase tracking-[.25em] text-white/60">Administrasi sekolah</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="hidden rounded-full border border-white/20 px-3 py-1.5 text-sm sm:block" x-text="user?.role === 'admin' ? 'Admin' : 'Wali kelas'"></span>
+        <a x-show="user?.role === 'admin'" href="/qr" class="rounded-xl bg-white/10 px-4 py-2 text-sm hover:bg-white/20">QR WhatsApp</a>
+        <button @click="logout" class="rounded-xl bg-white px-4 py-2 text-sm font-bold text-ink">Keluar</button>
+      </div>
+    </header>
+
+    <main class="mx-auto max-w-7xl px-4 pb-16 sm:px-6 lg:px-8">
+      <section class="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <template x-for="card in cards" :key="card.label">
+          <div class="paper-edge rounded-2xl p-5 shadow-card">
+            <p class="text-xs font-bold uppercase tracking-[.18em] text-ink/45" x-text="card.label"></p>
+            <div class="mt-2 flex items-end justify-between">
+              <strong class="font-display text-4xl" x-text="card.value"></strong>
+              <span class="text-2xl" x-text="card.icon"></span>
+            </div>
+          </div>
+        </template>
+      </section>
+
+      <section class="overflow-hidden rounded-3xl bg-white shadow-card">
+        <nav class="flex gap-1 overflow-x-auto border-b border-ink/10 p-2">
+          <template x-for="item in visibleTabs" :key="item.id">
+            <button @click="tab = item.id" class="whitespace-nowrap rounded-xl px-4 py-2.5 text-sm font-bold transition" :class="tab === item.id ? 'bg-ink text-white' : 'text-ink/55 hover:bg-paper'" x-text="item.label"></button>
+          </template>
+        </nav>
+
+        <div class="p-4 sm:p-7">
+          <div x-show="loading" class="py-20 text-center text-ink/50">Memuat data sekolah...</div>
+
+          <div x-show="!loading && tab === 'ringkasan'" x-cloak>
+            <div class="mb-6 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+              <div><p class="text-sm font-bold uppercase tracking-widest text-leaf">Hari ini</p><h2 class="font-display text-3xl font-bold">Papan kehadiran</h2></div>
+              <div class="flex items-center gap-2"><input type="date" x-model="reportDate" class="rounded-xl border border-ink/15 px-3 py-2" /><button @click="loadReport()" class="rounded-xl bg-sun px-4 py-2 font-bold">Tampilkan</button><a :href="'/api/export?date=' + reportDate" class="rounded-xl bg-leaf px-4 py-2 font-bold text-white">Excel</a></div>
+            </div>
+            <div class="overflow-x-auto rounded-2xl border border-ink/10">
+              <table class="w-full min-w-[760px] text-left text-sm"><thead class="bg-ink text-white"><tr><th class="p-3">Siswa</th><th class="p-3">Kelas</th><th class="p-3">Masuk</th><th class="p-3">Status</th><th class="p-3">Pulang</th><th class="p-3">Keterangan</th></tr></thead>
+                <tbody class="divide-y divide-ink/10"><template x-for="row in report.rows" :key="row.nomor"><tr class="hover:bg-paper/60"><td class="p-3 font-bold" x-text="row.nama"></td><td class="p-3" x-text="row.kelas"></td><td class="p-3" x-text="row.masuk"></td><td class="p-3" x-text="row.statusMasuk"></td><td class="p-3" x-text="row.pulang"></td><td class="p-3"><span x-text="row.izin || row.statusPulang"></span><a x-show="row.buktiIzin" :href="`/api/permissions/${report.tanggal}/${row.nomor}/evidence`" target="_blank" class="ml-2 font-bold text-leaf underline">Lihat bukti</a></td></tr></template></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div x-show="!loading && tab === 'siswa'" x-cloak>
+            <div class="grid gap-8 lg:grid-cols-[360px_1fr]">
+              <form @submit.prevent="saveStudent" class="rounded-2xl bg-paper p-5">
+                <p class="text-sm font-bold uppercase tracking-widest text-leaf">Data siswa</p><h2 class="mb-5 font-display text-2xl font-bold">Tambah atau perbarui</h2>
+                <label class="mb-3 block text-sm font-bold">Nomor WhatsApp<input x-model="student.nomor" required placeholder="628..." class="mt-1 w-full rounded-xl border border-ink/15 bg-white px-3 py-2.5" /></label>
+                <label class="mb-3 block text-sm font-bold">Nama lengkap<input x-model="student.nama" required class="mt-1 w-full rounded-xl border border-ink/15 bg-white px-3 py-2.5" /></label>
+                <label class="mb-3 block text-sm font-bold">Kelas<select x-model="student.kelas" class="mt-1 w-full rounded-xl border border-ink/15 bg-white px-3 py-2.5"><option value="">Belum ditentukan</option><template x-for="kelas in data.kelas"><option :value="kelas.nama" x-text="kelas.nama"></option></template></select></label>
+                <label class="mb-4 block text-sm font-bold">WhatsApp orang tua<input x-model="student.orangTua" placeholder="628..." class="mt-1 w-full rounded-xl border border-ink/15 bg-white px-3 py-2.5" /></label>
+                <button class="w-full rounded-xl bg-ink py-3 font-bold text-white">Simpan siswa</button>
+              </form>
+              <div><div class="mb-4 flex items-end justify-between"><div><p class="text-sm font-bold uppercase tracking-widest text-leaf">Direktori</p><h2 class="font-display text-2xl font-bold">Daftar siswa</h2></div><input x-model="search" placeholder="Cari siswa..." class="w-40 rounded-xl border border-ink/15 px-3 py-2 sm:w-56" /></div>
+                <div class="grid gap-3"><template x-for="s in filteredStudents" :key="s.id"><article class="flex flex-col justify-between gap-4 rounded-2xl border border-ink/10 p-4 sm:flex-row sm:items-center"><div><div class="flex items-center gap-2"><h3 class="font-bold" x-text="s.nama"></h3><span class="rounded-full bg-paper px-2 py-0.5 text-xs" x-text="s.kelas || 'Tanpa kelas'"></span></div><p class="mt-1 text-sm text-ink/50" x-text="s.nomor + (s.orangTua ? ' · Ortu ' + s.orangTua : '')"></p></div><div class="flex gap-2"><label class="cursor-pointer rounded-lg bg-leaf px-3 py-2 text-xs font-bold text-white"><span x-text="s.punyaFoto ? 'Ganti foto' : 'Unggah foto'"></span><input type="file" accept="image/*" class="hidden" @change="uploadPhoto(s.nomor, $event)" /></label><button @click="editStudent(s)" class="rounded-lg bg-sun px-3 py-2 text-xs font-bold">Edit</button><button @click="removeStudent(s)" class="rounded-lg bg-red-50 px-3 py-2 text-xs font-bold text-red-700">Hapus</button></div></article></template></div>
+              </div>
+            </div>
+          </div>
+
+          <div x-show="!loading && tab === 'kelas'" x-cloak>
+            <div class="grid gap-8 lg:grid-cols-[360px_1fr]">
+              <form @submit.prevent="saveClass" class="rounded-2xl bg-paper p-5"><p class="text-sm font-bold uppercase tracking-widest text-leaf">Rombel</p><h2 class="mb-5 font-display text-2xl font-bold">Atur wali kelas</h2><label class="mb-3 block text-sm font-bold">Nama kelas<input x-model="classForm.nama" required placeholder="7A / XII-RPL-1" class="mt-1 w-full rounded-xl border border-ink/15 bg-white px-3 py-2.5" /></label><label class="mb-3 block text-sm font-bold">Nama wali<input x-model="classForm.namaWali" required class="mt-1 w-full rounded-xl border border-ink/15 bg-white px-3 py-2.5" /></label><label class="mb-4 block text-sm font-bold">WhatsApp wali<input x-model="classForm.waliKelas" required placeholder="628..." class="mt-1 w-full rounded-xl border border-ink/15 bg-white px-3 py-2.5" /></label><button class="w-full rounded-xl bg-ink py-3 font-bold text-white">Simpan kelas</button></form>
+              <div class="grid content-start gap-3 sm:grid-cols-2"><template x-for="kelas in data.kelas" :key="kelas.nama"><article class="rounded-2xl border border-ink/10 p-5"><div class="flex justify-between"><div class="grid h-12 w-12 place-items-center rounded-2xl bg-sun font-display text-xl font-bold" x-text="kelas.nama"></div><button @click="removeClass(kelas)" class="text-sm text-red-600">Hapus</button></div><h3 class="mt-4 text-lg font-bold" x-text="kelas.namaWali"></h3><p class="text-sm text-ink/50" x-text="kelas.waliKelas"></p><p class="mt-4 border-t border-ink/10 pt-3 text-sm"><strong x-text="kelas.jumlahSiswa"></strong> siswa terhubung</p></article></template></div>
+            </div>
+          </div>
+
+          <div x-show="!loading && tab === 'izin'" x-cloak>
+            <div class="mx-auto max-w-xl"><p class="text-sm font-bold uppercase tracking-widest text-leaf">Ketidakhadiran</p><h2 class="mb-5 font-display text-3xl font-bold">Catat izin siswa</h2><form @submit.prevent="savePermission" class="grid gap-4 rounded-2xl bg-paper p-6"><label class="text-sm font-bold">Siswa<select x-model="permission.nomor" required class="mt-1 w-full rounded-xl border border-ink/15 bg-white px-3 py-2.5"><option value="">Pilih siswa</option><template x-for="s in data.siswa"><option :value="s.nomor" x-text="s.nama + (s.kelas ? ' · ' + s.kelas : '')"></option></template></select></label><label class="text-sm font-bold">Tanggal<input type="date" x-model="permission.tanggal" required class="mt-1 w-full rounded-xl border border-ink/15 bg-white px-3 py-2.5" /></label><label class="text-sm font-bold">Alasan<textarea x-model="permission.alasan" required rows="3" class="mt-1 w-full rounded-xl border border-ink/15 bg-white px-3 py-2.5"></textarea></label><button class="rounded-xl bg-ink py-3 font-bold text-white">Simpan izin</button></form></div>
+          </div>
+
+          <div x-show="!loading && tab === 'pengaturan'" x-cloak>
+            <div class="mx-auto max-w-xl"><p class="text-sm font-bold uppercase tracking-widest text-leaf">Jadwal sekolah</p><h2 class="mb-5 font-display text-3xl font-bold">Jam absensi</h2><form @submit.prevent="saveTime" class="rounded-2xl bg-paper p-6"><div class="grid gap-4 sm:grid-cols-2"><label class="text-sm font-bold">Jam masuk<input type="time" x-model="time.masuk" required class="mt-1 w-full rounded-xl border border-ink/15 bg-white px-3 py-2.5" /></label><label class="text-sm font-bold">Jam pulang<input type="time" x-model="time.pulang" required class="mt-1 w-full rounded-xl border border-ink/15 bg-white px-3 py-2.5" /></label></div><button class="mt-5 w-full rounded-xl bg-ink py-3 font-bold text-white">Simpan jadwal</button><p class="mt-4 text-center text-sm text-ink/50">Lokasi sekolah tetap diatur lewat WhatsApp dengan <strong>!setlokasi</strong>.</p></form></div>
+          </div>
+        </div>
+      </section>
+    </main>
+    </div>
+
+    <div x-show="toast" x-transition x-cloak class="fixed bottom-5 right-5 max-w-sm rounded-2xl px-5 py-3 font-bold text-white shadow-2xl" :class="toastType === 'error' ? 'bg-red-700' : 'bg-leaf'" x-text="toast"></div>
+
+    <script>
+      function dashboard() {
+        return {
+          tab: "ringkasan", loading: true, search: "", toast: "", toastType: "ok", authChecked: false, authLoading: false, user: null, loginStep: "number", loginError: "", login: {nomor:"",code:""}, data: { siswa: [], kelas: [], jam: {} }, report: { rows: [] }, reportDate: "",
+          tabs: [{id:"ringkasan",label:"Ringkasan"},{id:"siswa",label:"Siswa"},{id:"kelas",label:"Kelas & Wali"},{id:"izin",label:"Izin"},{id:"pengaturan",label:"Pengaturan"}],
+          student: { nomor:"", nama:"", kelas:"", orangTua:"" }, classForm: { nama:"", namaWali:"", waliKelas:"" }, permission: { nomor:"", tanggal:"", alasan:"" }, time: { masuk:"07:00", pulang:"14:00" },
+          get cards() { const hadir=this.data.siswa.filter(s=>s.masuk).length, izin=this.data.siswa.filter(s=>s.izin).length; return [{label:"Total siswa",value:this.data.siswa.length,icon:"🎒"},{label:"Hadir hari ini",value:hadir,icon:"✓"},{label:"Belum hadir",value:Math.max(0,this.data.siswa.length-hadir-izin),icon:"○"},{label:"Izin",value:izin,icon:"✎"}]; },
+          get visibleTabs() { return this.user?.role === "admin" ? this.tabs : this.tabs.filter(item=>item.id === "ringkasan"); },
+          get filteredStudents() { const q=this.search.toLowerCase(); return this.data.siswa.filter(s=>(s.nama+s.nomor+s.kelas).toLowerCase().includes(q)); },
+          async init(){ try{this.user=await this.request("/api/auth/me");await this.loadDashboard();}catch(e){this.user=null;}finally{this.authChecked=true;} },
+          async loadDashboard(){ await this.refresh();this.reportDate=this.data.tanggal;this.permission.tanggal=this.data.tanggal;await this.loadReport(); },
+          async requestOtp(){this.authLoading=true;this.loginError="";try{await this.request("/api/auth/request-otp",{method:"POST",body:JSON.stringify({nomor:this.login.nomor})});this.loginStep="otp";}catch(e){this.loginError=e.message;}finally{this.authLoading=false;}},
+          async verifyOtp(){this.authLoading=true;this.loginError="";try{const result=await this.request("/api/auth/verify",{method:"POST",body:JSON.stringify(this.login)});this.user=result.user;await this.loadDashboard();}catch(e){this.loginError=e.message;}finally{this.authLoading=false;}},
+          async logout(){try{await this.request("/api/auth/logout",{method:"POST",body:"{}"});}finally{this.user=null;this.data={siswa:[],kelas:[],jam:{}};this.login={nomor:"",code:""};this.loginStep="number";}},
+          async refresh(){ this.loading=true; try { this.data=await this.request("/api/dashboard"); this.time={masuk:(this.data.jam.masuk||"").slice(0,5),pulang:(this.data.jam.pulang||"").slice(0,5)}; } finally { this.loading=false; } },
+          async request(url, options={}){ const res=await fetch(url,{headers:options.body instanceof FormData?{}:{"Content-Type":"application/json"},...options}); const body=res.headers.get("content-type")?.includes("json")?await res.json():{}; if(!res.ok) throw new Error(body.error||"Permintaan gagal"); return body; },
+          notify(message,type="ok"){ this.toast=message; this.toastType=type; setTimeout(()=>this.toast="",3000); },
+          async act(fn,message){ try { await fn(); await this.refresh(); this.notify(message); } catch(e){ this.notify(e.message,"error"); } },
+          saveStudent(){ return this.act(async()=>{await this.request("/api/students",{method:"POST",body:JSON.stringify(this.student)});this.student={nomor:"",nama:"",kelas:"",orangTua:""};},"Data siswa tersimpan"); },
+          editStudent(s){ this.student={nomor:s.nomor,nama:s.nama,kelas:s.kelas,orangTua:s.orangTua}; window.scrollTo({top:250,behavior:"smooth"}); },
+          removeStudent(s){ if(confirm(`Hapus ${s.nama}?`)) this.act(()=>this.request(`/api/students/${s.nomor}`,{method:"DELETE"}),"Siswa dihapus"); },
+          saveClass(){ return this.act(async()=>{await this.request("/api/classes",{method:"POST",body:JSON.stringify(this.classForm)});this.classForm={nama:"",namaWali:"",waliKelas:""};},"Kelas tersimpan"); },
+          removeClass(k){ if(confirm(`Hapus kelas ${k.nama}?`)) this.act(()=>this.request(`/api/classes/${encodeURIComponent(k.nama)}`,{method:"DELETE"}),"Kelas dihapus"); },
+          async uploadPhoto(number,event){ const file=event.target.files[0]; if(!file)return; const form=new FormData();form.append("photo",file); await this.act(()=>this.request(`/api/students/${number}/photo`,{method:"POST",body:form}),"Foto referensi tersimpan"); },
+          savePermission(){ return this.act(async()=>{await this.request("/api/permissions",{method:"POST",body:JSON.stringify(this.permission)});this.permission={nomor:"",tanggal:this.data.tanggal,alasan:""};},"Izin tersimpan"); },
+          saveTime(){ return this.act(()=>this.request("/api/settings/time",{method:"POST",body:JSON.stringify(this.time)}),"Jam sekolah diperbarui"); },
+          async loadReport(){ try{this.report=await this.request(`/api/report?date=${this.reportDate}`);}catch(e){this.notify(e.message,"error");} },
+        };
+      }
+    </script>
+  </body>
+</html>

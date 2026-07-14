@@ -6,9 +6,20 @@ const haversine = require("haversine-distance");
 const XLSX = require("xlsx");
 const axios = require("axios");
 const express = require("express");
+const multer = require("multer");
+const crypto = require("crypto");
 const { DB_PATH, initJsonStore, saveJsonData } = require("./models/database");
 const app = express();
 const PORT = 3200;
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+});
+const loginOtps = new Map();
+const webSessions = new Map();
+
+app.use(express.json());
+app.use(express.static("public"));
 
 const STORAGE_PATH = "./storage.json";
 const KONTAK_PATH = "./kontak.json";
@@ -20,8 +31,9 @@ const REQUESTS_PATH = "./pending_requests.json";
 const PENDING_FOTO_PATH = "./pending_selfie.json";
 const FACE_DB = "./face_db";
 const FACE_REC = "./face_rec";
-const SHIFT_PATH = "./shifts.json";
+const IZIN_BUKTI_DIR = "./izin_bukti";
 const IZIN_PATH = "./izin.json";
+const KELAS_PATH = "./kelas.json";
 
 const DEFAULT_ROLES = {
   "6285158909844@c.us": "admin",
@@ -41,15 +53,8 @@ const JSON_STORES = {
   },
   [REQUESTS_PATH]: { path: REQUESTS_PATH, fallback: [] },
   [PENDING_FOTO_PATH]: { path: PENDING_FOTO_PATH, fallback: {} },
-  [SHIFT_PATH]: {
-    path: SHIFT_PATH,
-    fallback: {
-      shift1: { masuk: "07:00", pulang: "15:00" },
-      shift2: { masuk: "15:00", pulang: "23:00" },
-      shift3: { masuk: "23:00", pulang: "07:00" },
-    },
-  },
   [IZIN_PATH]: { path: IZIN_PATH, fallback: {} },
+  [KELAS_PATH]: { path: KELAS_PATH, fallback: {} },
 };
 
 let jsonCache = {};
@@ -95,6 +100,11 @@ function normalizeJam(jam) {
 function clearPendingAbsen(sender) {
   if (pendingAbsen[sender]?.timeout) clearTimeout(pendingAbsen[sender].timeout);
   delete pendingAbsen[sender];
+}
+
+function clearPendingIzin(sender) {
+  if (pendingIzin[sender]?.timeout) clearTimeout(pendingIzin[sender].timeout);
+  delete pendingIzin[sender];
 }
 
 function loadRequests() {
@@ -165,24 +175,45 @@ function normalizeNomor(rawNomor) {
   return nomor;
 }
 
-function loadShifts() {
-  return loadJSON(SHIFT_PATH, {
-    shift1: { masuk: "07:00", pulang: "15:00" },
-    shift2: { masuk: "15:00", pulang: "23:00" },
-    shift3: { masuk: "23:00", pulang: "07:00" },
-  });
-}
-
-async function saveShifts(obj) {
-  await saveJSON(SHIFT_PATH, obj);
-}
-
 function loadIzin() {
   return loadJSON(IZIN_PATH, {});
 }
 
 async function saveIzin(data) {
   await saveJSON(IZIN_PATH, data);
+}
+
+function loadKelas() {
+  return loadJSON(KELAS_PATH, {});
+}
+
+async function saveKelas(data) {
+  await saveJSON(KELAS_PATH, data);
+}
+
+function findKelasSiswa(dataKelas, siswaId) {
+  for (const [namaKelas, data] of Object.entries(dataKelas)) {
+    if (data.siswa?.[siswaId]) return { namaKelas, ...data };
+  }
+  return null;
+}
+
+async function kirimPesanAman(id, pesan) {
+  if (!id) return;
+  try {
+    await client.sendMessage(id, pesan);
+  } catch (error) {
+    console.error(`[Notifikasi ERROR] ${id}:`, error.message);
+  }
+}
+
+async function kirimMediaAman(id, media, caption) {
+  if (!id) return;
+  try {
+    await client.sendMessage(id, media, { caption });
+  } catch (error) {
+    console.error(`[Notifikasi Media ERROR] ${id}:`, error.message);
+  }
 }
 
 const client = new Client({
@@ -194,6 +225,7 @@ const client = new Client({
 });
 
 const pendingAbsen = {};
+const pendingIzin = {};
 const pendingKontak = {};
 const pendingLokasi = {};
 
@@ -233,13 +265,29 @@ client.on("message", async (msg) => {
   const waktu = getWaktu();
   const role = roles[sender] || "user";
 
-  if (!kontak[sender] && role !== "admin") {
+  if (!kontak[sender] && !["admin", "wali_kelas"].includes(role)) {
     const allowed = ["!setadmin"];
     if (!allowed.some((cmd) => body.startsWith(cmd))) {
       return msg.reply(
         "❌ Nomor kamu belum terdaftar di absensi. Hubungi admin untuk didaftarkan."
       );
     }
+  }
+
+  const commandDiizinkan =
+    body === "!masuk" ||
+    body === "!pulang" ||
+    body === "!setlokasi" ||
+    body === "!izin" ||
+    body.startsWith("!izin ");
+  if (
+    body.startsWith("!") &&
+    !commandDiizinkan
+  ) {
+    return msg.reply(
+      "🌐 Pengelolaan data sudah dipindahkan ke dashboard web.\n" +
+        `Buka: http://localhost:${PORT}`
+    );
   }
 
   // Role info
@@ -260,6 +308,83 @@ client.on("message", async (msg) => {
     roles[targetId] = "admin";
     await saveJSON(ROLE_PATH, roles);
     return msg.reply(`✅ ${no} sekarang menjadi admin.`);
+  }
+
+  // Tetapkan wali kelas. Nama kelas ditulis tanpa spasi, misalnya 7A atau XII-RPL-1.
+  if (body.startsWith("!setwali")) {
+    if (role !== "admin") return msg.reply("❌ Hanya admin.");
+
+    const parts = msg.body.trim().split(/\s+/);
+    const nomor = normalizeNomor(parts[1]);
+    const namaKelas = (parts[2] || "").toUpperCase();
+    const namaWali = toTitleCase(parts.slice(3).join(" ").trim());
+
+    if (!/^62\d{8,14}$/.test(nomor) || !namaKelas || !namaWali) {
+      return msg.reply(
+        "⚠️ Format: *!setwali 628xxxxx 7A Nama Wali Kelas*"
+      );
+    }
+
+    const waliId = `${nomor}@c.us`;
+    const dataKelas = loadKelas();
+    dataKelas[namaKelas] = dataKelas[namaKelas] || { siswa: {} };
+    dataKelas[namaKelas].waliKelas = waliId;
+    dataKelas[namaKelas].namaWali = namaWali;
+    roles[waliId] = "wali_kelas";
+
+    await saveKelas(dataKelas);
+    await saveJSON(ROLE_PATH, roles);
+    return msg.reply(
+      `✅ *${namaWali}* (${nomor}) ditetapkan sebagai wali kelas *${namaKelas}*.`
+    );
+  }
+
+  // Hubungkan siswa terdaftar dengan kelas dan nomor WhatsApp orang tua.
+  if (body.startsWith("!setsiswa")) {
+    if (role !== "admin") return msg.reply("❌ Hanya admin.");
+
+    const parts = msg.body.trim().split(/\s+/);
+    const nomorSiswa = normalizeNomor(parts[1]);
+    const namaKelas = (parts[2] || "").toUpperCase();
+    const nomorOrangTua = normalizeNomor(parts[3]);
+    const siswaId = `${nomorSiswa}@c.us`;
+
+    if (
+      !/^62\d{8,14}$/.test(nomorSiswa) ||
+      !namaKelas ||
+      !/^62\d{8,14}$/.test(nomorOrangTua)
+    ) {
+      return msg.reply(
+        "⚠️ Format: *!setsiswa 628nomorsiswa 7A 628nomororangtua*"
+      );
+    }
+    if (!kontak[siswaId]) {
+      return msg.reply(
+        `❌ Siswa ${nomorSiswa} belum terdaftar. Tambahkan dengan *!tambah kontak* terlebih dahulu.`
+      );
+    }
+
+    const dataKelas = loadKelas();
+    if (!dataKelas[namaKelas]?.waliKelas) {
+      return msg.reply(
+        `❌ Wali kelas *${namaKelas}* belum diatur. Gunakan *!setwali* terlebih dahulu.`
+      );
+    }
+
+    // Satu siswa hanya boleh terhubung dengan satu kelas.
+    for (const data of Object.values(dataKelas)) {
+      if (data.siswa) delete data.siswa[siswaId];
+    }
+    dataKelas[namaKelas].siswa = dataKelas[namaKelas].siswa || {};
+    dataKelas[namaKelas].siswa[siswaId] = {
+      nama: kontak[siswaId],
+      orangTua: `${nomorOrangTua}@c.us`,
+    };
+
+    await saveKelas(dataKelas);
+    return msg.reply(
+      `✅ *${kontak[siswaId]}* dihubungkan ke kelas *${namaKelas}* dan orang tua ${nomorOrangTua}.`
+    );
   }
 
   // Tambah kontak absensi oleh admin
@@ -516,7 +641,7 @@ client.on("message", async (msg) => {
       longitude: msg.location.longitude,
     });
     delete pendingLokasi[sender];
-    return msg.reply("✅ Lokasi kantor disimpan.");
+    return msg.reply("✅ Lokasi sekolah disimpan.");
   }
 
   // Set jam kerja
@@ -533,28 +658,6 @@ client.on("message", async (msg) => {
     return msg.reply(`✅ Jam ${jenis} diatur ke ${jam}`);
   }
 
-  // set shift
-  if (body.startsWith("!setshift")) {
-    if (role !== "admin") return msg.reply("❌ Hanya admin.");
-    const [_, shift, jamMasuk, jamPulang] = body.split(" ");
-    if (!shift || !jamMasuk || !jamPulang)
-      return msg.reply("⚠️ Format: !setshift shift1 07:00 15:00");
-
-    if (!/^\d{2}:\d{2}$/.test(jamMasuk) || !/^\d{2}:\d{2}$/.test(jamPulang)) {
-      return msg.reply(
-        "⚠️ Format jam harus HH:mm. Contoh: !setshift shift1 07:00 15:00"
-      );
-    }
-
-    const shifts = loadShifts();
-    shifts[shift.toLowerCase()] = { masuk: jamMasuk, pulang: jamPulang };
-    await saveShifts(shifts);
-
-    msg.reply(
-      `✅ Shift *${shift}* diatur ke\nMasuk: ${jamMasuk}\nPulang: ${jamPulang}`
-    );
-  }
-
   // Absen masuk/pulang
   if (body.startsWith("!masuk") || body.startsWith("!pulang")) {
     if (!kontak[sender]) {
@@ -564,8 +667,6 @@ client.on("message", async (msg) => {
     }
 
     const tipe = body.startsWith("!masuk") ? "masuk" : "pulang";
-    const shifts = loadShifts();
-    const shiftArg = body.split(" ")[1]?.toLowerCase();
     const nomor = sender.replace("@c.us", "");
 
     if (!fs.existsSync(`${FACE_REC}/${nomor}.jpg`)) {
@@ -574,28 +675,14 @@ client.on("message", async (msg) => {
       );
     }
 
-    // validasi shift harus cocok dengan key di shifts
-    if (shiftArg && !shifts[shiftArg]) {
-      return msg.reply(
-        `❌ Shift *${shiftArg}* tidak ditemukan.\nGunakan format: *!masuk shift1* / *!pulang shift2*`
-      );
-    }
-
-    const shift = shiftArg || null;
-
     pendingAbsen[sender] = {
       tipe,
-      shift,
       foto: null,
       lokasi: null,
       timeout: setTimeout(() => delete pendingAbsen[sender], 60000),
     };
 
-    return msg.reply(
-      `📸 Kirim foto Selfie untuk absen *${tipe}*${
-        shift ? ` (Shift: ${shift})` : ""
-      }.`
-    );
+    return msg.reply(`📸 Kirim foto Selfie untuk absen *${tipe}*.`);
   }
 
   if (msg.hasMedia && pendingAbsen[sender]) {
@@ -635,7 +722,7 @@ client.on("message", async (msg) => {
     const jarak = haversine(lokasi, lokasiKantor);
     if (jarak > 100) {
       clearPendingAbsen(sender);
-      return msg.reply("❌ Di luar area kantor.");
+      return msg.reply("❌ Kamu berada di luar area sekolah.");
     }
 
     const tipe = absen.tipe;
@@ -653,10 +740,8 @@ client.on("message", async (msg) => {
       return msg.reply(`✅ Sudah absen ${tipe}.`);
     }
 
-    const shifts = loadShifts();
-    const jamShift = absen.shift ? shifts[absen.shift] : jamResmi;
-    const jamMasuk = normalizeJam(jamShift.masuk);
-    const jamPulang = normalizeJam(jamShift.pulang);
+    const jamMasuk = normalizeJam(jamResmi.masuk);
+    const jamPulang = normalizeJam(jamResmi.pulang);
 
     const status =
       tipe === "masuk"
@@ -671,7 +756,6 @@ client.on("message", async (msg) => {
       waktu: waktu.jam,
       lokasi,
       status,
-      shift: absen.shift || "default",
       foto: absen.foto,
       nama: kontak[sender],
     };
@@ -690,72 +774,127 @@ client.on("message", async (msg) => {
     const roles = loadRoles();
     for (const id in roles) {
       if (roles[id] === "admin") {
-        await client.sendMessage(id, mediaMsg, {
-          caption: `🕘 *${kontak[sender] || sender}* telah absen *${tipe}* ${
-            absen.shift ? `(Shift: ${absen.shift})` : ""
-          }\nStatus: *${status}*\nJam: ${waktu.jam}`,
-        });
+        try {
+          await client.sendMessage(id, mediaMsg, {
+            caption: `🕘 *${kontak[sender] || sender}* telah absen *${tipe}*\nStatus: *${status}*\nJam: ${waktu.jam}`,
+          });
+        } catch (error) {
+          console.error(`[Notifikasi Admin ERROR] ${id}:`, error.message);
+        }
+      }
+    }
+
+    const kelasSiswa = findKelasSiswa(loadKelas(), sender);
+    if (kelasSiswa) {
+      const infoSiswa = kelasSiswa.siswa[sender];
+      const notifikasi =
+        `🔔 *Notifikasi Absensi Siswa*\n` +
+        `👤 Nama: *${kontak[sender] || sender}*\n` +
+        `🏫 Kelas: ${kelasSiswa.namaKelas}\n` +
+        `🕘 Absen: ${toTitleCase(tipe)}\n` +
+        `⏰ Jam: ${waktu.jam}\n` +
+        `📌 Status: *${status}*`;
+
+      await kirimPesanAman(infoSiswa.orangTua, notifikasi);
+      if (kelasSiswa.waliKelas !== sender) {
+        await kirimPesanAman(kelasSiswa.waliKelas, notifikasi);
       }
     }
   }
 
-  // izin
+  // Pengajuan izin wajib dilengkapi foto bukti.
+  if (body === "!izin") {
+    return msg.reply("⚠️ Format: *!izin alasan*\nContoh: *!izin sakit demam*");
+  }
+
   if (body.startsWith("!izin ")) {
     if (!kontak[sender]) {
-      return msg.reply(
-        "❌ Nomor kamu belum terdaftar. Tidak bisa mengajukan izin."
-      );
+      return msg.reply("❌ Nomor kamu belum terdaftar. Tidak bisa mengajukan izin.");
     }
 
-    const izinData = loadIzin();
-    const arg = body.slice(6).trim(); // ex: "hari ini sakit"
-    let alasan;
-    let tanggal;
-
-    if (arg.startsWith("hari ini")) {
-      tanggal = waktu.tanggal;
-      alasan = arg.split(" ").slice(2).join(" ").trim();
-    } else if (/^\d{4}-\d{2}-\d{2}/.test(arg)) {
-      const parts = arg.split(" ");
-      tanggal = parts[0];
-      alasan = parts.slice(1).join(" ").trim();
-    } else {
-      return msg.reply(
-        "❌ Format salah. Gunakan: *!izin hari ini alasan* atau *!izin YYYY-MM-DD alasan*"
-      );
+    const alasan = msg.body.trim().slice(6).trim();
+    if (alasan.length < 3) return msg.reply("⚠️ Alasan izin terlalu singkat.");
+    if (loadIzin()[waktu.tanggal]?.[sender]) {
+      return msg.reply("⚠️ Kamu sudah mengajukan izin hari ini.");
     }
 
-    if (!alasan || alasan.length < 3)
-      return msg.reply("⚠️ Alasan izin terlalu singkat.");
-
-    // Cegah izin ganda
-    if (izinData[tanggal]?.[sender]) {
-      return msg.reply(
-        `⚠️ Kamu sudah mengajukan izin untuk tanggal ${tanggal}.`
-      );
-    }
-
-    izinData[tanggal] = izinData[tanggal] || {};
-    izinData[tanggal][sender] = {
+    clearPendingIzin(sender);
+    pendingIzin[sender] = {
       alasan,
-      nama: kontak[sender] || sender,
+      tanggal: waktu.tanggal,
+      timeout: setTimeout(() => clearPendingIzin(sender), 2 * 60 * 1000),
     };
-    await saveIzin(izinData);
 
-    msg.reply(`✅ Izin untuk tanggal ${tanggal} dicatat.\nAlasan: ${alasan}`);
+    const instruksiSakit = alasan.toLowerCase().includes("sakit")
+      ? "\n🤒 Karena izin sakit, pastikan wajah kamu dan surat/bukti sakit terlihat bersama dalam foto."
+      : "";
+    return msg.reply(
+      `📷 Kirim *foto bukti izin* dalam waktu 2 menit.${instruksiSakit}\n\nIzin baru dicatat setelah foto diterima.`
+    );
+  }
 
-    // 🔔 Kirim notifikasi ke semua admin
-    const roles = loadRoles();
-    for (const id in roles) {
-      if (roles[id] === "admin" && id !== sender) {
-        await client.sendMessage(
-          id,
-          `📩 *Pengajuan Izin Baru*\n👤 Nama: *${
-            kontak[sender] || sender
-          }*\n📅 Tanggal: ${tanggal}\n📌 Alasan: ${alasan}`
+  if (msg.hasMedia && pendingIzin[sender]) {
+    const media = await msg.downloadMedia();
+    if (!media?.data || !media.mimetype?.startsWith("image/")) {
+      return msg.reply("❌ Bukti izin harus berupa foto.");
+    }
+
+    const pengajuan = pendingIzin[sender];
+    const izinSakit = pengajuan.alasan.toLowerCase().includes("sakit");
+    if (izinSakit) {
+      const wajahCocok = await verifikasiWajah(sender, media.data);
+      if (!wajahCocok) {
+        clearPendingIzin(sender);
+        return msg.reply(
+          "❌ Wajah tidak dikenali. Untuk izin sakit, foto ulang dengan wajah kamu dan surat/bukti sakit terlihat jelas bersama."
         );
       }
     }
+
+    ensureDir(IZIN_BUKTI_DIR);
+    const nomor = sender.replace("@c.us", "");
+    const buktiPath = `${IZIN_BUKTI_DIR}/${pengajuan.tanggal}-${nomor}.jpg`;
+    fs.writeFileSync(buktiPath, Buffer.from(media.data, "base64"));
+
+    const izinData = loadIzin();
+    izinData[pengajuan.tanggal] = izinData[pengajuan.tanggal] || {};
+    izinData[pengajuan.tanggal][sender] = {
+      alasan: pengajuan.alasan,
+      nama: kontak[sender] || sender,
+      bukti: buktiPath,
+      terverifikasiWajah: izinSakit,
+    };
+    await saveIzin(izinData);
+    clearPendingIzin(sender);
+
+    const kelasSiswa = findKelasSiswa(loadKelas(), sender);
+    const caption =
+      `📩 *Pengajuan Izin Siswa*\n` +
+      `👤 Nama: *${kontak[sender] || sender}*\n` +
+      `🏫 Kelas: ${kelasSiswa?.namaKelas || "-"}\n` +
+      `📅 Tanggal: ${pengajuan.tanggal}\n` +
+      `📌 Alasan: ${pengajuan.alasan}` +
+      (izinSakit ? "\n✅ Wajah siswa terverifikasi" : "");
+    const buktiMedia = new MessageMedia(media.mimetype, media.data, "bukti-izin.jpg");
+
+    const penerima = new Set(
+      Object.entries(loadRoles())
+        .filter(([, penerimaRole]) => penerimaRole === "admin")
+        .map(([id]) => id)
+    );
+    if (kelasSiswa?.waliKelas) penerima.add(kelasSiswa.waliKelas);
+    if (kelasSiswa?.siswa[sender]?.orangTua) {
+      penerima.add(kelasSiswa.siswa[sender].orangTua);
+    }
+    penerima.delete(sender);
+
+    for (const id of penerima) {
+      await kirimMediaAman(id, buktiMedia, caption);
+    }
+
+    return msg.reply(
+      `✅ Izin hari ini berhasil dicatat.\nAlasan: ${pengajuan.alasan}\nFoto bukti sudah dikirim ke pihak terkait.`
+    );
   }
 
   // Rekap hari ini
@@ -786,10 +925,7 @@ client.on("message", async (msg) => {
       if (u.masuk) {
         teks += `🕘 Masuk: ${u.masuk.waktu} (${u.masuk.status})\n`;
         if (u.masuk.status === "Terlambat") {
-          const jamShift = u.masuk.shift
-            ? loadShifts()[u.masuk.shift] || jamResmi
-            : jamResmi;
-          const menit = hitungTelat(u.masuk.waktu, jamShift.masuk);
+          const menit = hitungTelat(u.masuk.waktu, jamResmi.masuk);
           teks += `⏱ Telat: ${menit} menit\n`;
         }
       } else {
@@ -800,10 +936,6 @@ client.on("message", async (msg) => {
         teks += `🕓 Pulang: ${u.pulang.waktu} (${u.pulang.status})\n`;
       } else {
         teks += `🕓 Pulang: ❌\n`;
-      }
-
-      if (u.masuk?.shift) {
-        teks += `🏷️ Shift: ${u.masuk.shift}\n`;
       }
 
       teks += `\n`;
@@ -824,8 +956,6 @@ client.on("message", async (msg) => {
     const tanggal = split[2];
     const data = storage[tanggal] || {};
     const izinData = loadIzin()[tanggal] || {};
-    const shifts = loadShifts();
-
     const semuaID = new Set([...Object.keys(data), ...Object.keys(izinData)]);
     if (!semuaID.size)
       return msg.reply(`❌ Tidak ada data untuk tanggal ${tanggal}`);
@@ -850,15 +980,11 @@ client.on("message", async (msg) => {
 
       if (u.masuk) {
         teks += `🕘 Masuk: ${u.masuk.waktu} (${u.masuk.status})\n`;
-        const shift = u.masuk.shift || "default";
-        const jamShift = (shifts[shift] || jamResmi).masuk;
 
         if (u.masuk.status === "Terlambat") {
-          const menit = hitungTelat(u.masuk.waktu, jamShift);
+          const menit = hitungTelat(u.masuk.waktu, jamResmi.masuk);
           teks += `⏱ Telat: ${menit} menit\n`;
         }
-
-        teks += `🏷️ Shift: ${shift}\n`;
       } else {
         teks += `🕘 Masuk: ❌\n`;
       }
@@ -885,7 +1011,6 @@ client.on("message", async (msg) => {
     }
 
     const bulan = split[2];
-    const shifts = loadShifts();
     const izinData = loadIzin();
     let teks = `📅 Rekap Bulan ${bulan}:\n\n`;
     let ditemukan = false;
@@ -928,15 +1053,11 @@ client.on("message", async (msg) => {
 
         if (log.masuk) {
           teks += `🕘 Masuk: ${log.masuk.waktu} (${log.masuk.status})\n`;
-          const shift = log.masuk.shift || "default";
-          const jamMasuk = (shifts[shift] || jamResmi).masuk;
 
           if (log.masuk.status === "Terlambat") {
-            const menit = hitungTelat(log.masuk.waktu, jamMasuk);
+            const menit = hitungTelat(log.masuk.waktu, jamResmi.masuk);
             teks += `⏱ Telat: ${menit} menit\n`;
           }
-
-          teks += `🏷️ Shift: ${shift}\n`;
         } else {
           teks += `🕘 Masuk: ❌\n`;
         }
@@ -962,7 +1083,6 @@ client.on("message", async (msg) => {
 
     const data = storage[waktu.tanggal] || {};
     const izinData = loadIzin()[waktu.tanggal] || {};
-    const shifts = loadShifts();
     const hasil = [];
 
     const semuaID = new Set([...Object.keys(data), ...Object.keys(izinData)]);
@@ -986,17 +1106,13 @@ client.on("message", async (msg) => {
           MenitTelat: "",
           Pulang: "",
           StatusPulang: "",
-          Shift: "",
         });
         continue;
       }
 
-      const shift = u.masuk?.shift || "default";
-      const jamShift = (shifts[shift] || jamResmi).masuk;
-
       const telat =
         u.masuk?.status === "Terlambat"
-          ? hitungTelat(u.masuk.waktu, jamShift)
+          ? hitungTelat(u.masuk.waktu, jamResmi.masuk)
           : 0;
 
       hasil.push({
@@ -1008,7 +1124,6 @@ client.on("message", async (msg) => {
         MenitTelat: telat,
         Pulang: u.pulang?.waktu || "",
         StatusPulang: u.pulang?.status || "",
-        Shift: shift === "default" ? "" : shift,
       });
     }
 
@@ -1035,7 +1150,6 @@ client.on("message", async (msg) => {
     const tanggal = split[2];
     const data = storage[tanggal] || {};
     const izinData = loadIzin()[tanggal] || {};
-    const shifts = loadShifts();
     const hasil = [];
 
     const semuaID = new Set([...Object.keys(data), ...Object.keys(izinData)]);
@@ -1059,17 +1173,13 @@ client.on("message", async (msg) => {
           MenitTelat: "",
           Pulang: "",
           StatusPulang: "",
-          Shift: "",
         });
         continue;
       }
 
-      const shift = u.masuk?.shift || "default";
-      const jamShift = (shifts[shift] || jamResmi).masuk;
-
       const telat =
         u.masuk?.status === "Terlambat"
-          ? hitungTelat(u.masuk.waktu, jamShift)
+          ? hitungTelat(u.masuk.waktu, jamResmi.masuk)
           : 0;
 
       hasil.push({
@@ -1081,7 +1191,6 @@ client.on("message", async (msg) => {
         MenitTelat: telat,
         Pulang: u.pulang?.waktu || "",
         StatusPulang: u.pulang?.status || "",
-        Shift: shift === "default" ? "" : shift,
       });
     }
 
@@ -1105,7 +1214,6 @@ client.on("message", async (msg) => {
     const bulan = split[2]; // MM-YYYY
     const hasil = [];
     const ringkasan = {};
-    const shifts = loadShifts();
     const izinData = loadIzin();
 
     const semuaTanggalStorage = Object.keys(storage).filter(
@@ -1146,7 +1254,6 @@ client.on("message", async (msg) => {
             MenitTelat: "",
             Pulang: "",
             StatusPulang: "",
-            Shift: "",
           });
 
           if (!ringkasan[nama]) {
@@ -1163,12 +1270,9 @@ client.on("message", async (msg) => {
           continue;
         }
 
-        const shift = u.masuk?.shift || "default";
-        const jamShift = (shifts[shift] || jamResmi).masuk;
-
         const telat =
           u.masuk?.status === "Terlambat"
-            ? hitungTelat(u.masuk.waktu, jamShift)
+            ? hitungTelat(u.masuk.waktu, jamResmi.masuk)
             : 0;
 
         hasil.push({
@@ -1180,7 +1284,6 @@ client.on("message", async (msg) => {
           MenitTelat: telat,
           Pulang: u.pulang?.waktu || "",
           StatusPulang: u.pulang?.status || "",
-          Shift: shift === "default" ? "" : shift,
         });
 
         if (!ringkasan[nama]) {
@@ -1222,14 +1325,43 @@ client.on("message", async (msg) => {
 
   // Belum absen
   if (body === "!belum absen") {
-    if (role !== "admin") return msg.reply("❌ Hanya admin.");
+    if (!["admin", "wali_kelas"].includes(role)) {
+      return msg.reply("❌ Hanya admin atau wali kelas.");
+    }
 
     const data = storage[waktu.tanggal] || {};
     const izinData = loadIzin()[waktu.tanggal] || {};
+    const dataKelas = loadKelas();
     const belumMasuk = [],
       belumPulang = [];
 
-    for (const id in kontak) {
+    let daftarSiswa;
+    let judulKelas = "Semua Kelas";
+
+    if (role === "wali_kelas") {
+      const kelasWali = Object.entries(dataKelas).find(
+        ([, kelas]) => kelas.waliKelas === sender
+      );
+      if (!kelasWali) {
+        return msg.reply("❌ Kamu belum terhubung dengan kelas mana pun.");
+      }
+      judulKelas = kelasWali[0];
+      daftarSiswa = Object.keys(kelasWali[1].siswa || {});
+    } else {
+      daftarSiswa = Object.values(dataKelas).flatMap((kelas) =>
+        Object.keys(kelas.siswa || {})
+      );
+    }
+
+    if (!daftarSiswa.length) {
+      return msg.reply(
+        `📭 Belum ada siswa yang terhubung dengan ${
+          role === "wali_kelas" ? `kelas *${judulKelas}*` : "data kelas"
+        }.`
+      );
+    }
+
+    for (const id of new Set(daftarSiswa)) {
       const nomor = id.replace("@c.us", "");
       const nama = kontak[id] || nomor;
 
@@ -1239,10 +1371,10 @@ client.on("message", async (msg) => {
       if (!data[id]?.pulang) belumPulang.push(`• ${nama} - ${nomor}`);
     }
 
-    let teks = "📋 Belum Absen:\n\n";
+    let teks = `📋 *Belum Absen - ${judulKelas}*\n📅 ${waktu.tanggal}\n\n`;
     teks += `🚫 Masuk:\n${belumMasuk.join("\n") || "✅ Semua sudah masuk"}\n\n`;
     teks += `🚫 Pulang:\n${belumPulang.join("\n") || "✅ Semua sudah pulang"}`;
-    msg.reply(teks);
+    return msg.reply(teks);
   }
 
   function cetak(id) {
@@ -1252,6 +1384,397 @@ client.on("message", async (msg) => {
 
 let qrCodeData = null;
 let isReady = false;
+
+function parseCookies(req) {
+  return Object.fromEntries(
+    String(req.headers.cookie || "")
+      .split(";")
+      .map((cookie) => cookie.trim().split("="))
+      .filter(([key, value]) => key && value)
+      .map(([key, value]) => [key, decodeURIComponent(value)])
+  );
+}
+
+function webUser(req) {
+  const token = parseCookies(req).absensi_session;
+  const session = token ? webSessions.get(token) : null;
+  if (!session || session.expiresAt < Date.now()) {
+    if (token) webSessions.delete(token);
+    return null;
+  }
+  return session;
+}
+
+function requireWebAuth(req, res, next) {
+  const user = webUser(req);
+  if (!user) return res.status(401).json({ error: "Silakan login terlebih dahulu." });
+  req.webUser = user;
+  next();
+}
+
+function requireWebAdmin(req, res, next) {
+  if (req.webUser?.role !== "admin") {
+    return res.status(403).json({ error: "Fitur ini hanya tersedia untuk admin." });
+  }
+  next();
+}
+
+function kelasUntukWali(kelas, userId) {
+  return Object.fromEntries(
+    Object.entries(kelas).filter(([, data]) => data.waliKelas === userId)
+  );
+}
+
+app.post("/api/auth/request-otp", async (req, res) => {
+  const nomor = normalizeNomor(req.body.nomor);
+  const id = `${nomor}@c.us`;
+  const role = loadRoles()[id];
+  if (!/^(admin|wali_kelas)$/.test(role || "")) {
+    return res.status(403).json({ error: "Nomor tidak memiliki akses dashboard." });
+  }
+  if (!isReady) {
+    return res.status(503).json({ error: "Bot WhatsApp belum terhubung." });
+  }
+
+  const existing = loginOtps.get(id);
+  if (existing && existing.sentAt + 60_000 > Date.now()) {
+    return res.status(429).json({ error: "Tunggu satu menit sebelum meminta OTP baru." });
+  }
+  const code = String(crypto.randomInt(100000, 1000000));
+  loginOtps.set(id, {
+    hash: crypto.createHash("sha256").update(code).digest("hex"),
+    expiresAt: Date.now() + 5 * 60_000,
+    sentAt: Date.now(),
+    attempts: 0,
+  });
+  try {
+    await client.sendMessage(
+      id,
+      `🔐 *Kode Login Ruang Hadir*\n\nKode OTP: *${code}*\nBerlaku selama 5 menit. Jangan berikan kode ini kepada siapa pun.`
+    );
+    res.json({ ok: true });
+  } catch (error) {
+    loginOtps.delete(id);
+    res.status(500).json({ error: "Gagal mengirim OTP ke WhatsApp." });
+  }
+});
+
+app.post("/api/auth/verify", (req, res) => {
+  const nomor = normalizeNomor(req.body.nomor);
+  const id = `${nomor}@c.us`;
+  const otp = loginOtps.get(id);
+  const codeHash = crypto
+    .createHash("sha256")
+    .update(String(req.body.code || ""))
+    .digest("hex");
+  if (!otp || otp.expiresAt < Date.now()) {
+    loginOtps.delete(id);
+    return res.status(400).json({ error: "Kode OTP sudah kedaluwarsa." });
+  }
+  otp.attempts++;
+  if (otp.attempts > 5 || otp.hash !== codeHash) {
+    if (otp.attempts > 5) loginOtps.delete(id);
+    return res.status(400).json({ error: "Kode OTP tidak sesuai." });
+  }
+
+  const role = loadRoles()[id];
+  if (!/^(admin|wali_kelas)$/.test(role || "")) {
+    return res.status(403).json({ error: "Akses dashboard sudah dicabut." });
+  }
+  loginOtps.delete(id);
+  const token = crypto.randomBytes(32).toString("hex");
+  webSessions.set(token, { id, nomor, role, expiresAt: Date.now() + 8 * 60 * 60_000 });
+  res.setHeader(
+    "Set-Cookie",
+    `absensi_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800`
+  );
+  res.json({ ok: true, user: { nomor, role } });
+});
+
+app.get("/api/auth/me", (req, res) => {
+  const user = webUser(req);
+  if (!user) return res.status(401).json({ error: "Belum login." });
+  res.json({ nomor: user.nomor, role: user.role });
+});
+
+app.post("/api/auth/logout", (req, res) => {
+  const token = parseCookies(req).absensi_session;
+  if (token) webSessions.delete(token);
+  res.setHeader("Set-Cookie", "absensi_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
+  res.json({ ok: true });
+});
+
+app.use("/api", requireWebAuth);
+
+function dashboardData(user) {
+  const kontak = loadJSON(KONTAK_PATH);
+  const semuaKelas = loadKelas();
+  const kelas =
+    user.role === "admin" ? semuaKelas : kelasUntukWali(semuaKelas, user.id);
+  const roles = loadRoles();
+  const jam = loadJSON(JAM_PATH, { masuk: "07:00:00", pulang: "14:00:00" });
+  const izin = loadIzin();
+  const storage = loadJSON(STORAGE_PATH);
+  const today = getWaktu().tanggal;
+  const absensiHariIni = storage[today] || {};
+  const izinHariIni = izin[today] || {};
+
+  const siswaIds = new Set(
+    Object.values(kelas).flatMap((data) => Object.keys(data.siswa || {}))
+  );
+  const siswa = Object.entries(kontak)
+    .filter(([id]) => user.role === "admin" || siswaIds.has(id))
+    .map(([id, nama]) => {
+    const relasi = findKelasSiswa(kelas, id);
+    return {
+      id,
+      nomor: id.replace("@c.us", ""),
+      nama,
+      kelas: relasi?.namaKelas || "",
+      orangTua: relasi?.siswa[id]?.orangTua?.replace("@c.us", "") || "",
+      punyaFoto: fs.existsSync(`${FACE_REC}/${id.replace("@c.us", "")}.jpg`),
+      masuk: absensiHariIni[id]?.masuk || null,
+      pulang: absensiHariIni[id]?.pulang || null,
+      izin: izinHariIni[id] || null,
+    };
+  });
+
+  return {
+    tanggal: today,
+    botReady: isReady,
+    jam,
+    siswa,
+    kelas: Object.entries(kelas).map(([nama, data]) => ({
+      nama,
+      waliKelas: data.waliKelas?.replace("@c.us", "") || "",
+      namaWali: data.namaWali || "",
+      jumlahSiswa: Object.keys(data.siswa || {}).length,
+    })),
+    admins: user.role === "admin" ? Object.entries(roles)
+      .filter(([, role]) => role === "admin")
+      .map(([id]) => id.replace("@c.us", "")) : [],
+    currentUser: { nomor: user.nomor, role: user.role },
+  };
+}
+
+app.get("/api/dashboard", (req, res) => {
+  res.json(dashboardData(req.webUser));
+});
+
+app.post("/api/classes", requireWebAdmin, async (req, res) => {
+  const nama = String(req.body.nama || "").trim().toUpperCase();
+  const waliKelas = normalizeNomor(req.body.waliKelas);
+  const namaWali = toTitleCase(String(req.body.namaWali || "").trim());
+  if (!nama || !/^62\d{8,14}$/.test(waliKelas) || !namaWali) {
+    return res.status(400).json({ error: "Data kelas dan wali kelas belum valid." });
+  }
+
+  const kelas = loadKelas();
+  const roles = loadRoles();
+  kelas[nama] = kelas[nama] || { siswa: {} };
+  kelas[nama].waliKelas = `${waliKelas}@c.us`;
+  kelas[nama].namaWali = namaWali;
+  roles[`${waliKelas}@c.us`] = "wali_kelas";
+  await saveKelas(kelas);
+  await saveJSON(ROLE_PATH, roles);
+  res.json({ ok: true });
+});
+
+app.delete("/api/classes/:name", requireWebAdmin, async (req, res) => {
+  const nama = String(req.params.name || "").toUpperCase();
+  const kelas = loadKelas();
+  if (!kelas[nama]) return res.status(404).json({ error: "Kelas tidak ditemukan." });
+  if (Object.keys(kelas[nama].siswa || {}).length) {
+    return res.status(400).json({ error: "Pindahkan siswa sebelum menghapus kelas." });
+  }
+  delete kelas[nama];
+  await saveKelas(kelas);
+  res.json({ ok: true });
+});
+
+app.post("/api/students", requireWebAdmin, async (req, res) => {
+  const nomor = normalizeNomor(req.body.nomor);
+  const nama = toTitleCase(String(req.body.nama || "").trim());
+  const namaKelas = String(req.body.kelas || "").trim().toUpperCase();
+  const orangTua = normalizeNomor(req.body.orangTua);
+  if (!/^62\d{8,14}$/.test(nomor) || nama.length < 3) {
+    return res.status(400).json({ error: "Nomor atau nama siswa belum valid." });
+  }
+
+  const kontak = loadJSON(KONTAK_PATH);
+  const kelas = loadKelas();
+  const siswaId = `${nomor}@c.us`;
+  if (namaKelas && !kelas[namaKelas]) {
+    return res.status(400).json({ error: "Kelas belum tersedia." });
+  }
+  if (namaKelas && !/^62\d{8,14}$/.test(orangTua)) {
+    return res.status(400).json({ error: "Nomor orang tua belum valid." });
+  }
+
+  kontak[siswaId] = nama;
+  for (const data of Object.values(kelas)) {
+    if (data.siswa) delete data.siswa[siswaId];
+  }
+  if (namaKelas) {
+    kelas[namaKelas].siswa = kelas[namaKelas].siswa || {};
+    kelas[namaKelas].siswa[siswaId] = {
+      nama,
+      orangTua: `${orangTua}@c.us`,
+    };
+  }
+  await saveJSON(KONTAK_PATH, kontak);
+  await saveKelas(kelas);
+  res.json({ ok: true });
+});
+
+app.delete("/api/students/:number", requireWebAdmin, async (req, res) => {
+  const nomor = normalizeNomor(req.params.number);
+  const siswaId = `${nomor}@c.us`;
+  const kontak = loadJSON(KONTAK_PATH);
+  const kelas = loadKelas();
+  if (!kontak[siswaId]) return res.status(404).json({ error: "Siswa tidak ditemukan." });
+
+  delete kontak[siswaId];
+  for (const data of Object.values(kelas)) {
+    if (data.siswa) delete data.siswa[siswaId];
+  }
+  await saveJSON(KONTAK_PATH, kontak);
+  await saveKelas(kelas);
+  res.json({ ok: true });
+});
+
+app.post(
+  "/api/students/:number/photo",
+  requireWebAdmin,
+  upload.single("photo"),
+  (req, res) => {
+  const nomor = normalizeNomor(req.params.number);
+  if (!req.file || !req.file.mimetype.startsWith("image/")) {
+    return res.status(400).json({ error: "Pilih file foto yang valid." });
+  }
+  ensureDir(FACE_DB);
+  ensureDir(FACE_REC);
+  fs.writeFileSync(`${FACE_DB}/${nomor}.jpg`, req.file.buffer);
+  fs.writeFileSync(`${FACE_REC}/${nomor}.jpg`, req.file.buffer);
+    res.json({ ok: true });
+  }
+);
+
+app.post("/api/settings/time", requireWebAdmin, async (req, res) => {
+  const masuk = String(req.body.masuk || "");
+  const pulang = String(req.body.pulang || "");
+  if (!/^\d{2}:\d{2}$/.test(masuk) || !/^\d{2}:\d{2}$/.test(pulang)) {
+    return res.status(400).json({ error: "Format jam harus HH:MM." });
+  }
+  await saveJSON(JAM_PATH, { masuk: `${masuk}:00`, pulang: `${pulang}:00` });
+  res.json({ ok: true });
+});
+
+app.post("/api/permissions", requireWebAdmin, async (req, res) => {
+  const nomor = normalizeNomor(req.body.nomor);
+  const tanggal = String(req.body.tanggal || "");
+  const alasan = String(req.body.alasan || "").trim();
+  const siswaId = `${nomor}@c.us`;
+  const kontak = loadJSON(KONTAK_PATH);
+  if (!kontak[siswaId] || !/^\d{4}-\d{2}-\d{2}$/.test(tanggal) || alasan.length < 3) {
+    return res.status(400).json({ error: "Data izin belum lengkap atau tidak valid." });
+  }
+  const izin = loadIzin();
+  izin[tanggal] = izin[tanggal] || {};
+  izin[tanggal][siswaId] = { nama: kontak[siswaId], alasan };
+  await saveIzin(izin);
+
+  const kelasSiswa = findKelasSiswa(loadKelas(), siswaId);
+  if (kelasSiswa) {
+    const pesan =
+      `📩 *Izin Siswa*\n` +
+      `👤 Nama: *${kontak[siswaId]}*\n` +
+      `🏫 Kelas: ${kelasSiswa.namaKelas}\n` +
+      `📅 Tanggal: ${tanggal}\n` +
+      `📌 Alasan: ${alasan}`;
+    await kirimPesanAman(kelasSiswa.siswa[siswaId].orangTua, pesan);
+    await kirimPesanAman(kelasSiswa.waliKelas, pesan);
+  }
+  res.json({ ok: true });
+});
+
+app.delete("/api/permissions/:date/:number", requireWebAdmin, async (req, res) => {
+  const izin = loadIzin();
+  const siswaId = `${normalizeNomor(req.params.number)}@c.us`;
+  if (izin[req.params.date]) delete izin[req.params.date][siswaId];
+  await saveIzin(izin);
+  res.json({ ok: true });
+});
+
+app.get("/api/permissions/:date/:number/evidence", (req, res) => {
+  const siswaId = `${normalizeNomor(req.params.number)}@c.us`;
+  if (
+    req.webUser.role === "wali_kelas" &&
+    !findKelasSiswa(kelasUntukWali(loadKelas(), req.webUser.id), siswaId)
+  ) {
+    return res.status(403).json({ error: "Siswa bukan anggota kelas kamu." });
+  }
+  const bukti = loadIzin()[req.params.date]?.[siswaId]?.bukti;
+  if (!bukti || !fs.existsSync(bukti)) {
+    return res.status(404).json({ error: "Foto bukti tidak ditemukan." });
+  }
+  res.sendFile(require("path").resolve(bukti));
+});
+
+app.get("/api/report", (req, res) => {
+  const tanggal = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || "")
+    ? req.query.date
+    : getWaktu().tanggal;
+  const kontak = loadJSON(KONTAK_PATH);
+  const storage = loadJSON(STORAGE_PATH)[tanggal] || {};
+  const izin = loadIzin()[tanggal] || {};
+  const kelas = loadKelas();
+  const kelasWali = kelasUntukWali(kelas, req.webUser.id);
+  const rows = Object.entries(kontak)
+    .filter(
+      ([id]) =>
+        req.webUser.role === "admin" || Boolean(findKelasSiswa(kelasWali, id))
+    )
+    .map(([id, nama]) => ({
+    nomor: id.replace("@c.us", ""),
+    nama,
+    kelas: findKelasSiswa(kelas, id)?.namaKelas || "-",
+    masuk: storage[id]?.masuk?.waktu || "-",
+    statusMasuk: storage[id]?.masuk?.status || "-",
+    pulang: storage[id]?.pulang?.waktu || "-",
+    statusPulang: storage[id]?.pulang?.status || "-",
+    izin: izin[id]?.alasan || "",
+    buktiIzin: Boolean(izin[id]?.bukti),
+  }));
+  res.json({ tanggal, rows });
+});
+
+app.get("/api/export", (req, res) => {
+  const tanggal = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || "")
+    ? req.query.date
+    : getWaktu().tanggal;
+  const kontak = loadJSON(KONTAK_PATH);
+  const storage = loadJSON(STORAGE_PATH)[tanggal] || {};
+  const izin = loadIzin()[tanggal] || {};
+  const kelas = loadKelas();
+  const kelasWali = kelasUntukWali(kelas, req.webUser.id);
+  const rows = Object.entries(kontak)
+    .filter(
+      ([id]) =>
+        req.webUser.role === "admin" || Boolean(findKelasSiswa(kelasWali, id))
+    )
+    .map(([id, nama]) => ({
+    Tanggal: tanggal,
+    Nama: nama,
+    Kelas: findKelasSiswa(kelas, id)?.namaKelas || "",
+    Masuk: storage[id]?.masuk?.waktu || (izin[id] ? "IZIN" : ""),
+    StatusMasuk: storage[id]?.masuk?.status || izin[id]?.alasan || "",
+    Pulang: storage[id]?.pulang?.waktu || "",
+    StatusPulang: storage[id]?.pulang?.status || "",
+  }));
+  const filePath = exportExcel(rows, tanggal);
+  res.download(filePath);
+});
 
 app.get("/qr", (req, res) => {
   if (isReady) {
