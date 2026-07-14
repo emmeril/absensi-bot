@@ -39,7 +39,7 @@ const IZIN_PATH = "./izin.json";
 const KELAS_PATH = "./kelas.json";
 
 const DEFAULT_ROLES = {
-  "6285158909844@c.us": "admin",
+  "6287728972090@c.us": "admin",
 };
 
 const JSON_STORES = {
