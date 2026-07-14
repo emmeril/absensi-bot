@@ -4,11 +4,14 @@ const qrcode = require("qrcode-terminal");
 const moment = require("moment");
 const haversine = require("haversine-distance");
 const XLSX = require("xlsx");
-const axios = require("axios");
 const express = require("express");
 const multer = require("multer");
 const crypto = require("crypto");
 const { DB_PATH, initJsonStore, saveJsonData } = require("./models/database");
+const {
+  verifyFace,
+  faceServiceStatus,
+} = require("./services/face-verification");
 const app = express();
 const PORT = 3200;
 const upload = multer({
@@ -18,7 +21,7 @@ const upload = multer({
 const loginOtps = new Map();
 const webSessions = new Map();
 
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
 app.use(express.static("public"));
 
 const STORAGE_PATH = "./storage.json";
@@ -132,13 +135,10 @@ let pendingFoto = {};
 
 async function verifikasiWajah(userId, fotoBase64) {
   try {
-    const res = await axios.post("http://localhost:5000/verify-face", {
-      id: userId.replace("@c.us", ""),
-      photo: fotoBase64,
-    });
-    return res.data?.match === true;
+    const result = await verifyFace(userId.replace("@c.us", ""), fotoBase64);
+    return result.match === true;
   } catch (e) {
-    console.error("[FaceVerify ERROR]", e.response?.data || e.message);
+    console.error("[FaceVerify ERROR]", e.message);
     return false;
   }
 }
@@ -1554,6 +1554,7 @@ function dashboardData(user) {
       .filter(([, role]) => role === "admin")
       .map(([id]) => id.replace("@c.us", "")) : [],
     currentUser: { nomor: user.nomor, role: user.role },
+    faceService: faceServiceStatus(),
   };
 }
 

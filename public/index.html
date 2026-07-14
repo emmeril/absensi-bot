@@ -74,6 +74,10 @@
 
         <div class="p-4 sm:p-7">
           <div x-show="loading" class="py-20 text-center text-ink/50">Memuat data sekolah...</div>
+          <div x-show="!loading && user?.role === 'admin' && data.faceService && !data.faceService.ready" x-cloak class="mb-5 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+            <strong>Verifikasi wajah belum siap.</strong>
+            Pastikan dependensi sudah terpasang dan file model face-api tersedia di folder <code class="font-bold">models</code>.
+          </div>
 
           <div x-show="!loading && tab === 'ringkasan'" x-cloak>
             <div class="mb-6 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
