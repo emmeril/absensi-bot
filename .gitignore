@@ -1,5 +1,6 @@
 .wwebjs_auth
 .wwebjs_cache
+.wwebjs_cache.backup
 node_modules
 pnpm-lock.yaml
 pnpm-workspace.yaml
@@ -7,3 +8,6 @@ face-server
 data/*.sqlite
 data/*.sqlite-*
 models/
+face_db/
+face_rec/
+izin_bukti/

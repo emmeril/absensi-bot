@@ -34,6 +34,21 @@ async function imageToCanvas(source) {
   return output;
 }
 
+async function detectFaceDescriptor(input, label) {
+  const result = await faceapi
+    .detectSingleFace(input)
+    .withFaceLandmarks()
+    .withFaceDescriptor();
+
+  if (!result) {
+    const error = new Error(`Wajah tidak ditemukan pada ${label}`);
+    error.code = "FACE_NOT_DETECTED";
+    throw error;
+  }
+
+  return result.descriptor;
+}
+
 async function verifyFace(id, photo) {
   if (!(await modelReady)) {
     const error = new Error(modelError?.message || "Model wajah belum siap");
@@ -52,8 +67,11 @@ async function verifyFace(id, photo) {
   const referenceCanvas = await imageToCanvas(referenceFile);
   const selfieBuffer = Buffer.from(String(photo).split(",").pop(), "base64");
   const selfieCanvas = await imageToCanvas(selfieBuffer);
-  const referenceDescriptor = await faceapi.computeFaceDescriptor(referenceCanvas);
-  const selfieDescriptor = await faceapi.computeFaceDescriptor(selfieCanvas);
+  const referenceDescriptor = await detectFaceDescriptor(
+    referenceCanvas,
+    "foto referensi"
+  );
+  const selfieDescriptor = await detectFaceDescriptor(selfieCanvas, "foto selfie");
   const distance = faceapi.euclideanDistance(referenceDescriptor, selfieDescriptor);
 
   return { match: distance < 0.45, distance };

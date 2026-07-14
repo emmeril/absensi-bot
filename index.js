@@ -8,6 +8,8 @@ const express = require("express");
 const multer = require("multer");
 const crypto = require("crypto");
 const { DB_PATH, initJsonStore, saveJsonData } = require("./models/database");
+const { resolveWhatsappUserId } = require("./lib/whatsapp-id");
+const { qrToSvg } = require("./lib/qr-svg");
 const {
   verifyFace,
   faceServiceStatus,
@@ -266,8 +268,59 @@ async function kirimMediaAman(id, media, caption) {
   }
 }
 
+function tunggu(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function downloadMediaDenganRetry(msg, maxAttempts = 4) {
+  let currentMessage = msg;
+  let lastError;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const media = await currentMessage.downloadMedia();
+      if (media?.data) return media;
+      lastError = new Error("WhatsApp belum menyediakan data media");
+    } catch (error) {
+      lastError = error;
+    }
+
+    console.warn(
+      `[Media Retry] ${msg.id?._serialized || "unknown"} percobaan ${attempt}/${maxAttempts}: ${lastError.message}`
+    );
+
+    if (attempt < maxAttempts) {
+      await tunggu(attempt * 1000);
+      try {
+        const reloaded = await msg.reload();
+        currentMessage = reloaded || msg;
+      } catch (reloadError) {
+        console.warn(`[Media Reload ERROR] ${reloadError.message}`);
+        currentMessage = msg;
+      }
+    }
+  }
+
+  throw lastError;
+}
+
+async function downloadMediaAman(msg, context) {
+  try {
+    return await downloadMediaDenganRetry(msg);
+  } catch (error) {
+    console.error(`[Media ERROR] ${context}:`, error);
+    return null;
+  }
+}
+
 const client = new Client({
   authStrategy: new LocalAuth(), // Simpan sesi login secara lokal
+  webVersion: "2.3000.1043126001",
+  webVersionCache: {
+    type: "local",
+    path: "./.wwebjs_cache.backup",
+    strict: true,
+  },
   puppeteer: {
     args: ["--no-sandbox", "--disable-setuid-sandbox"], // ✅ Fix error root user
     headless: true,
@@ -278,6 +331,7 @@ const pendingAbsen = {};
 const pendingIzin = {};
 const pendingKontak = {};
 const pendingLokasi = {};
+const lidToPhoneCache = new Map();
 
 client.on("qr", (qr) => {
   qrCodeData = qr;
@@ -299,8 +353,12 @@ client.on("disconnected", (reason) => {
 });
 
 client.on("message", async (msg) => {
-  const sender = msg.author || msg.from;
-  const body = msg.body.trim().toLowerCase();
+  const rawSender = msg.author || msg.from;
+  const sender = await resolveWhatsappUserId(client, rawSender, lidToPhoneCache);
+  if (rawSender !== sender) {
+    console.log(`[WhatsApp ID] ${rawSender} -> ${sender}`);
+  }
+  const body = String(msg.body || "").trim().toLowerCase();
   const storage = loadJSON(STORAGE_PATH);
   const kontak = loadJSON(KONTAK_PATH);
   const roles = loadJSON(ROLE_PATH);
@@ -324,6 +382,7 @@ client.on("message", async (msg) => {
   const commandDiizinkan =
     body === "!masuk" ||
     body === "!pulang" ||
+    body === "!setfoto" ||
     body === "!setlokasi" ||
     body === "!izin" ||
     body.startsWith("!izin ");
@@ -423,7 +482,7 @@ client.on("message", async (msg) => {
       return msg.reply("⚠️ Kirim foto selfie dengan caption *!setfoto*.");
     }
 
-    const media = await msg.downloadMedia();
+    const media = await downloadMediaAman(msg, `setfoto ${sender}`);
     if (!media || !media.data) return msg.reply("❌ Gagal membaca foto.");
 
     const nomor = sender.replace("@c.us", "");
@@ -462,7 +521,7 @@ client.on("message", async (msg) => {
         "📨 Permintaan kamu sudah dikirim. Tunggu admin menyetujui."
       );
 
-    const media = await msg.downloadMedia();
+    const media = await downloadMediaAman(msg, `daftar ${sender}`);
     if (!media || !media.data) return msg.reply("❌ Gagal membaca foto.");
 
     const nomor = sender.replace("@c.us", "");
@@ -507,7 +566,7 @@ client.on("message", async (msg) => {
   }
 
   if (msg.type === "image" && pendingFoto[sender]) {
-    const media = await msg.downloadMedia();
+    const media = await downloadMediaAman(msg, `pending-foto ${sender}`);
     if (!media || !media.data) return msg.reply("❌ Gagal membaca foto.");
 
     const nomor = sender.replace("@c.us", "");
@@ -525,7 +584,7 @@ client.on("message", async (msg) => {
     delete pendingFoto[sender];
     await savePendingFoto(pendingFoto);
 
-    msg.reply("✅ Foto selfie diterima. Permintaan kamu dikirim ke admin.");
+    return msg.reply("✅ Foto selfie diterima. Permintaan kamu dikirim ke admin.");
   }
 
   if (body === "!lihat daftar") {
@@ -673,37 +732,58 @@ client.on("message", async (msg) => {
       );
     }
 
+    clearPendingAbsen(sender);
     pendingAbsen[sender] = {
       tipe,
       foto: null,
       lokasi: null,
-      timeout: setTimeout(() => delete pendingAbsen[sender], 60000),
+      timeout: setTimeout(() => delete pendingAbsen[sender], 2 * 60 * 1000),
     };
 
-    return msg.reply(`📸 Kirim foto Selfie untuk absen *${tipe}*.`);
+    return msg.reply(
+      `📸 Kirim foto selfie untuk absen *${tipe}* dalam waktu 2 menit.`
+    );
   }
 
   if (msg.hasMedia && pendingAbsen[sender]) {
-    const media = await msg.downloadMedia();
-    if (!media || media.mimetype !== "image/jpeg") {
-      return msg.reply("❌ Hanya foto dengan format JPEG yang didukung.");
-    }
+    await msg.reply("⏳ Foto diterima, sedang memverifikasi wajah...");
 
-    const cocok = await verifikasiWajah(sender, media.data);
-    if (!cocok) {
-      clearPendingAbsen(sender);
-      return msg.reply("❌ Wajah tidak dikenali. Gunakan selfie asli kamu.");
-    }
+    try {
+      const prosesAbsen = pendingAbsen[sender];
+      const media = await downloadMediaDenganRetry(msg);
+      if (!media?.data || !media.mimetype?.startsWith("image/")) {
+        return msg.reply("❌ File yang diterima bukan foto yang valid.");
+      }
 
-    pendingAbsen[sender].foto = media;
+      const cocok = await verifikasiWajah(sender, media.data);
+      if (pendingAbsen[sender] !== prosesAbsen) {
+        return msg.reply(
+          "⌛ Waktu pengiriman foto sudah habis. Silakan kirim *!masuk* atau *!pulang* lagi."
+        );
+      }
+      if (!cocok) {
+        clearPendingAbsen(sender);
+        return msg.reply(
+          "❌ Wajah tidak dikenali atau layanan verifikasi sedang bermasalah. Silakan kirim *!masuk* atau *!pulang* lalu coba selfie lagi."
+        );
+      }
 
-    if (!pendingAbsen[sender].lokasi) {
-      return msg.reply(
-        "✅ Foto dikenali.\n📍 Sekarang kirim lokasi untuk absen."
-      );
-    } else {
+      prosesAbsen.foto = media;
+
+      if (!prosesAbsen.lokasi) {
+        return msg.reply(
+          "✅ Foto dikenali.\n📍 Sekarang kirim lokasi untuk absen."
+        );
+      }
+
       return msg.reply(
         "✅ Foto dan lokasi sudah lengkap. Kamu bisa kirim perintah absen."
+      );
+    } catch (error) {
+      console.error(`[Selfie ERROR] ${sender}:`, error);
+      clearPendingAbsen(sender);
+      return msg.reply(
+        "❌ Foto gagal diproses oleh bot. Silakan kirim *!masuk* atau *!pulang* lalu coba lagi."
       );
     }
   }
@@ -836,15 +916,25 @@ client.on("message", async (msg) => {
   }
 
   if (msg.hasMedia && pendingIzin[sender]) {
-    const media = await msg.downloadMedia();
+    const pengajuan = pendingIzin[sender];
+    const media = await downloadMediaAman(msg, `izin ${sender}`);
     if (!media?.data || !media.mimetype?.startsWith("image/")) {
       return msg.reply("❌ Bukti izin harus berupa foto.");
     }
 
-    const pengajuan = pendingIzin[sender];
+    if (pendingIzin[sender] !== pengajuan) {
+      return msg.reply(
+        "⌛ Waktu pengajuan izin sudah habis. Silakan kirim perintah *!izin alasan* lagi."
+      );
+    }
     const izinSakit = pengajuan.alasan.toLowerCase().includes("sakit");
     if (izinSakit) {
       const wajahCocok = await verifikasiWajah(sender, media.data);
+      if (pendingIzin[sender] !== pengajuan) {
+        return msg.reply(
+          "⌛ Waktu pengajuan izin sudah habis. Silakan kirim perintah *!izin alasan* lagi."
+        );
+      }
       if (!wajahCocok) {
         clearPendingIzin(sender);
         return msg.reply(
@@ -896,6 +986,14 @@ client.on("message", async (msg) => {
 
     return msg.reply(
       `✅ Izin hari ini berhasil dicatat.\nAlasan: ${pengajuan.alasan}\nFoto bukti sudah dikirim ke pihak terkait.`
+    );
+  }
+
+  if (msg.hasMedia && msg.type === "image") {
+    return msg.reply(
+      "⚠️ Foto diterima, tetapi tidak ada proses yang sedang menunggu foto.\n" +
+        "Untuk absen, kirim *!masuk* atau *!pulang* lalu kirim selfie dalam 2 menit.\n" +
+        "Untuk menyimpan foto wajah, kirim selfie dengan caption *!setfoto*."
     );
   }
 
@@ -1881,9 +1979,7 @@ app.get("/qr", (req, res) => {
     `);
   }
 
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(
-    qrCodeData
-  )}`;
+  const qrSvg = qrToSvg(qrCodeData);
   res.send(`
   <html>
     <head>
@@ -1911,7 +2007,7 @@ app.get("/qr", (req, res) => {
     <body>
       <div>
         <h2>🔐 Scan QR WhatsApp:</h2>
-        <img src="${qrUrl}" />
+        ${qrSvg}
         <p>QR akan otomatis hilang setelah login.</p>
       </div>
     </body>
