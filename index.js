@@ -100,6 +100,18 @@ function normalizeJam(jam) {
   return jam;
 }
 
+function isValidTime(value) {
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(String(value || ""));
+}
+
+function isValidDate(value) {
+  const input = String(value || "");
+  return (
+    /^\d{4}-\d{2}-\d{2}$/.test(input) &&
+    moment(input, "YYYY-MM-DD", true).isValid()
+  );
+}
+
 function clearPendingAbsen(sender) {
   if (pendingAbsen[sender]?.timeout) clearTimeout(pendingAbsen[sender].timeout);
   delete pendingAbsen[sender];
@@ -277,6 +289,7 @@ client.on("message", async (msg) => {
   const commandDiizinkan =
     body === "!masuk" ||
     body === "!pulang" ||
+    body.startsWith("!setadmin") ||
     body === "!setlokasi" ||
     body === "!izin" ||
     body.startsWith("!izin ");
@@ -330,7 +343,7 @@ client.on("message", async (msg) => {
     dataKelas[namaKelas] = dataKelas[namaKelas] || { siswa: {} };
     dataKelas[namaKelas].waliKelas = waliId;
     dataKelas[namaKelas].namaWali = namaWali;
-    roles[waliId] = "wali_kelas";
+    if (roles[waliId] !== "admin") roles[waliId] = "wali_kelas";
 
     await saveKelas(dataKelas);
     await saveJSON(ROLE_PATH, roles);
@@ -711,6 +724,10 @@ client.on("message", async (msg) => {
   }
 
   if (msg.type === "location" && pendingAbsen[sender]) {
+    if (!pendingAbsen[sender].foto) {
+      return msg.reply("📸 Kirim dan verifikasi foto selfie terlebih dahulu.");
+    }
+
     const lokasi = {
       latitude: msg.location.latitude,
       longitude: msg.location.longitude,
@@ -1402,6 +1419,14 @@ function webUser(req) {
     if (token) webSessions.delete(token);
     return null;
   }
+  const currentRole = loadRoles()[session.id];
+  if (
+    currentRole !== session.role ||
+    !["admin", "wali_kelas"].includes(currentRole)
+  ) {
+    webSessions.delete(token);
+    return null;
+  }
   return session;
 }
 
@@ -1423,6 +1448,14 @@ function kelasUntukWali(kelas, userId) {
   return Object.fromEntries(
     Object.entries(kelas).filter(([, data]) => data.waliKelas === userId)
   );
+}
+
+function removeUnusedWaliRole(userId, kelas, roles) {
+  if (!userId || roles[userId] !== "wali_kelas") return;
+  const masihMenjadiWali = Object.values(kelas).some(
+    (data) => data.waliKelas === userId
+  );
+  if (!masihMenjadiWali) delete roles[userId];
 }
 
 app.post("/api/auth/request-otp", async (req, res) => {
@@ -1572,10 +1605,13 @@ app.post("/api/classes", requireWebAdmin, async (req, res) => {
 
   const kelas = loadKelas();
   const roles = loadRoles();
+  const waliSebelumnya = kelas[nama]?.waliKelas;
   kelas[nama] = kelas[nama] || { siswa: {} };
   kelas[nama].waliKelas = `${waliKelas}@c.us`;
   kelas[nama].namaWali = namaWali;
-  roles[`${waliKelas}@c.us`] = "wali_kelas";
+  const waliId = `${waliKelas}@c.us`;
+  if (roles[waliId] !== "admin") roles[waliId] = "wali_kelas";
+  removeUnusedWaliRole(waliSebelumnya, kelas, roles);
   await saveKelas(kelas);
   await saveJSON(ROLE_PATH, roles);
   res.json({ ok: true });
@@ -1588,8 +1624,12 @@ app.delete("/api/classes/:name", requireWebAdmin, async (req, res) => {
   if (Object.keys(kelas[nama].siswa || {}).length) {
     return res.status(400).json({ error: "Pindahkan siswa sebelum menghapus kelas." });
   }
+  const waliKelas = kelas[nama].waliKelas;
   delete kelas[nama];
+  const roles = loadRoles();
+  removeUnusedWaliRole(waliKelas, kelas, roles);
   await saveKelas(kelas);
+  await saveJSON(ROLE_PATH, roles);
   res.json({ ok: true });
 });
 
@@ -1650,6 +1690,10 @@ app.post(
   upload.single("photo"),
   (req, res) => {
   const nomor = normalizeNomor(req.params.number);
+  const siswaId = `${nomor}@c.us`;
+  if (!loadJSON(KONTAK_PATH)[siswaId]) {
+    return res.status(404).json({ error: "Siswa tidak ditemukan." });
+  }
   if (!req.file || !req.file.mimetype.startsWith("image/")) {
     return res.status(400).json({ error: "Pilih file foto yang valid." });
   }
@@ -1664,7 +1708,7 @@ app.post(
 app.post("/api/settings/time", requireWebAdmin, async (req, res) => {
   const masuk = String(req.body.masuk || "");
   const pulang = String(req.body.pulang || "");
-  if (!/^\d{2}:\d{2}$/.test(masuk) || !/^\d{2}:\d{2}$/.test(pulang)) {
+  if (!isValidTime(masuk) || !isValidTime(pulang)) {
     return res.status(400).json({ error: "Format jam harus HH:MM." });
   }
   await saveJSON(JAM_PATH, { masuk: `${masuk}:00`, pulang: `${pulang}:00` });
@@ -1677,7 +1721,7 @@ app.post("/api/permissions", requireWebAdmin, async (req, res) => {
   const alasan = String(req.body.alasan || "").trim();
   const siswaId = `${nomor}@c.us`;
   const kontak = loadJSON(KONTAK_PATH);
-  if (!kontak[siswaId] || !/^\d{4}-\d{2}-\d{2}$/.test(tanggal) || alasan.length < 3) {
+  if (!kontak[siswaId] || !isValidDate(tanggal) || alasan.length < 3) {
     return res.status(400).json({ error: "Data izin belum lengkap atau tidak valid." });
   }
   const izin = loadIzin();
