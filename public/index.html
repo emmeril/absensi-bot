@@ -3,59 +3,70 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Ruang Hadir - Dashboard Sekolah</title>
+    <title>Ruang Hadir | Panel Administrasi</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script>
       tailwind.config = {
         theme: {
           extend: {
-            colors: { ink: "#172033", paper: "#f5f0e7", sun: "#f4b942", leaf: "#2f6b57" },
-            fontFamily: { display: ["Georgia", "serif"], body: ["Trebuchet MS", "sans-serif"] },
-            boxShadow: { card: "0 18px 50px rgba(23,32,51,.10)" },
+            colors: { ink: "#17212f", paper: "#f4f6f9", sun: "#f5a623", leaf: "#18a689" },
+            fontFamily: { display: ["Trebuchet MS", "sans-serif"], body: ["Trebuchet MS", "sans-serif"] },
+            boxShadow: { card: "0 1px 3px rgba(18,38,63,.12)" },
           },
         },
       };
     </script>
     <style>
       [x-cloak] { display: none !important; }
-      body { background-image: radial-gradient(#17203312 1px, transparent 1px); background-size: 22px 22px; }
-      .paper-edge { background-image: linear-gradient(135deg, transparent 8px, #fff 8px); }
+      body { background: #f4f6f9; }
+      .paper-edge { background: #fff; border-top: 3px solid var(--accent, #3c8dbc); }
+      input:focus, select:focus, textarea:focus { border-color: #3c8dbc !important; box-shadow: 0 0 0 3px rgba(60,141,188,.12); outline: none; }
+      .admin-card { border-radius: .5rem !important; border: 1px solid #e6e9ed; }
+      @media (min-width: 1024px) { .admin-content { margin-left: 256px; } }
     </style>
   </head>
   <body class="min-h-screen bg-paper font-body text-ink" x-data="dashboard()" x-init="init()">
-    <div class="fixed inset-x-0 top-0 -z-10 h-72 bg-gradient-to-br from-ink via-[#263653] to-leaf"></div>
 
-    <section x-show="authChecked && !user" x-cloak class="fixed inset-0 z-50 grid place-items-center bg-ink px-4">
-      <div class="absolute inset-0 opacity-20" style="background-image:radial-gradient(#fff 1px,transparent 1px);background-size:24px 24px"></div>
-      <div class="relative w-full max-w-md rounded-3xl bg-white p-7 shadow-2xl sm:p-9">
-        <div class="mb-7 flex items-center gap-3"><div class="grid h-12 w-12 place-items-center rounded-2xl bg-sun font-bold">RH</div><div><h1 class="font-display text-2xl font-bold">Masuk Ruang Hadir</h1><p class="text-sm text-ink/50">Admin dan wali kelas</p></div></div>
-        <form x-show="loginStep === 'number'" @submit.prevent="requestOtp" class="space-y-4"><label class="block text-sm font-bold">Nomor WhatsApp<input x-model="login.nomor" required placeholder="628..." class="mt-1 w-full rounded-xl border border-ink/15 px-4 py-3" /></label><button :disabled="authLoading" class="w-full rounded-xl bg-ink py-3 font-bold text-white disabled:opacity-50" x-text="authLoading ? 'Mengirim...' : 'Kirim OTP lewat WhatsApp'"></button></form>
-        <form x-show="loginStep === 'otp'" @submit.prevent="verifyOtp" class="space-y-4"><p class="rounded-xl bg-paper p-3 text-sm">Kode 6 digit sudah dikirim ke WhatsApp <strong x-text="login.nomor"></strong>.</p><label class="block text-sm font-bold">Kode OTP<input x-model="login.code" inputmode="numeric" maxlength="6" required placeholder="000000" class="mt-1 w-full rounded-xl border border-ink/15 px-4 py-3 text-center text-2xl tracking-[.35em]" /></label><button :disabled="authLoading" class="w-full rounded-xl bg-ink py-3 font-bold text-white disabled:opacity-50">Masuk ke dashboard</button><button type="button" @click="loginStep='number';login.code=''" class="w-full text-sm font-bold text-leaf">Ganti nomor</button></form>
-        <p x-show="loginError" class="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-700" x-text="loginError"></p>
+    <section x-show="authChecked && !user" x-cloak class="fixed inset-0 z-50 grid min-h-screen bg-[#d9e2e8] lg:grid-cols-[1.1fr_.9fr]">
+      <div class="relative hidden overflow-hidden bg-gradient-to-br from-[#18344a] via-[#245b79] to-[#3c8dbc] p-16 text-white lg:flex lg:flex-col lg:justify-between">
+        <div class="absolute -right-28 -top-28 h-96 w-96 rounded-full border-[70px] border-white/5"></div><div class="absolute -bottom-36 -left-28 h-96 w-96 rounded-full bg-white/5"></div>
+        <div class="relative flex items-center gap-3"><div class="grid h-12 w-12 place-items-center rounded bg-white text-xl font-black text-[#3c8dbc]">RH</div><div><strong class="text-xl">Ruang Hadir</strong><p class="text-sm text-white/60">Sistem Absensi Sekolah</p></div></div>
+        <div class="relative max-w-xl"><p class="mb-4 text-sm font-bold uppercase tracking-[.25em] text-cyan-200">Administrasi lebih sederhana</p><h1 class="text-5xl font-bold leading-tight">Pantau kehadiran sekolah dalam satu panel.</h1><p class="mt-5 text-lg leading-8 text-white/70">Kelola siswa, kelas, izin, dan laporan harian secara cepat dan terpusat.</p></div>
+        <p class="relative text-sm text-white/45">Ruang Hadir &copy; 2026</p>
       </div>
+      <div class="grid place-items-center px-5 py-10">
+      <div class="w-full max-w-md rounded-lg border border-slate-200 bg-white p-7 shadow-xl sm:p-9">
+        <div class="mb-7 text-center"><div class="mx-auto mb-4 grid h-14 w-14 place-items-center rounded bg-[#3c8dbc] text-xl font-black text-white lg:hidden">RH</div><h1 class="text-2xl font-bold text-slate-800">Masuk ke Panel</h1><p class="mt-1 text-sm text-slate-500">Gunakan nomor WhatsApp yang terdaftar</p></div>
+        <form x-show="loginStep === 'number'" @submit.prevent="requestOtp" class="space-y-5"><label class="block text-sm font-bold text-slate-700">Nomor WhatsApp<div class="mt-2 flex overflow-hidden rounded border border-slate-300 bg-white focus-within:border-[#3c8dbc]"><span class="grid w-12 place-items-center border-r bg-slate-50 text-slate-400">WA</span><input x-model="login.nomor" required placeholder="Contoh: 628123456789" class="min-w-0 flex-1 border-0 px-4 py-3 outline-none" /></div></label><button :disabled="authLoading" class="w-full rounded bg-[#3c8dbc] py-3 font-bold text-white shadow-sm transition hover:bg-[#337da8] disabled:opacity-50" x-text="authLoading ? 'Mengirim kode...' : 'Kirim kode OTP'"></button></form>
+        <form x-show="loginStep === 'otp'" @submit.prevent="verifyOtp" class="space-y-5"><p class="rounded border border-blue-100 bg-blue-50 p-3 text-sm text-blue-800">Kode 6 digit dikirim ke WhatsApp <strong x-text="login.nomor"></strong>.</p><label class="block text-sm font-bold text-slate-700">Kode OTP<input x-model="login.code" inputmode="numeric" maxlength="6" required placeholder="000000" class="mt-2 w-full rounded border border-slate-300 px-4 py-3 text-center text-2xl tracking-[.35em]" /></label><button :disabled="authLoading" class="w-full rounded bg-[#3c8dbc] py-3 font-bold text-white hover:bg-[#337da8] disabled:opacity-50">Masuk ke dashboard</button><button type="button" @click="loginStep='number';login.code=''" class="w-full text-sm font-bold text-[#3c8dbc]">Ganti nomor WhatsApp</button></form>
+        <p x-show="loginError" class="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-700" x-text="loginError"></p>
+      </div></div>
     </section>
 
     <div x-show="user" x-cloak>
-    <header class="mx-auto flex max-w-7xl items-center justify-between px-5 py-6 text-white lg:px-8">
-      <div class="flex items-center gap-3">
-        <div class="grid h-11 w-11 place-items-center rounded-2xl bg-sun text-xl text-ink shadow-lg">RH</div>
-        <div>
-          <h1 class="font-display text-2xl font-bold tracking-tight">Ruang Hadir</h1>
-          <p class="text-xs uppercase tracking-[.25em] text-white/60">Administrasi sekolah</p>
-        </div>
-      </div>
-      <div class="flex items-center gap-3">
-        <span class="hidden rounded-full border border-white/20 px-3 py-1.5 text-sm sm:block" x-text="user?.role === 'admin' ? 'Admin' : 'Wali kelas'"></span>
-        <a x-show="user?.role === 'admin'" href="/qr" class="rounded-xl bg-white/10 px-4 py-2 text-sm hover:bg-white/20">QR WhatsApp</a>
-        <button @click="logout" class="rounded-xl bg-white px-4 py-2 text-sm font-bold text-ink">Keluar</button>
-      </div>
-    </header>
+      <div x-show="sidebarOpen" @click="sidebarOpen=false" x-transition.opacity class="fixed inset-0 z-30 bg-slate-950/50 lg:hidden"></div>
+      <aside class="fixed inset-y-0 left-0 z-40 flex w-64 flex-col bg-[#222d32] text-slate-300 shadow-xl transition-transform lg:translate-x-0" :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full'">
+        <div class="flex h-16 items-center gap-3 border-b border-white/10 bg-[#367fa9] px-5 text-white"><div class="grid h-9 w-9 place-items-center rounded bg-white font-black text-[#367fa9]">RH</div><div><strong class="block leading-tight">Ruang Hadir</strong><span class="text-xs text-white/65">Panel Administrasi</span></div></div>
+        <div class="flex items-center gap-3 border-b border-white/10 px-5 py-5"><div class="grid h-10 w-10 place-items-center rounded-full bg-[#3c8dbc] font-bold text-white" x-text="user?.role === 'admin' ? 'A' : 'W'"></div><div class="min-w-0"><p class="truncate text-sm font-bold text-white" x-text="user?.nomor"></p><p class="mt-1 flex items-center gap-1 text-xs"><span class="h-2 w-2 rounded-full bg-emerald-400"></span><span x-text="user?.role === 'admin' ? 'Administrator' : 'Wali kelas'"></span></p></div></div>
+        <p class="px-5 pb-2 pt-5 text-[11px] font-bold uppercase tracking-widest text-slate-500">Menu utama</p>
+        <nav class="flex-1 space-y-1 overflow-y-auto px-3">
+          <template x-for="(item, index) in visibleTabs" :key="item.id"><button @click="tab=item.id;sidebarOpen=false" class="flex w-full items-center gap-3 rounded px-3 py-2.5 text-left text-sm transition" :class="tab === item.id ? 'bg-[#3c8dbc] text-white shadow' : 'hover:bg-white/5 hover:text-white'"><span class="grid h-6 w-6 place-items-center rounded bg-white/10 text-[10px] font-black" x-text="['DB','SW','KL','IZ','AD','PG'][index]"></span><span x-text="item.label"></span><span x-show="tab === item.id" class="ml-auto">›</span></button></template>
+        </nav>
+        <div class="border-t border-white/10 p-3"><a x-show="user?.role === 'admin'" href="/qr" class="mb-1 block rounded px-3 py-2 text-sm hover:bg-white/5 hover:text-white">Hubungkan WhatsApp</a><button @click="logout" class="w-full rounded px-3 py-2 text-left text-sm text-red-300 hover:bg-red-500/10">Keluar dari sistem</button></div>
+      </aside>
 
-    <main class="mx-auto max-w-7xl px-4 pb-16 sm:px-6 lg:px-8">
+      <div class="admin-content min-h-screen">
+      <header class="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-slate-200 bg-white px-4 shadow-sm sm:px-7">
+        <div class="flex items-center gap-4"><button @click="sidebarOpen=!sidebarOpen" class="grid h-9 w-9 place-items-center rounded border border-slate-200 text-xl text-slate-500 lg:hidden">☰</button><div><h1 class="font-bold text-slate-800" x-text="tabs.find(item => item.id === tab)?.label"></h1><p class="hidden text-xs text-slate-400 sm:block">Ruang Hadir / <span x-text="tabs.find(item => item.id === tab)?.label"></span></p></div></div>
+        <div class="flex items-center gap-3"><span class="hidden text-right sm:block"><strong class="block text-sm text-slate-700" x-text="user?.nomor"></strong><small class="text-slate-400" x-text="user?.role === 'admin' ? 'Administrator' : 'Wali kelas'"></small></span><div class="grid h-9 w-9 place-items-center rounded-full bg-slate-100 font-bold text-[#3c8dbc]" x-text="user?.role === 'admin' ? 'A' : 'W'"></div></div>
+      </header>
+
+    <main class="mx-auto max-w-[1500px] px-4 py-6 sm:px-7">
+      <div class="mb-6"><h2 class="text-2xl font-bold text-slate-800" x-text="tabs.find(item => item.id === tab)?.label"></h2><p class="mt-1 text-sm text-slate-500">Kelola data dan aktivitas absensi sekolah.</p></div>
       <section class="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <template x-for="card in cards" :key="card.label">
-          <div class="paper-edge rounded-2xl p-5 shadow-card">
+          <div class="paper-edge rounded-lg p-5 shadow-card" :style="`--accent:${card.color}`">
             <p class="text-xs font-bold uppercase tracking-[.18em] text-ink/45" x-text="card.label"></p>
             <div class="mt-2 flex items-end justify-between">
               <strong class="font-display text-4xl" x-text="card.value"></strong>
@@ -65,13 +76,7 @@
         </template>
       </section>
 
-      <section class="overflow-hidden rounded-3xl bg-white shadow-card">
-        <nav class="flex gap-1 overflow-x-auto border-b border-ink/10 p-2">
-          <template x-for="item in visibleTabs" :key="item.id">
-            <button @click="tab = item.id" class="whitespace-nowrap rounded-xl px-4 py-2.5 text-sm font-bold transition" :class="tab === item.id ? 'bg-ink text-white' : 'text-ink/55 hover:bg-paper'" x-text="item.label"></button>
-          </template>
-        </nav>
-
+      <section class="admin-card overflow-hidden bg-white shadow-card">
         <div class="p-4 sm:p-7">
           <div x-show="loading" class="py-20 text-center text-ink/50">Memuat data sekolah...</div>
           <div x-show="!loading && user?.role === 'admin' && data.faceService && !data.faceService.ready" x-cloak class="mb-5 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
@@ -137,7 +142,7 @@
           </div>
         </div>
       </section>
-    </main>
+    </main></div>
     </div>
 
     <div x-show="toast" x-transition x-cloak class="fixed bottom-5 right-5 max-w-sm rounded-2xl px-5 py-3 font-bold text-white shadow-2xl" :class="toastType === 'error' ? 'bg-red-700' : 'bg-leaf'" x-text="toast"></div>
@@ -145,10 +150,10 @@
     <script>
       function dashboard() {
         return {
-          tab: "ringkasan", loading: true, search: "", toast: "", toastType: "ok", authChecked: false, authLoading: false, user: null, loginStep: "number", loginError: "", login: {nomor:"",code:""}, data: { siswa: [], kelas: [], admins: [], jam: {} }, report: { rows: [] }, reportDate: "",
+          tab: "ringkasan", sidebarOpen: false, loading: true, search: "", toast: "", toastType: "ok", authChecked: false, authLoading: false, user: null, loginStep: "number", loginError: "", login: {nomor:"",code:""}, data: { siswa: [], kelas: [], admins: [], jam: {} }, report: { rows: [] }, reportDate: "",
           tabs: [{id:"ringkasan",label:"Ringkasan"},{id:"siswa",label:"Siswa"},{id:"kelas",label:"Kelas & Wali"},{id:"izin",label:"Izin"},{id:"admin",label:"Admin"},{id:"pengaturan",label:"Pengaturan"}],
           student: { nomor:"", nama:"", kelas:"", orangTua:"" }, classForm: { nama:"", namaWali:"", waliKelas:"" }, permission: { nomor:"", tanggal:"", alasan:"" }, adminForm: { nomor:"" }, time: { masuk:"07:00", pulang:"14:00" },
-          get cards() { const hadir=this.data.siswa.filter(s=>s.masuk).length, izin=this.data.siswa.filter(s=>s.izin).length; return [{label:"Total siswa",value:this.data.siswa.length,icon:"🎒"},{label:"Hadir hari ini",value:hadir,icon:"✓"},{label:"Belum hadir",value:Math.max(0,this.data.siswa.length-hadir-izin),icon:"○"},{label:"Izin",value:izin,icon:"✎"}]; },
+          get cards() { const hadir=this.data.siswa.filter(s=>s.masuk).length, izin=this.data.siswa.filter(s=>s.izin).length; return [{label:"Total siswa",value:this.data.siswa.length,icon:"SW",color:"#3c8dbc"},{label:"Hadir hari ini",value:hadir,icon:"OK",color:"#00a65a"},{label:"Belum hadir",value:Math.max(0,this.data.siswa.length-hadir-izin),icon:"--",color:"#f39c12"},{label:"Izin",value:izin,icon:"IZ",color:"#dd4b39"}]; },
           get visibleTabs() { return this.user?.role === "admin" ? this.tabs : this.tabs.filter(item=>item.id === "ringkasan"); },
           get filteredStudents() { const q=this.search.toLowerCase(); return this.data.siswa.filter(s=>(s.nama+s.nomor+s.kelas).toLowerCase().includes(q)); },
           async init(){ try{this.user=await this.request("/api/auth/me");await this.loadDashboard();}catch(e){this.user=null;}finally{this.authChecked=true;} },
