@@ -23,10 +23,14 @@ const FACE_REC = "./face_rec";
 const SHIFT_PATH = "./shifts.json";
 const IZIN_PATH = "./izin.json";
 
+const DEFAULT_ROLES = {
+  "6285158909844@c.us": "admin",
+};
+
 const JSON_STORES = {
   [STORAGE_PATH]: { path: STORAGE_PATH, fallback: {} },
   [KONTAK_PATH]: { path: KONTAK_PATH, fallback: {} },
-  [ROLE_PATH]: { path: ROLE_PATH, fallback: {} },
+  [ROLE_PATH]: { path: ROLE_PATH, fallback: DEFAULT_ROLES },
   [LOKASI_PATH]: {
     path: LOKASI_PATH,
     fallback: { latitude: -6.7329, longitude: 108.5522 },
@@ -69,13 +73,28 @@ function getWaktu() {
   };
 }
 function exportExcel(data, filename) {
-  if (!fs.existsSync(EXPORTS_DIR)) fs.mkdirSync(EXPORTS_DIR);
+  ensureDir(EXPORTS_DIR);
   const ws = XLSX.utils.json_to_sheet(data);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Rekap");
   const filePath = `${EXPORTS_DIR}/Rekap-${filename}.xlsx`;
   XLSX.writeFile(wb, filePath);
   return filePath;
+}
+
+function ensureDir(dirPath) {
+  if (!fs.existsSync(dirPath)) fs.mkdirSync(dirPath, { recursive: true });
+}
+
+function normalizeJam(jam) {
+  if (typeof jam !== "string") return jam;
+  if (/^\d{2}:\d{2}$/.test(jam)) return `${jam}:00`;
+  return jam;
+}
+
+function clearPendingAbsen(sender) {
+  if (pendingAbsen[sender]?.timeout) clearTimeout(pendingAbsen[sender].timeout);
+  delete pendingAbsen[sender];
 }
 
 function loadRequests() {
@@ -118,12 +137,32 @@ function loadRoles() {
   return loadJSON(ROLE_PATH, {});
 }
 
+async function ensureDefaultRoles() {
+  const roles = loadRoles();
+  let changed = false;
+
+  for (const [id, role] of Object.entries(DEFAULT_ROLES)) {
+    if (roles[id] !== role) {
+      roles[id] = role;
+      changed = true;
+    }
+  }
+
+  if (changed) await saveJSON(ROLE_PATH, roles);
+}
+
 function toTitleCase(str) {
   return str
     .toLowerCase()
     .split(" ")
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
+}
+
+function normalizeNomor(rawNomor) {
+  const nomor = String(rawNomor || "").replace(/\D/g, "");
+  if (nomor.startsWith("0")) return `62${nomor.slice(1)}`;
+  return nomor;
 }
 
 function loadShifts() {
@@ -195,10 +234,10 @@ client.on("message", async (msg) => {
   const role = roles[sender] || "user";
 
   if (!kontak[sender] && role !== "admin") {
-    const allowed = ["!setadmin", "!daftar"];
+    const allowed = ["!setadmin"];
     if (!allowed.some((cmd) => body.startsWith(cmd))) {
       return msg.reply(
-        "❌ Nomor kamu belum terdaftar. Kirim *!daftar Nama Lengkap* untuk mendaftar."
+        "❌ Nomor kamu belum terdaftar di absensi. Hubungi admin untuk didaftarkan."
       );
     }
   }
@@ -223,8 +262,68 @@ client.on("message", async (msg) => {
     return msg.reply(`✅ ${no} sekarang menjadi admin.`);
   }
 
+  // Tambah kontak absensi oleh admin
+  if (body.startsWith("!tambah kontak")) {
+    if (role !== "admin") return msg.reply("❌ Hanya admin.");
+
+    const parts = msg.body.trim().split(/\s+/);
+    const nomor = normalizeNomor(parts[2]);
+    const nama = toTitleCase(parts.slice(3).join(" ").trim());
+
+    if (!nomor || !/^62\d{8,14}$/.test(nomor) || !nama || nama.length < 3) {
+      return msg.reply(
+        "⚠️ Format: *!tambah kontak 628xxxxx Nama Lengkap*"
+      );
+    }
+
+    const id = `${nomor}@c.us`;
+    kontak[id] = nama;
+    await saveJSON(KONTAK_PATH, kontak);
+
+    const requests = loadRequests().filter((r) => r.id !== id);
+    await saveRequests(requests);
+
+    return msg.reply(
+      `✅ ${nama} (${nomor}) ditambahkan ke kontak absensi.\nMinta user kirim foto selfie dengan caption *!setfoto* sebelum absen pertama.`
+    );
+  }
+
+  // Simpan foto referensi wajah untuk user yang sudah didaftarkan admin
+  if (body.startsWith("!setfoto")) {
+    if (!kontak[sender]) {
+      return msg.reply(
+        "❌ Nomor kamu belum terdaftar di absensi. Hubungi admin untuk didaftarkan."
+      );
+    }
+
+    if (!msg.hasMedia || msg.type !== "image") {
+      return msg.reply("⚠️ Kirim foto selfie dengan caption *!setfoto*.");
+    }
+
+    const media = await msg.downloadMedia();
+    if (!media || !media.data) return msg.reply("❌ Gagal membaca foto.");
+
+    const nomor = sender.replace("@c.us", "");
+    ensureDir(FACE_DB);
+    ensureDir(FACE_REC);
+    fs.writeFileSync(
+      `${FACE_DB}/${nomor}.jpg`,
+      Buffer.from(media.data, "base64")
+    );
+    fs.writeFileSync(
+      `${FACE_REC}/${nomor}.jpg`,
+      Buffer.from(media.data, "base64")
+    );
+
+    return msg.reply("✅ Foto referensi wajah disimpan. Kamu sudah bisa absen.");
+  }
+
   // Daftar kontak
   if (body.startsWith("!daftar") && msg.hasMedia && msg.type === "image") {
+    if (role !== "admin") {
+      return msg.reply("❌ Pendaftaran hanya bisa dilakukan oleh admin.");
+    }
+
     if (kontak[sender]) return msg.reply("✅ Kamu sudah terdaftar.");
 
     const rawNama = body.slice(8).trim();
@@ -246,6 +345,8 @@ client.on("message", async (msg) => {
     const nomor = sender.replace("@c.us", "");
     const filePath = `${FACE_DB}/${nomor}.jpg`;
     const recPath = `${FACE_REC}/${nomor}.jpg`;
+    ensureDir(FACE_DB);
+    ensureDir(FACE_REC);
     fs.writeFileSync(filePath, Buffer.from(media.data, "base64"));
 
     if (!fs.existsSync(recPath)) {
@@ -276,12 +377,19 @@ client.on("message", async (msg) => {
     }
   }
 
+  if (body.startsWith("!daftar")) {
+    return msg.reply(
+      "❌ Pendaftaran hanya bisa dilakukan oleh admin. Minta admin memakai *!tambah kontak 628xxxxx Nama Lengkap*."
+    );
+  }
+
   if (msg.type === "image" && pendingFoto[sender]) {
     const media = await msg.downloadMedia();
     if (!media || !media.data) return msg.reply("❌ Gagal membaca foto.");
 
     const nomor = sender.replace("@c.us", "");
     const filePath = `${FACE_DB}/${nomor}.jpg`;
+    ensureDir(FACE_DB);
     fs.writeFileSync(filePath, Buffer.from(media.data, "base64"));
 
     // Simpan ke pending_requests
@@ -432,6 +540,12 @@ client.on("message", async (msg) => {
     if (!shift || !jamMasuk || !jamPulang)
       return msg.reply("⚠️ Format: !setshift shift1 07:00 15:00");
 
+    if (!/^\d{2}:\d{2}$/.test(jamMasuk) || !/^\d{2}:\d{2}$/.test(jamPulang)) {
+      return msg.reply(
+        "⚠️ Format jam harus HH:mm. Contoh: !setshift shift1 07:00 15:00"
+      );
+    }
+
     const shifts = loadShifts();
     shifts[shift.toLowerCase()] = { masuk: jamMasuk, pulang: jamPulang };
     await saveShifts(shifts);
@@ -452,6 +566,13 @@ client.on("message", async (msg) => {
     const tipe = body.startsWith("!masuk") ? "masuk" : "pulang";
     const shifts = loadShifts();
     const shiftArg = body.split(" ")[1]?.toLowerCase();
+    const nomor = sender.replace("@c.us", "");
+
+    if (!fs.existsSync(`${FACE_REC}/${nomor}.jpg`)) {
+      return msg.reply(
+        "⚠️ Foto referensi wajah belum ada. Kirim foto selfie dengan caption *!setfoto* dulu."
+      );
+    }
 
     // validasi shift harus cocok dengan key di shifts
     if (shiftArg && !shifts[shiftArg]) {
@@ -485,7 +606,7 @@ client.on("message", async (msg) => {
 
     const cocok = await verifikasiWajah(sender, media.data);
     if (!cocok) {
-      delete pendingAbsen[sender];
+      clearPendingAbsen(sender);
       return msg.reply("❌ Wajah tidak dikenali. Gunakan selfie asli kamu.");
     }
 
@@ -512,28 +633,37 @@ client.on("message", async (msg) => {
     clearTimeout(absen.timeout);
 
     const jarak = haversine(lokasi, lokasiKantor);
-    if (jarak > 100) return msg.reply("❌ Di luar area kantor.");
+    if (jarak > 100) {
+      clearPendingAbsen(sender);
+      return msg.reply("❌ Di luar area kantor.");
+    }
 
     const tipe = absen.tipe;
     const izinData = loadIzin();
     if (izinData[waktu.tanggal] && izinData[waktu.tanggal][sender]) {
+      clearPendingAbsen(sender);
       return msg.reply("❌ Kamu sudah mengajukan izin hari ini.");
     }
 
     const dataHariIni = (storage[waktu.tanggal] = storage[waktu.tanggal] || {});
     const userLog = (dataHariIni[sender] = dataHariIni[sender] || {});
 
-    if (userLog[tipe]) return msg.reply(`✅ Sudah absen ${tipe}.`);
+    if (userLog[tipe]) {
+      clearPendingAbsen(sender);
+      return msg.reply(`✅ Sudah absen ${tipe}.`);
+    }
 
     const shifts = loadShifts();
     const jamShift = absen.shift ? shifts[absen.shift] : jamResmi;
+    const jamMasuk = normalizeJam(jamShift.masuk);
+    const jamPulang = normalizeJam(jamShift.pulang);
 
     const status =
       tipe === "masuk"
-        ? waktu.jam <= jamShift.masuk
+        ? waktu.jam <= jamMasuk
           ? "Tepat Waktu"
           : "Terlambat"
-        : waktu.jam >= jamShift.pulang
+        : waktu.jam >= jamPulang
         ? "Sesuai Waktu"
         : "Pulang Cepat";
 
@@ -547,7 +677,7 @@ client.on("message", async (msg) => {
     };
 
     await saveJSON(STORAGE_PATH, storage);
-    delete pendingAbsen[sender];
+    clearPendingAbsen(sender);
 
     msg.reply(`✅ Absen ${tipe} dicatat (${status})`);
 
@@ -579,13 +709,16 @@ client.on("message", async (msg) => {
 
     const izinData = loadIzin();
     const arg = body.slice(6).trim(); // ex: "hari ini sakit"
-    const alasan = arg.split(" ").slice(2).join(" ").trim();
+    let alasan;
     let tanggal;
 
     if (arg.startsWith("hari ini")) {
       tanggal = waktu.tanggal;
+      alasan = arg.split(" ").slice(2).join(" ").trim();
     } else if (/^\d{4}-\d{2}-\d{2}/.test(arg)) {
-      tanggal = arg.split(" ")[0];
+      const parts = arg.split(" ");
+      tanggal = parts[0];
+      alasan = parts.slice(1).join(" ").trim();
     } else {
       return msg.reply(
         "❌ Format salah. Gunakan: *!izin hari ini alasan* atau *!izin YYYY-MM-DD alasan*"
@@ -975,13 +1108,23 @@ client.on("message", async (msg) => {
     const shifts = loadShifts();
     const izinData = loadIzin();
 
-    const semuaTanggal = Object.keys(storage).filter(
+    const semuaTanggalStorage = Object.keys(storage).filter(
       (tgl) =>
         typeof tgl === "string" &&
         tgl.length === 10 &&
         tgl.slice(5, 7) === bulan.slice(0, 2) &&
         tgl.slice(0, 4) === bulan.slice(3, 7)
     );
+
+    const semuaTanggalIzin = Object.keys(izinData).filter(
+      (tgl) =>
+        typeof tgl === "string" &&
+        tgl.length === 10 &&
+        tgl.slice(5, 7) === bulan.slice(0, 2) &&
+        tgl.slice(0, 4) === bulan.slice(3, 7)
+    );
+
+    const semuaTanggal = new Set([...semuaTanggalStorage, ...semuaTanggalIzin]);
 
     for (const tgl of semuaTanggal) {
       const data = storage[tgl] || {};
@@ -1068,6 +1211,7 @@ client.on("message", async (msg) => {
     XLSX.utils.book_append_sheet(wb, sheet2, "Ringkasan");
 
     const filePath = `./exports/Rekap-${bulan}.xlsx`;
+    ensureDir(EXPORTS_DIR);
     XLSX.writeFile(wb, filePath);
 
     const media = MessageMedia.fromFilePath(filePath);
@@ -1179,6 +1323,7 @@ app.listen(PORT, () => {
 async function startBot() {
   try {
     jsonCache = await initJsonStore(JSON_STORES);
+    await ensureDefaultRoles();
     pendingFoto = loadPendingFoto();
     console.log(`Database Sequelize siap: ${DB_PATH}`);
     client.initialize();
