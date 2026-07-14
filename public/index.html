@@ -118,6 +118,20 @@
             <div class="mx-auto max-w-xl"><p class="text-sm font-bold uppercase tracking-widest text-leaf">Ketidakhadiran</p><h2 class="mb-5 font-display text-3xl font-bold">Catat izin siswa</h2><form @submit.prevent="savePermission" class="grid gap-4 rounded-2xl bg-paper p-6"><label class="text-sm font-bold">Siswa<select x-model="permission.nomor" required class="mt-1 w-full rounded-xl border border-ink/15 bg-white px-3 py-2.5"><option value="">Pilih siswa</option><template x-for="s in data.siswa"><option :value="s.nomor" x-text="s.nama + (s.kelas ? ' · ' + s.kelas : '')"></option></template></select></label><label class="text-sm font-bold">Tanggal<input type="date" x-model="permission.tanggal" required class="mt-1 w-full rounded-xl border border-ink/15 bg-white px-3 py-2.5" /></label><label class="text-sm font-bold">Alasan<textarea x-model="permission.alasan" required rows="3" class="mt-1 w-full rounded-xl border border-ink/15 bg-white px-3 py-2.5"></textarea></label><button class="rounded-xl bg-ink py-3 font-bold text-white">Simpan izin</button></form></div>
           </div>
 
+          <div x-show="!loading && tab === 'admin'" x-cloak>
+            <div class="grid gap-8 lg:grid-cols-[360px_1fr]">
+              <form @submit.prevent="saveAdmin" class="rounded-2xl bg-paper p-5">
+                <p class="text-sm font-bold uppercase tracking-widest text-leaf">Hak akses</p><h2 class="mb-3 font-display text-2xl font-bold">Tambah admin baru</h2>
+                <p class="mb-5 text-sm text-ink/55">Admin baru dapat login ke dashboard dan mengelola seluruh data sekolah.</p>
+                <label class="mb-4 block text-sm font-bold">Nomor WhatsApp<input x-model="adminForm.nomor" required placeholder="628..." class="mt-1 w-full rounded-xl border border-ink/15 bg-white px-3 py-2.5" /></label>
+                <button class="w-full rounded-xl bg-ink py-3 font-bold text-white">Tambahkan admin</button>
+              </form>
+              <div><p class="text-sm font-bold uppercase tracking-widest text-leaf">Akses dashboard</p><h2 class="mb-5 font-display text-2xl font-bold">Daftar admin</h2>
+                <div class="grid gap-3 sm:grid-cols-2"><template x-for="nomor in data.admins" :key="nomor"><article class="flex items-center gap-3 rounded-2xl border border-ink/10 p-4"><div class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-sun font-bold">A</div><div><h3 class="font-bold" x-text="nomor"></h3><p class="text-xs text-ink/50" x-text="nomor === user?.nomor ? 'Admin aktif · Anda' : 'Admin'"></p></div></article></template></div>
+              </div>
+            </div>
+          </div>
+
           <div x-show="!loading && tab === 'pengaturan'" x-cloak>
             <div class="mx-auto max-w-xl"><p class="text-sm font-bold uppercase tracking-widest text-leaf">Jadwal sekolah</p><h2 class="mb-5 font-display text-3xl font-bold">Jam absensi</h2><form @submit.prevent="saveTime" class="rounded-2xl bg-paper p-6"><div class="grid gap-4 sm:grid-cols-2"><label class="text-sm font-bold">Jam masuk<input type="time" x-model="time.masuk" required class="mt-1 w-full rounded-xl border border-ink/15 bg-white px-3 py-2.5" /></label><label class="text-sm font-bold">Jam pulang<input type="time" x-model="time.pulang" required class="mt-1 w-full rounded-xl border border-ink/15 bg-white px-3 py-2.5" /></label></div><button class="mt-5 w-full rounded-xl bg-ink py-3 font-bold text-white">Simpan jadwal</button><p class="mt-4 text-center text-sm text-ink/50">Lokasi sekolah tetap diatur lewat WhatsApp dengan <strong>!setlokasi</strong>.</p></form></div>
           </div>
@@ -131,9 +145,9 @@
     <script>
       function dashboard() {
         return {
-          tab: "ringkasan", loading: true, search: "", toast: "", toastType: "ok", authChecked: false, authLoading: false, user: null, loginStep: "number", loginError: "", login: {nomor:"",code:""}, data: { siswa: [], kelas: [], jam: {} }, report: { rows: [] }, reportDate: "",
-          tabs: [{id:"ringkasan",label:"Ringkasan"},{id:"siswa",label:"Siswa"},{id:"kelas",label:"Kelas & Wali"},{id:"izin",label:"Izin"},{id:"pengaturan",label:"Pengaturan"}],
-          student: { nomor:"", nama:"", kelas:"", orangTua:"" }, classForm: { nama:"", namaWali:"", waliKelas:"" }, permission: { nomor:"", tanggal:"", alasan:"" }, time: { masuk:"07:00", pulang:"14:00" },
+          tab: "ringkasan", loading: true, search: "", toast: "", toastType: "ok", authChecked: false, authLoading: false, user: null, loginStep: "number", loginError: "", login: {nomor:"",code:""}, data: { siswa: [], kelas: [], admins: [], jam: {} }, report: { rows: [] }, reportDate: "",
+          tabs: [{id:"ringkasan",label:"Ringkasan"},{id:"siswa",label:"Siswa"},{id:"kelas",label:"Kelas & Wali"},{id:"izin",label:"Izin"},{id:"admin",label:"Admin"},{id:"pengaturan",label:"Pengaturan"}],
+          student: { nomor:"", nama:"", kelas:"", orangTua:"" }, classForm: { nama:"", namaWali:"", waliKelas:"" }, permission: { nomor:"", tanggal:"", alasan:"" }, adminForm: { nomor:"" }, time: { masuk:"07:00", pulang:"14:00" },
           get cards() { const hadir=this.data.siswa.filter(s=>s.masuk).length, izin=this.data.siswa.filter(s=>s.izin).length; return [{label:"Total siswa",value:this.data.siswa.length,icon:"🎒"},{label:"Hadir hari ini",value:hadir,icon:"✓"},{label:"Belum hadir",value:Math.max(0,this.data.siswa.length-hadir-izin),icon:"○"},{label:"Izin",value:izin,icon:"✎"}]; },
           get visibleTabs() { return this.user?.role === "admin" ? this.tabs : this.tabs.filter(item=>item.id === "ringkasan"); },
           get filteredStudents() { const q=this.search.toLowerCase(); return this.data.siswa.filter(s=>(s.nama+s.nomor+s.kelas).toLowerCase().includes(q)); },
@@ -153,6 +167,7 @@
           removeClass(k){ if(confirm(`Hapus kelas ${k.nama}?`)) this.act(()=>this.request(`/api/classes/${encodeURIComponent(k.nama)}`,{method:"DELETE"}),"Kelas dihapus"); },
           async uploadPhoto(number,event){ const file=event.target.files[0]; if(!file)return; const form=new FormData();form.append("photo",file); await this.act(()=>this.request(`/api/students/${number}/photo`,{method:"POST",body:form}),"Foto referensi tersimpan"); },
           savePermission(){ return this.act(async()=>{await this.request("/api/permissions",{method:"POST",body:JSON.stringify(this.permission)});this.permission={nomor:"",tanggal:this.data.tanggal,alasan:""};},"Izin tersimpan"); },
+          saveAdmin(){ return this.act(async()=>{await this.request("/api/admins",{method:"POST",body:JSON.stringify(this.adminForm)});this.adminForm={nomor:""};},"Admin baru ditambahkan"); },
           saveTime(){ return this.act(()=>this.request("/api/settings/time",{method:"POST",body:JSON.stringify(this.time)}),"Jam sekolah diperbarui"); },
           async loadReport(){ try{this.report=await this.request(`/api/report?date=${this.reportDate}`);}catch(e){this.notify(e.message,"error");} },
         };

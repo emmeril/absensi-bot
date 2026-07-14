@@ -308,14 +308,20 @@ client.on("message", async (msg) => {
 
   // Set admin
   if (body.startsWith("!setadmin")) {
-    const no = body.split(" ")[1];
-    if (!no) return msg.reply("⚠️ Format: !setadmin 628xxxx");
+    const no = normalizeNomor(msg.body.trim().split(/\s+/)[1]);
+    if (!/^62\d{8,14}$/.test(no)) {
+      return msg.reply("⚠️ Format: !setadmin 628xxxx");
+    }
 
-    const targetId = no + "@c.us";
+    const targetId = `${no}@c.us`;
     const alreadyHasAdmin = Object.values(roles).includes("admin");
 
-    if (alreadyHasAdmin && roles[sender] !== "admin") {
+    if (alreadyHasAdmin && role !== "admin") {
       return msg.reply("❌ Hanya admin yang bisa menambahkan admin.");
+    }
+
+    if (roles[targetId] === "admin") {
+      return msg.reply(`ℹ️ ${no} sudah menjadi admin.`);
     }
 
     roles[targetId] = "admin";
@@ -1593,6 +1599,23 @@ function dashboardData(user) {
 
 app.get("/api/dashboard", (req, res) => {
   res.json(dashboardData(req.webUser));
+});
+
+app.post("/api/admins", requireWebAdmin, async (req, res) => {
+  const nomor = normalizeNomor(req.body.nomor);
+  if (!/^62\d{8,14}$/.test(nomor)) {
+    return res.status(400).json({ error: "Nomor WhatsApp admin belum valid." });
+  }
+
+  const id = `${nomor}@c.us`;
+  const roles = loadRoles();
+  if (roles[id] === "admin") {
+    return res.status(409).json({ error: "Nomor tersebut sudah menjadi admin." });
+  }
+
+  roles[id] = "admin";
+  await saveJSON(ROLE_PATH, roles);
+  res.status(201).json({ ok: true, nomor, role: "admin" });
 });
 
 app.post("/api/classes", requireWebAdmin, async (req, res) => {
