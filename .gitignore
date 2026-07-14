@@ -6,6 +6,4 @@ pnpm-workspace.yaml
 face-server
 data/*.sqlite
 data/*.sqlite-*
-face_models/
-models/*_model-weights_manifest.json
-models/*_model-shard*
+models/
