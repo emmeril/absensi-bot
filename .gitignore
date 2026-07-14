@@ -4,3 +4,5 @@ node_modules
 pnpm-lock.yaml
 pnpm-workspace.yaml
 face-server
+data/*.sqlite
+data/*.sqlite-*

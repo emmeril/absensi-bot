@@ -6,6 +6,7 @@ const haversine = require("haversine-distance");
 const XLSX = require("xlsx");
 const axios = require("axios");
 const express = require("express");
+const { DB_PATH, initJsonStore, saveJsonData } = require("./models/database");
 const app = express();
 const PORT = 3200;
 
@@ -22,11 +23,43 @@ const FACE_REC = "./face_rec";
 const SHIFT_PATH = "./shifts.json";
 const IZIN_PATH = "./izin.json";
 
-function loadJSON(path, fallback = {}) {
-  return fs.existsSync(path) ? JSON.parse(fs.readFileSync(path)) : fallback;
+const JSON_STORES = {
+  [STORAGE_PATH]: { path: STORAGE_PATH, fallback: {} },
+  [KONTAK_PATH]: { path: KONTAK_PATH, fallback: {} },
+  [ROLE_PATH]: { path: ROLE_PATH, fallback: {} },
+  [LOKASI_PATH]: {
+    path: LOKASI_PATH,
+    fallback: { latitude: -6.7329, longitude: 108.5522 },
+  },
+  [JAM_PATH]: {
+    path: JAM_PATH,
+    fallback: { masuk: "09:00:00", pulang: "16:00:00" },
+  },
+  [REQUESTS_PATH]: { path: REQUESTS_PATH, fallback: [] },
+  [PENDING_FOTO_PATH]: { path: PENDING_FOTO_PATH, fallback: {} },
+  [SHIFT_PATH]: {
+    path: SHIFT_PATH,
+    fallback: {
+      shift1: { masuk: "07:00", pulang: "15:00" },
+      shift2: { masuk: "15:00", pulang: "23:00" },
+      shift3: { masuk: "23:00", pulang: "07:00" },
+    },
+  },
+  [IZIN_PATH]: { path: IZIN_PATH, fallback: {} },
+};
+
+let jsonCache = {};
+
+function cloneData(data) {
+  return JSON.parse(JSON.stringify(data));
 }
-function saveJSON(path, data) {
-  fs.writeFileSync(path, JSON.stringify(data, null, 2));
+
+function loadJSON(path, fallback = {}) {
+  return cloneData(jsonCache[path] ?? fallback);
+}
+async function saveJSON(path, data) {
+  jsonCache[path] = cloneData(data);
+  await saveJsonData(path, jsonCache[path]);
 }
 function getWaktu() {
   const now = moment();
@@ -48,8 +81,8 @@ function exportExcel(data, filename) {
 function loadRequests() {
   return loadJSON(REQUESTS_PATH, []);
 }
-function saveRequests(list) {
-  saveJSON(REQUESTS_PATH, list);
+async function saveRequests(list) {
+  await saveJSON(REQUESTS_PATH, list);
 }
 
 function hitungTelat(waktuMasuk, jamResmi = "09:00:00") {
@@ -62,11 +95,11 @@ function hitungTelat(waktuMasuk, jamResmi = "09:00:00") {
 function loadPendingFoto() {
   return loadJSON(PENDING_FOTO_PATH, {});
 }
-function savePendingFoto(data) {
-  saveJSON(PENDING_FOTO_PATH, data);
+async function savePendingFoto(data) {
+  await saveJSON(PENDING_FOTO_PATH, data);
 }
 
-const pendingFoto = loadPendingFoto();
+let pendingFoto = {};
 
 async function verifikasiWajah(userId, fotoBase64) {
   try {
@@ -101,16 +134,16 @@ function loadShifts() {
   });
 }
 
-function saveShifts(obj) {
-  saveJSON(SHIFT_PATH, obj);
+async function saveShifts(obj) {
+  await saveJSON(SHIFT_PATH, obj);
 }
 
 function loadIzin() {
   return loadJSON(IZIN_PATH, {});
 }
 
-function saveIzin(data) {
-  saveJSON(IZIN_PATH, data);
+async function saveIzin(data) {
+  await saveJSON(IZIN_PATH, data);
 }
 
 const client = new Client({
@@ -186,7 +219,7 @@ client.on("message", async (msg) => {
     }
 
     roles[targetId] = "admin";
-    saveJSON(ROLE_PATH, roles);
+    await saveJSON(ROLE_PATH, roles);
     return msg.reply(`✅ ${no} sekarang menjadi admin.`);
   }
 
@@ -220,7 +253,7 @@ client.on("message", async (msg) => {
     }
 
     requests.push({ id: sender, nama });
-    saveRequests(requests);
+    await saveRequests(requests);
 
     msg.reply(
       "✅ Foto selfie dan nama diterima. Permintaan akses dikirim ke admin."
@@ -255,11 +288,11 @@ client.on("message", async (msg) => {
     const requests = loadRequests();
     if (!requests.find((r) => r.id === sender)) {
       requests.push({ id: sender, nama: pendingFoto[sender].nama });
-      saveRequests(requests);
+      await saveRequests(requests);
     }
 
     delete pendingFoto[sender];
-    savePendingFoto(pendingFoto);
+    await savePendingFoto(pendingFoto);
 
     msg.reply("✅ Foto selfie diterima. Permintaan kamu dikirim ke admin.");
   }
@@ -313,8 +346,8 @@ client.on("message", async (msg) => {
     }
 
     kontak[approved.id] = approved.nama;
-    saveJSON(KONTAK_PATH, kontak);
-    saveRequests(requests);
+    await saveJSON(KONTAK_PATH, kontak);
+    await saveRequests(requests);
 
     msg.reply(
       `✅ ${approved.nama} (${approved.id.replace(
@@ -358,7 +391,7 @@ client.on("message", async (msg) => {
 
     const nama = kontak[id];
     delete kontak[id];
-    saveJSON(KONTAK_PATH, kontak);
+    await saveJSON(KONTAK_PATH, kontak);
 
     msg.reply(`🗑️ Kontak *${nama}* (${nomor}) berhasil dihapus.`);
   }
@@ -370,7 +403,7 @@ client.on("message", async (msg) => {
     return msg.reply("📍 Kirim lokasi sekarang.");
   }
   if (msg.type === "location" && pendingLokasi[sender]) {
-    saveJSON(LOKASI_PATH, {
+    await saveJSON(LOKASI_PATH, {
       latitude: msg.location.latitude,
       longitude: msg.location.longitude,
     });
@@ -388,7 +421,7 @@ client.on("message", async (msg) => {
       );
     }
     jamResmi[jenis] = jam + ":00";
-    saveJSON(JAM_PATH, jamResmi);
+    await saveJSON(JAM_PATH, jamResmi);
     return msg.reply(`✅ Jam ${jenis} diatur ke ${jam}`);
   }
 
@@ -401,7 +434,7 @@ client.on("message", async (msg) => {
 
     const shifts = loadShifts();
     shifts[shift.toLowerCase()] = { masuk: jamMasuk, pulang: jamPulang };
-    saveShifts(shifts);
+    await saveShifts(shifts);
 
     msg.reply(
       `✅ Shift *${shift}* diatur ke\nMasuk: ${jamMasuk}\nPulang: ${jamPulang}`
@@ -513,7 +546,7 @@ client.on("message", async (msg) => {
       nama: kontak[sender],
     };
 
-    saveJSON(STORAGE_PATH, storage);
+    await saveJSON(STORAGE_PATH, storage);
     delete pendingAbsen[sender];
 
     msg.reply(`✅ Absen ${tipe} dicatat (${status})`);
@@ -574,7 +607,7 @@ client.on("message", async (msg) => {
       alasan,
       nama: kontak[sender] || sender,
     };
-    saveIzin(izinData);
+    await saveIzin(izinData);
 
     msg.reply(`✅ Izin untuk tanggal ${tanggal} dicatat.\nAlasan: ${alasan}`);
 
@@ -1143,4 +1176,16 @@ app.listen(PORT, () => {
   console.log(`🌐 Akses QR di: http://localhost:${PORT}/qr`);
 });
 
-client.initialize();
+async function startBot() {
+  try {
+    jsonCache = await initJsonStore(JSON_STORES);
+    pendingFoto = loadPendingFoto();
+    console.log(`Database Sequelize siap: ${DB_PATH}`);
+    client.initialize();
+  } catch (error) {
+    console.error("Gagal inisialisasi database:", error);
+    process.exit(1);
+  }
+}
+
+startBot();
