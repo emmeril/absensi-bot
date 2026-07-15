@@ -272,6 +272,51 @@ function tunggu(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function downloadMediaLangsung(msg) {
+  const mediaData = msg._data || {};
+  if (!mediaData.directPath || !mediaData.mediaKey) return null;
+
+  const result = await client.pupPage.evaluate(async (data) => {
+    const mockQpl = {
+      addAnnotations() {
+        return this;
+      },
+      addPoint() {
+        return this;
+      },
+    };
+    const decryptedMedia = await window
+      .require("WAWebDownloadManager")
+      .downloadManager.downloadAndMaybeDecrypt({
+        directPath: data.directPath,
+        encFilehash: data.encFilehash,
+        filehash: data.filehash,
+        mediaKey: data.mediaKey,
+        mediaKeyTimestamp: data.mediaKeyTimestamp,
+        type: data.type,
+        signal: new AbortController().signal,
+        downloadQpl: mockQpl,
+      });
+
+    return window.WWebJS.arrayBufferToBase64Async(decryptedMedia);
+  }, {
+    directPath: mediaData.directPath,
+    encFilehash: mediaData.encFilehash,
+    filehash: mediaData.filehash,
+    mediaKey: mediaData.mediaKey,
+    mediaKeyTimestamp: mediaData.mediaKeyTimestamp,
+    type: mediaData.type || msg.type,
+  });
+
+  if (!result) return null;
+  return new MessageMedia(
+    mediaData.mimetype || "image/jpeg",
+    result,
+    mediaData.filename,
+    mediaData.size
+  );
+}
+
 async function downloadMediaDenganRetry(msg, maxAttempts = 4) {
   let currentMessage = msg;
   let lastError;
@@ -283,6 +328,17 @@ async function downloadMediaDenganRetry(msg, maxAttempts = 4) {
       lastError = new Error("WhatsApp belum menyediakan data media");
     } catch (error) {
       lastError = error;
+    }
+
+    try {
+      const media = await downloadMediaLangsung(currentMessage);
+      if (media?.data) {
+        console.log("[Media Fallback] Unduh langsung berhasil");
+        return media;
+      }
+    } catch (fallbackError) {
+      console.warn(`[Media Fallback ERROR] ${fallbackError.message}`);
+      lastError = fallbackError;
     }
 
     console.warn(
@@ -315,15 +371,31 @@ async function downloadMediaAman(msg, context) {
 
 const client = new Client({
   authStrategy: new LocalAuth(), // Simpan sesi login secara lokal
-  webVersion: "2.3000.1043126001",
-  webVersionCache: {
-    type: "local",
-    path: "./.wwebjs_cache.backup",
-    strict: true,
-  },
   puppeteer: {
-    args: ["--no-sandbox", "--disable-setuid-sandbox"], // ✅ Fix error root user
+    executablePath:
+      process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium",
     headless: true,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-accelerated-2d-canvas",
+      "--no-first-run",
+      "--no-zygote",
+      "--disable-gpu",
+      "--disable-software-rasterizer",
+      "--disable-features=VizDisplayCompositor",
+      "--disable-background-timer-throttling",
+      "--disable-backgrounding-occluded-windows",
+      "--disable-renderer-backgrounding",
+      "--max-old-space-size=512",
+    ],
+    ignoreHTTPSErrors: true,
+  },
+  webVersionCache: {
+    type: "remote",
+    remotePath:
+      "https://raw.githubusercontent.com/wppconnect-team/wa-version/refs/heads/main/html/2.3000.1031490220-alpha.html",
   },
 });
 
@@ -732,6 +804,7 @@ client.on("message", async (msg) => {
       );
     }
 
+    clearPendingIzin(sender);
     clearPendingAbsen(sender);
     pendingAbsen[sender] = {
       tipe,
@@ -900,6 +973,7 @@ client.on("message", async (msg) => {
       return msg.reply("⚠️ Kamu sudah mengajukan izin hari ini.");
     }
 
+    clearPendingAbsen(sender);
     clearPendingIzin(sender);
     pendingIzin[sender] = {
       alasan,
