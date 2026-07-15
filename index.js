@@ -503,7 +503,6 @@ client.on("message", async (msg) => {
   const commandDiizinkan =
     body === "!masuk" ||
     body === "!pulang" ||
-    body === "!setfoto" ||
     body === "!setlokasi" ||
     body === "!izin" ||
     body.startsWith("!izin ");
@@ -587,38 +586,8 @@ client.on("message", async (msg) => {
     await saveRequests(requests);
 
     return msg.reply(
-      `✅ ${nama} (${nomor}) ditambahkan ke kontak absensi.\nMinta user kirim foto selfie dengan caption *!setfoto* sebelum absen pertama.`
+      `✅ ${nama} (${nomor}) ditambahkan ke kontak absensi.\nUnggah foto referensi siswa melalui dashboard admin atau wali kelas sebelum absen pertama.`
     );
-  }
-
-  // Simpan foto referensi wajah untuk user yang sudah didaftarkan admin
-  if (body.startsWith("!setfoto")) {
-    if (!kontak[sender]) {
-      return msg.reply(
-        "❌ Nomor kamu belum terdaftar di absensi. Hubungi admin untuk didaftarkan."
-      );
-    }
-
-    if (!msg.hasMedia || msg.type !== "image") {
-      return msg.reply("⚠️ Kirim foto selfie dengan caption *!setfoto*.");
-    }
-
-    const media = await downloadMediaAman(msg, `setfoto ${sender}`);
-    if (!media || !media.data) return msg.reply("❌ Gagal membaca foto.");
-
-    const nomor = sender.replace("@c.us", "");
-    ensureDir(FACE_DB);
-    ensureDir(FACE_REC);
-    fs.writeFileSync(
-      `${FACE_DB}/${nomor}.jpg`,
-      Buffer.from(media.data, "base64")
-    );
-    fs.writeFileSync(
-      `${FACE_REC}/${nomor}.jpg`,
-      Buffer.from(media.data, "base64")
-    );
-
-    return msg.reply("✅ Foto referensi wajah disimpan. Kamu sudah bisa absen.");
   }
 
   // Daftar kontak
@@ -867,7 +836,7 @@ client.on("message", async (msg) => {
 
     if (!fs.existsSync(`${FACE_REC}/${nomor}.jpg`)) {
       return msg.reply(
-        "⚠️ Foto referensi wajah belum ada. Kirim foto selfie dengan caption *!setfoto* dulu."
+        "⚠️ Foto referensi wajah belum ada. Hubungi admin atau wali kelas untuk mengunggah foto melalui dashboard."
       );
     }
 
@@ -1179,8 +1148,7 @@ client.on("message", async (msg) => {
   if (msg.hasMedia && msg.type === "image") {
     return msg.reply(
       "⚠️ Foto diterima, tetapi tidak ada proses yang sedang menunggu foto.\n" +
-        "Untuk absen, kirim *!masuk* atau *!pulang* lalu kirim selfie dalam 2 menit.\n" +
-        "Untuk menyimpan foto wajah, kirim selfie dengan caption *!setfoto*."
+        "Untuk absen, kirim *!masuk* atau *!pulang* lalu kirim selfie dalam 2 menit."
     );
   }
 
@@ -1714,6 +1682,20 @@ function requireWebAdmin(req, res, next) {
   next();
 }
 
+function requireWebPhotoManager(req, res, next) {
+  if (req.webUser?.role === "admin") return next();
+
+  const siswaId = `${normalizeNomor(req.params.number)}@c.us`;
+  const kelasWali = kelasUntukWali(loadKelas(), req.webUser?.id);
+  if (req.webUser?.role === "wali_kelas" && findKelasSiswa(kelasWali, siswaId)) {
+    return next();
+  }
+
+  return res.status(403).json({
+    error: "Wali kelas hanya dapat mengunggah foto siswa di kelasnya.",
+  });
+}
+
 function kelasUntukWali(kelas, userId) {
   return Object.fromEntries(
     Object.entries(kelas).filter(([, data]) => data.waliKelas === userId)
@@ -2014,7 +1996,7 @@ app.delete("/api/students/:number", requireWebAdmin, async (req, res) => {
 
 app.post(
   "/api/students/:number/photo",
-  requireWebAdmin,
+  requireWebPhotoManager,
   upload.single("photo"),
   (req, res) => {
   const nomor = normalizeNomor(req.params.number);
