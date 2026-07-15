@@ -2,6 +2,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   getDailyStudentStatus,
+  getArrivalStatus,
+  isWithinAttendanceWindow,
   validateAttendance,
   validatePermission,
 } = require("../lib/attendance-rules");
@@ -19,6 +21,20 @@ test("absen masuk dan pulang masing-masing hanya dapat dilakukan sekali", () => 
 
   assert.match(validateAttendance(status, "masuk"), /satu kali/);
   assert.match(validateAttendance(status, "pulang"), /satu kali/);
+});
+
+test("toleransi masuk memperpanjang batas status tepat waktu", () => {
+  assert.equal(getArrivalStatus("07:10:00", "07:00:00", 10), "Tepat Waktu");
+  assert.equal(getArrivalStatus("07:10:01", "07:00:00", 10), "Terlambat");
+  assert.equal(getArrivalStatus("07:00:01", "07:00:00"), "Terlambat");
+});
+
+test("absensi hanya diterima di dalam rentang waktu yang diatur", () => {
+  assert.equal(isWithinAttendanceWindow("06:00:00", "06:00", "07:00"), true);
+  assert.equal(isWithinAttendanceWindow("07:00:00", "06:00", "07:00"), true);
+  assert.equal(isWithinAttendanceWindow("05:59:59", "06:00", "07:00"), false);
+  assert.equal(isWithinAttendanceWindow("07:00:01", "06:00", "07:00"), false);
+  assert.equal(isWithinAttendanceWindow("16:00:00", "15:00", "17:00"), true);
 });
 
 test("siswa yang sudah izin tidak dapat absen masuk atau pulang", () => {

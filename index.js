@@ -18,6 +18,8 @@ const { FaceWorkerPool } = require("./services/face-worker-pool");
 const { TaskQueue } = require("./lib/task-queue");
 const {
   getDailyStudentStatus,
+  getArrivalStatus,
+  isWithinAttendanceWindow,
   validateAttendance,
   validatePermission,
 } = require("./lib/attendance-rules");
@@ -62,7 +64,15 @@ const JSON_STORES = {
   },
   [JAM_PATH]: {
     path: JAM_PATH,
-    fallback: { masuk: "09:00:00", pulang: "16:00:00" },
+    fallback: {
+      masuk: "09:00:00",
+      pulang: "16:00:00",
+      toleransi: 0,
+      mulaiMasuk: "00:00:00",
+      selesaiMasuk: "23:59:59",
+      mulaiPulang: "00:00:00",
+      selesaiPulang: "23:59:59",
+    },
   },
   [REQUESTS_PATH]: { path: REQUESTS_PATH, fallback: [] },
   [PENDING_FOTO_PATH]: { path: PENDING_FOTO_PATH, fallback: {} },
@@ -475,6 +485,11 @@ client.on("message", async (msg) => {
   const jamResmi = loadJSON(JAM_PATH, {
     masuk: "09:00:00",
     pulang: "16:00:00",
+    toleransi: 0,
+    mulaiMasuk: "00:00:00",
+    selesaiMasuk: "23:59:59",
+    mulaiPulang: "00:00:00",
+    selesaiPulang: "23:59:59",
   });
   const waktu = getWaktu();
   const role = roles[sender] || "user";
@@ -838,6 +853,17 @@ client.on("message", async (msg) => {
       tipe
     );
     if (attendanceError) return msg.reply(`❌ ${attendanceError}`);
+    const mulaiAbsen =
+      tipe === "masuk" ? jamResmi.mulaiMasuk : jamResmi.mulaiPulang;
+    const selesaiAbsen =
+      tipe === "masuk" ? jamResmi.selesaiMasuk : jamResmi.selesaiPulang;
+    if (!isWithinAttendanceWindow(waktu.jam, mulaiAbsen, selesaiAbsen)) {
+      return msg.reply(
+        `❌ Absen ${tipe} hanya dapat dilakukan pukul ${String(
+          mulaiAbsen || "00:00"
+        ).slice(0, 5)}–${String(selesaiAbsen || "23:59").slice(0, 5)}.`
+      );
+    }
 
     if (!fs.existsSync(`${FACE_REC}/${nomor}.jpg`)) {
       return msg.reply(
@@ -941,15 +967,25 @@ client.on("message", async (msg) => {
       clearPendingAbsen(sender);
       return msg.reply(`❌ ${attendanceError}`);
     }
+    const mulaiAbsen =
+      tipe === "masuk" ? jamResmi.mulaiMasuk : jamResmi.mulaiPulang;
+    const selesaiAbsen =
+      tipe === "masuk" ? jamResmi.selesaiMasuk : jamResmi.selesaiPulang;
+    if (!isWithinAttendanceWindow(waktu.jam, mulaiAbsen, selesaiAbsen)) {
+      clearPendingAbsen(sender);
+      return msg.reply(
+        `❌ Waktu absen ${tipe} sudah di luar rentang ${String(
+          mulaiAbsen || "00:00"
+        ).slice(0, 5)}–${String(selesaiAbsen || "23:59").slice(0, 5)}.`
+      );
+    }
 
     const jamMasuk = normalizeJam(jamResmi.masuk);
     const jamPulang = normalizeJam(jamResmi.pulang);
 
     const status =
       tipe === "masuk"
-        ? waktu.jam <= jamMasuk
-          ? "Tepat Waktu"
-          : "Terlambat"
+        ? getArrivalStatus(waktu.jam, jamMasuk, jamResmi.toleransi)
         : waktu.jam >= jamPulang
         ? "Sesuai Waktu"
         : "Pulang Cepat";
@@ -1780,7 +1816,15 @@ function dashboardData(user) {
   const kelas =
     user.role === "admin" ? semuaKelas : kelasUntukWali(semuaKelas, user.id);
   const roles = loadRoles();
-  const jam = loadJSON(JAM_PATH, { masuk: "07:00:00", pulang: "14:00:00" });
+  const jam = loadJSON(JAM_PATH, {
+    masuk: "07:00:00",
+    pulang: "14:00:00",
+    toleransi: 0,
+    mulaiMasuk: "00:00:00",
+    selesaiMasuk: "23:59:59",
+    mulaiPulang: "00:00:00",
+    selesaiPulang: "23:59:59",
+  });
   const izin = loadIzin();
   const storage = loadJSON(STORAGE_PATH);
   const today = getWaktu().tanggal;
@@ -1992,10 +2036,37 @@ app.post(
 app.post("/api/settings/time", requireWebAdmin, async (req, res) => {
   const masuk = String(req.body.masuk || "");
   const pulang = String(req.body.pulang || "");
-  if (!isValidTime(masuk) || !isValidTime(pulang)) {
-    return res.status(400).json({ error: "Format jam harus HH:MM." });
+  const toleransi = Number(req.body.toleransi);
+  const mulaiMasuk = String(req.body.mulaiMasuk || "");
+  const selesaiMasuk = String(req.body.selesaiMasuk || "");
+  const mulaiPulang = String(req.body.mulaiPulang || "");
+  const selesaiPulang = String(req.body.selesaiPulang || "");
+  if (
+    !isValidTime(masuk) ||
+    !isValidTime(pulang) ||
+    !Number.isInteger(toleransi) ||
+    toleransi < 0 ||
+    toleransi > 180 ||
+    !isValidTime(mulaiMasuk) ||
+    !isValidTime(selesaiMasuk) ||
+    !isValidTime(mulaiPulang) ||
+    !isValidTime(selesaiPulang) ||
+    mulaiMasuk >= selesaiMasuk ||
+    mulaiPulang >= selesaiPulang
+  ) {
+    return res.status(400).json({
+      error: "Jam harus berformat HH:MM, jam selesai harus setelah jam mulai, dan toleransi harus 0-180 menit.",
+    });
   }
-  await saveJSON(JAM_PATH, { masuk: `${masuk}:00`, pulang: `${pulang}:00` });
+  await saveJSON(JAM_PATH, {
+    masuk: `${masuk}:00`,
+    pulang: `${pulang}:00`,
+    toleransi,
+    mulaiMasuk: `${mulaiMasuk}:00`,
+    selesaiMasuk: `${selesaiMasuk}:00`,
+    mulaiPulang: `${mulaiPulang}:00`,
+    selesaiPulang: `${selesaiPulang}:00`,
+  });
   res.json({ ok: true });
 });
 
