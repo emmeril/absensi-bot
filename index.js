@@ -16,6 +16,11 @@ const {
 } = require("./lib/location-message");
 const { FaceWorkerPool } = require("./services/face-worker-pool");
 const { TaskQueue } = require("./lib/task-queue");
+const {
+  getDailyStudentStatus,
+  validateAttendance,
+  validatePermission,
+} = require("./lib/attendance-rules");
 const app = express();
 const PORT = 3200;
 const upload = multer({
@@ -828,6 +833,11 @@ client.on("message", async (msg) => {
 
     const tipe = body.startsWith("!masuk") ? "masuk" : "pulang";
     const nomor = sender.replace("@c.us", "");
+    const attendanceError = validateAttendance(
+      getDailyStudentStatus(storage, loadIzin(), waktu.tanggal, sender),
+      tipe
+    );
+    if (attendanceError) return msg.reply(`❌ ${attendanceError}`);
 
     if (!fs.existsSync(`${FACE_REC}/${nomor}.jpg`)) {
       return msg.reply(
@@ -921,18 +931,15 @@ client.on("message", async (msg) => {
     }
 
     const tipe = absen.tipe;
-    const izinData = loadIzin();
-    if (izinData[waktu.tanggal] && izinData[waktu.tanggal][sender]) {
-      clearPendingAbsen(sender);
-      return msg.reply("❌ Kamu sudah mengajukan izin hari ini.");
-    }
-
     const dataHariIni = (storage[waktu.tanggal] = storage[waktu.tanggal] || {});
     const userLog = (dataHariIni[sender] = dataHariIni[sender] || {});
-
-    if (userLog[tipe]) {
+    const attendanceError = validateAttendance(
+      getDailyStudentStatus(storage, loadIzin(), waktu.tanggal, sender),
+      tipe
+    );
+    if (attendanceError) {
       clearPendingAbsen(sender);
-      return msg.reply(`✅ Sudah absen ${tipe}.`);
+      return msg.reply(`❌ ${attendanceError}`);
     }
 
     const jamMasuk = normalizeJam(jamResmi.masuk);
@@ -1003,9 +1010,10 @@ client.on("message", async (msg) => {
 
     const alasan = msg.body.trim().slice(6).trim();
     if (alasan.length < 3) return msg.reply("⚠️ Alasan izin terlalu singkat.");
-    if (loadIzin()[waktu.tanggal]?.[sender]) {
-      return msg.reply("⚠️ Kamu sudah mengajukan izin hari ini.");
-    }
+    const permissionError = validatePermission(
+      getDailyStudentStatus(storage, loadIzin(), waktu.tanggal, sender)
+    );
+    if (permissionError) return msg.reply(`❌ ${permissionError}`);
 
     clearPendingAbsen(sender);
     clearPendingIzin(sender);
@@ -1071,6 +1079,19 @@ client.on("message", async (msg) => {
     }
 
     ensureDir(IZIN_BUKTI_DIR);
+    const permissionError = validatePermission(
+      getDailyStudentStatus(
+        loadJSON(STORAGE_PATH),
+        loadIzin(),
+        pengajuan.tanggal,
+        sender
+      )
+    );
+    if (permissionError) {
+      clearPendingIzin(sender);
+      return msg.reply(`❌ ${permissionError}`);
+    }
+
     const nomor = sender.replace("@c.us", "");
     const buktiPath = `${IZIN_BUKTI_DIR}/${pengajuan.tanggal}-${nomor}.jpg`;
     fs.writeFileSync(buktiPath, Buffer.from(media.data, "base64"));
@@ -1988,6 +2009,12 @@ app.post("/api/permissions", requireWebAdmin, async (req, res) => {
     return res.status(400).json({ error: "Data izin belum lengkap atau tidak valid." });
   }
   const izin = loadIzin();
+  const permissionError = validatePermission(
+    getDailyStudentStatus(loadJSON(STORAGE_PATH), izin, tanggal, siswaId)
+  );
+  if (permissionError) {
+    return res.status(409).json({ error: permissionError });
+  }
   izin[tanggal] = izin[tanggal] || {};
   izin[tanggal][siswaId] = { nama: kontak[siswaId], alasan };
   await saveIzin(izin);
