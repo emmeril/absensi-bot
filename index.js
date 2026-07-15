@@ -14,10 +14,8 @@ const {
   validateLocationMessage,
   locationRejectionMessage,
 } = require("./lib/location-message");
-const {
-  verifyFace,
-  faceServiceStatus,
-} = require("./services/face-verification");
+const { FaceWorkerPool } = require("./services/face-worker-pool");
+const { TaskQueue } = require("./lib/task-queue");
 const app = express();
 const PORT = 3200;
 const upload = multer({
@@ -69,6 +67,17 @@ const JSON_STORES = {
 };
 
 let jsonCache = {};
+
+const facePool = new FaceWorkerPool({
+  size: Number(process.env.FACE_WORKER_COUNT) || 2,
+  maxQueue: Number(process.env.FACE_QUEUE_LIMIT) || 100,
+  timeoutMs: Number(process.env.FACE_TIMEOUT_MS) || 60000,
+});
+const notificationQueue = new TaskQueue({
+  concurrency: Number(process.env.NOTIFICATION_CONCURRENCY) || 2,
+  maxQueue: Number(process.env.NOTIFICATION_QUEUE_LIMIT) || 200,
+});
+const activeFaceJobs = new Set();
 
 function cloneData(data) {
   return JSON.parse(JSON.stringify(data));
@@ -153,14 +162,30 @@ async function savePendingFoto(data) {
 
 let pendingFoto = {};
 
-async function verifikasiWajah(userId, fotoBase64) {
-  try {
-    const result = await verifyFace(userId.replace("@c.us", ""), fotoBase64);
-    return result.match === true;
-  } catch (e) {
-    console.error("[FaceVerify ERROR]", e.message);
-    return false;
+function antreVerifikasiWajah(userId, fotoBase64) {
+  if (activeFaceJobs.has(userId)) {
+    const error = new Error("Verifikasi wajah untuk pengguna ini masih berjalan");
+    error.code = "FACE_JOB_ACTIVE";
+    throw error;
   }
+
+  activeFaceJobs.add(userId);
+  try {
+    const queued = facePool.verify(userId.replace("@c.us", ""), fotoBase64);
+    queued.promise = queued.promise
+      .then((result) => result.match === true)
+      .finally(() => activeFaceJobs.delete(userId));
+    return queued;
+  } catch (e) {
+    activeFaceJobs.delete(userId);
+    throw e;
+  }
+}
+
+function antreNotifikasi(task, context) {
+  notificationQueue.add(task).catch((error) => {
+    console.error(`[Antrean Notifikasi ERROR] ${context}:`, error.message);
+  });
 }
 
 function loadRoles() {
@@ -825,6 +850,9 @@ client.on("message", async (msg) => {
   }
 
   if (msg.hasMedia && pendingAbsen[sender]) {
+    if (activeFaceJobs.has(sender)) {
+      return msg.reply("⏳ Foto kamu masih diverifikasi. Mohon tunggu hasilnya.");
+    }
     await msg.reply("⏳ Foto diterima, sedang memverifikasi wajah...");
 
     try {
@@ -834,7 +862,11 @@ client.on("message", async (msg) => {
         return msg.reply("❌ File yang diterima bukan foto yang valid.");
       }
 
-      const cocok = await verifikasiWajah(sender, media.data);
+      const verifikasi = antreVerifikasiWajah(sender, media.data);
+      if (verifikasi.position > 1) {
+        await msg.reply(`⏳ Posisi antrean verifikasi wajah: ${verifikasi.position}.`);
+      }
+      const cocok = await verifikasi.promise;
       if (pendingAbsen[sender] !== prosesAbsen) {
         return msg.reply(
           "⌛ Waktu pengiriman foto sudah habis. Silakan kirim *!masuk* atau *!pulang* lagi."
@@ -952,7 +984,10 @@ client.on("message", async (msg) => {
     penerima.delete(sender);
 
     for (const id of penerima) {
-      await kirimMediaAman(id, mediaMsg, caption);
+      antreNotifikasi(
+        () => kirimMediaAman(id, mediaMsg, caption),
+        `absen ${sender} -> ${id}`
+      );
     }
   }
 
@@ -989,6 +1024,9 @@ client.on("message", async (msg) => {
   }
 
   if (msg.hasMedia && pendingIzin[sender]) {
+    if (activeFaceJobs.has(sender)) {
+      return msg.reply("⏳ Foto kamu masih diverifikasi. Mohon tunggu hasilnya.");
+    }
     const pengajuan = pendingIzin[sender];
     const media = await downloadMediaAman(msg, `izin ${sender}`);
     if (!media?.data || !media.mimetype?.startsWith("image/")) {
@@ -1002,7 +1040,23 @@ client.on("message", async (msg) => {
     }
     const izinSakit = pengajuan.alasan.toLowerCase().includes("sakit");
     if (izinSakit) {
-      const wajahCocok = await verifikasiWajah(sender, media.data);
+      await msg.reply("⏳ Bukti diterima, sedang memverifikasi wajah...");
+      let wajahCocok = false;
+      try {
+        const verifikasi = antreVerifikasiWajah(sender, media.data);
+        if (verifikasi.position > 1) {
+          await msg.reply(`⏳ Posisi antrean verifikasi wajah: ${verifikasi.position}.`);
+        }
+        wajahCocok = await verifikasi.promise;
+      } catch (error) {
+        console.error(`[FaceVerify Izin ERROR] ${sender}:`, error.message);
+        clearPendingIzin(sender);
+        return msg.reply(
+          error.code === "QUEUE_FULL"
+            ? "❌ Antrean verifikasi sedang penuh. Silakan ajukan izin lagi beberapa saat lagi."
+            : "❌ Foto gagal diverifikasi. Silakan ajukan izin lalu coba foto lagi."
+        );
+      }
       if (pendingIzin[sender] !== pengajuan) {
         return msg.reply(
           "⌛ Waktu pengajuan izin sudah habis. Silakan kirim perintah *!izin alasan* lagi."
@@ -1054,11 +1108,14 @@ client.on("message", async (msg) => {
     penerima.delete(sender);
 
     for (const id of penerima) {
-      await kirimMediaAman(id, buktiMedia, caption);
+      antreNotifikasi(
+        () => kirimMediaAman(id, buktiMedia, caption),
+        `izin ${sender} -> ${id}`
+      );
     }
 
     return msg.reply(
-      `✅ Izin hari ini berhasil dicatat.\nAlasan: ${pengajuan.alasan}\nFoto bukti sudah dikirim ke pihak terkait.`
+      `✅ Izin hari ini berhasil dicatat.\nAlasan: ${pengajuan.alasan}\nFoto bukti sedang dikirim ke pihak terkait.`
     );
   }
 
@@ -1748,7 +1805,7 @@ function dashboardData(user) {
       nama: dashboardUserName(user.id, user.role),
       role: user.role,
     },
-    faceService: faceServiceStatus(),
+    faceService: { ready: true, ...facePool.status() },
   };
 }
 
