@@ -11,6 +11,10 @@ const { DB_PATH, initJsonStore, saveJsonData } = require("./models/database");
 const { resolveWhatsappUserId } = require("./lib/whatsapp-id");
 const { qrToSvg } = require("./lib/qr-svg");
 const {
+  validateLocationMessage,
+  locationRejectionMessage,
+} = require("./lib/location-message");
+const {
   verifyFace,
   faceServiceStatus,
 } = require("./services/face-verification");
@@ -765,10 +769,12 @@ client.on("message", async (msg) => {
     return msg.reply("📍 Kirim lokasi sekarang.");
   }
   if (msg.type === "location" && pendingLokasi[sender]) {
-    await saveJSON(LOKASI_PATH, {
-      latitude: msg.location.latitude,
-      longitude: msg.location.longitude,
-    });
+    const validation = validateLocationMessage(msg);
+    if (!validation.valid) {
+      return msg.reply(locationRejectionMessage(validation.reason));
+    }
+
+    await saveJSON(LOKASI_PATH, validation.location);
     delete pendingLokasi[sender];
     return msg.reply("✅ Lokasi sekolah disimpan.");
   }
@@ -866,10 +872,12 @@ client.on("message", async (msg) => {
       return msg.reply("📸 Kirim dan verifikasi foto selfie terlebih dahulu.");
     }
 
-    const lokasi = {
-      latitude: msg.location.latitude,
-      longitude: msg.location.longitude,
-    };
+    const validation = validateLocationMessage(msg);
+    if (!validation.valid) {
+      return msg.reply(locationRejectionMessage(validation.reason));
+    }
+
+    const lokasi = validation.location;
     const absen = pendingAbsen[sender];
     absen.lokasi = lokasi;
     clearTimeout(absen.timeout);
@@ -926,34 +934,25 @@ client.on("message", async (msg) => {
       `${sender.replace("@c.us", "")}.jpg`
     );
 
-    const roles = loadRoles();
-    for (const id in roles) {
-      if (roles[id] === "admin") {
-        try {
-          await client.sendMessage(id, mediaMsg, {
-            caption: `🕘 *${kontak[sender] || sender}* telah absen *${tipe}*\nStatus: *${status}*\nJam: ${waktu.jam}`,
-          });
-        } catch (error) {
-          console.error(`[Notifikasi Admin ERROR] ${id}:`, error.message);
-        }
-      }
-    }
-
     const kelasSiswa = findKelasSiswa(loadKelas(), sender);
-    if (kelasSiswa) {
-      const infoSiswa = kelasSiswa.siswa[sender];
-      const notifikasi =
-        `🔔 *Notifikasi Absensi Siswa*\n` +
-        `👤 Nama: *${kontak[sender] || sender}*\n` +
-        `🏫 Kelas: ${kelasSiswa.namaKelas}\n` +
-        `🕘 Absen: ${toTitleCase(tipe)}\n` +
-        `⏰ Jam: ${waktu.jam}\n` +
-        `📌 Status: *${status}*`;
+    const caption =
+      `🕘 *${kontak[sender] || sender}* telah absen *${tipe}*\n` +
+      `Status: *${status}*\n` +
+      `Jam: ${waktu.jam}`;
+    const penerima = new Set(
+      Object.entries(loadRoles())
+        .filter(([, penerimaRole]) => penerimaRole === "admin")
+        .map(([id]) => id)
+    );
 
-      await kirimPesanAman(infoSiswa.orangTua, notifikasi);
-      if (kelasSiswa.waliKelas !== sender) {
-        await kirimPesanAman(kelasSiswa.waliKelas, notifikasi);
-      }
+    if (kelasSiswa?.waliKelas) penerima.add(kelasSiswa.waliKelas);
+    if (kelasSiswa?.siswa[sender]?.orangTua) {
+      penerima.add(kelasSiswa.siswa[sender].orangTua);
+    }
+    penerima.delete(sender);
+
+    for (const id of penerima) {
+      await kirimMediaAman(id, mediaMsg, caption);
     }
   }
 
