@@ -7,7 +7,7 @@ Ruang Hadir adalah aplikasi absensi sekolah berbasis WhatsApp dengan verifikasi 
 - Absensi dimulai melalui WhatsApp dan diselesaikan lewat halaman kamera langsung.
 - Verifikasi selfie dengan foto referensi siswa.
 - Validasi lokasi menggunakan koordinat sekolah.
-- Pengajuan izin dengan foto bukti; izin sakit juga memverifikasi wajah.
+- Pengajuan izin dua tahap: selfie terverifikasi lalu unggah bukti terpisah.
 - Notifikasi absensi dan izin kepada admin, wali kelas, dan orang tua.
 - Dashboard web untuk mengelola siswa, kelas, wali kelas, admin, jadwal, izin, dan laporan.
 - Ekspor laporan ke Excel.
@@ -20,10 +20,10 @@ Ruang Hadir adalah aplikasi absensi sekolah berbasis WhatsApp dengan verifikasi 
 | --- | --- | --- |
 | `!masuk` | Memulai absensi masuk | Siswa terdaftar |
 | `!pulang` | Memulai absensi pulang | Siswa terdaftar |
-| `!izin alasan` | Mengajukan izin dan meminta foto bukti | Siswa terdaftar |
+| `!izin alasan` | Membuka proses izin dua tahap melalui tautan sekali pakai | Siswa terdaftar |
 | `!setlokasi` | Meminta pengiriman lokasi sekolah baru | Admin |
 
-Setelah mengirim `!masuk` atau `!pulang`, siswa menerima tautan sekali pakai yang berlaku selama 2 menit. Tautan membuka kamera depan dan GPS tanpa menyediakan pilihan unggah dari galeri. Setelah mengirim `!izin alasan`, siswa tetap harus mengirim foto bukti melalui WhatsApp dalam waktu 2 menit.
+Setelah mengirim `!masuk` atau `!pulang`, siswa menerima tautan sekali pakai yang berlaku selama 2 menit. Tautan membuka kamera depan dan GPS tanpa menyediakan pilihan unggah dari galeri. Setelah mengirim `!izin alasan`, siswa menerima tautan izin selama 5 menit untuk mengambil selfie langsung, mencatat GPS, lalu mengunggah surat atau bukti secara terpisah. Lokasi izin tidak dibatasi radius sekolah.
 
 Pengelolaan data lain sudah dipindahkan ke dashboard web. Perintah lama seperti `!setfoto` tidak tersedia.
 
@@ -131,7 +131,7 @@ pm2 save
 4. Admin membuat kelas, menetapkan wali kelas, dan menambahkan siswa serta nomor orang tua.
 5. Admin atau wali kelas mengunggah foto referensi wajah siswa melalui dashboard.
 6. Siswa mengirim `!masuk` atau `!pulang`, membuka tautan sekali pakai, lalu mengambil selfie langsung dan mengizinkan GPS.
-7. Untuk izin, siswa mengirim `!izin alasan` lalu mengirim foto bukti melalui WhatsApp.
+7. Untuk izin, siswa mengirim `!izin alasan`, memverifikasi selfie dan GPS melalui tautan, lalu mengunggah surat atau bukti pada tahap kedua.
 
 Wali kelas hanya dapat mengakses dan mengunggah foto siswa pada kelas yang menjadi tanggung jawabnya.
 

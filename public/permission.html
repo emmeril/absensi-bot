@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#17324d" />
+    <title>Pengajuan Izin | Ruang Hadir</title>
+    <style>
+      :root { --navy:#17324d; --blue:#3976a8; --sky:#dff3ff; --paper:#f5f2e9; --ink:#172533; --red:#b42318; }
+      * { box-sizing:border-box; }
+      body { margin:0; min-height:100vh; color:var(--ink); background:radial-gradient(circle at 8% 4%,#c7ebff 0,transparent 30%),linear-gradient(145deg,#f8f5ec,#e4edf1); font-family:Georgia,"Times New Roman",serif; }
+      main { width:min(100%,560px); min-height:100vh; margin:auto; padding:calc(20px + env(safe-area-inset-top)) 18px calc(28px + env(safe-area-inset-bottom)); display:flex; flex-direction:column; gap:16px; }
+      header { display:flex; justify-content:space-between; align-items:center; }
+      .brand { font-size:1.25rem; font-weight:800; letter-spacing:-.03em; }
+      .step { padding:7px 11px; border:1px solid #abc5d6; border-radius:999px; background:#fff9; font:700 .72rem Arial,sans-serif; text-transform:uppercase; letter-spacing:.08em; }
+      h1 { margin:8px 0 4px; font-size:clamp(2rem,9vw,3.2rem); line-height:.96; letter-spacing:-.05em; }
+      .lead { margin:0; color:#526675; font:400 .94rem/1.5 Arial,sans-serif; }
+      .reason { padding:12px 14px; border-left:4px solid var(--blue); background:#fff9; font:600 .86rem/1.45 Arial,sans-serif; }
+      .camera { position:relative; overflow:hidden; aspect-ratio:3/4; max-height:58vh; border-radius:28px 28px 8px 28px; background:#071522; box-shadow:0 22px 50px #17324d30; }
+      video,canvas,.preview { width:100%; height:100%; object-fit:cover; display:block; }
+      video { transform:scaleX(-1); }
+      canvas { display:none; }
+      .guide { position:absolute; inset:12% 16%; border:2px dashed #dff3ffdd; border-radius:48%; box-shadow:0 0 0 999px #07152240; pointer-events:none; }
+      .status { min-height:44px; padding:12px 14px; border-left:4px solid var(--blue); background:#fff9; font:600 .85rem/1.45 Arial,sans-serif; }
+      .status.error { border-color:var(--red); color:var(--red); }
+      .actions { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+      button,.file-label { min-height:52px; display:grid; place-items:center; border:0; border-radius:7px; padding:12px 16px; font:800 .9rem Arial,sans-serif; cursor:pointer; text-align:center; }
+      .primary { color:white; background:var(--navy); box-shadow:0 8px 18px #17324d35; }
+      .secondary { color:var(--navy); border:1px solid #9db5c5; background:#fff9; }
+      button:disabled { opacity:.45; cursor:not-allowed; }
+      .wide { grid-column:1/-1; }
+      .evidence { padding:20px; border:1px solid #bad0dc; border-radius:8px 24px 24px 24px; background:#ffffffb8; }
+      .evidence h2 { margin:0 0 8px; font-size:1.45rem; }
+      .evidence p { margin:0 0 16px; color:#526675; font:400 .86rem/1.5 Arial,sans-serif; }
+      input[type=file] { position:absolute; width:1px; height:1px; opacity:0; }
+      .proof { width:100%; max-height:340px; object-fit:contain; margin:14px 0; border-radius:10px; background:#e8eef1; }
+      .fineprint { margin:0; text-align:center; color:#6b7a84; font:400 .72rem/1.45 Arial,sans-serif; }
+      [hidden] { display:none !important; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header><div class="brand">Ruang Hadir</div><div class="step" id="step">Tahap 1 dari 2</div></header>
+      <section><h1 id="title">Verifikasi dirimu.</h1><p class="lead" id="lead">Selfie harus diambil langsung dari kamera depan.</p></section>
+      <div class="reason" id="reason">Memuat alasan izin...</div>
+      <section id="selfieStage">
+        <div class="camera"><video id="video" autoplay muted playsinline></video><canvas id="canvas"></canvas><div class="guide" id="guide"></div></div>
+        <div class="status" id="status">Memeriksa tautan izin...</div>
+        <div class="actions">
+          <button class="primary wide" id="capture" disabled>Ambil selfie</button>
+          <button class="secondary" id="retake" hidden>Foto ulang</button>
+          <button class="primary" id="verify" hidden>Verifikasi wajah</button>
+        </div>
+      </section>
+      <section class="evidence" id="evidenceStage" hidden>
+        <h2>Unggah bukti izin</h2>
+        <p>Ambil foto surat menggunakan kamera atau pilih foto bukti yang sudah tersimpan di galeri.</p>
+        <label class="file-label secondary" for="evidence">Pilih atau foto bukti</label>
+        <input id="evidence" type="file" accept="image/jpeg,image/png" />
+        <img class="proof" id="proof" alt="Pratinjau bukti izin" hidden />
+        <button class="primary" id="submitEvidence" disabled>Kirim pengajuan izin</button>
+      </section>
+      <p class="fineprint">Lokasi GPS hanya dicatat sebagai informasi pengajuan izin dan tidak harus berada di area sekolah.</p>
+    </main>
+    <script>
+      const token = new URLSearchParams(location.search).get("token");
+      const video = document.querySelector("#video"), canvas = document.querySelector("#canvas"), guide = document.querySelector("#guide");
+      const statusBox = document.querySelector("#status"), capture = document.querySelector("#capture"), retake = document.querySelector("#retake"), verify = document.querySelector("#verify");
+      const evidenceInput = document.querySelector("#evidence"), proof = document.querySelector("#proof"), submitEvidence = document.querySelector("#submitEvidence");
+      let stream, selfieData, evidenceData, locationData;
+      function status(message,error=false){statusBox.textContent=message;statusBox.classList.toggle("error",error);}
+      function stopCamera(){if(stream)stream.getTracks().forEach(track=>track.stop());}
+      function gps(){return new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(p=>resolve({latitude:p.coords.latitude,longitude:p.coords.longitude,accuracy:p.coords.accuracy}),()=>reject(new Error("Lokasi tidak dapat dibaca. Izinkan GPS lalu muat ulang.")),{enableHighAccuracy:true,timeout:20000,maximumAge:0}));}
+      async function init(){
+        if(!token)throw new Error("Token izin tidak ditemukan.");
+        const response=await fetch(`/api/permission-camera/${encodeURIComponent(token)}`),data=await response.json();
+        if(!response.ok)throw new Error(data.error||"Tautan tidak berlaku.");
+        document.querySelector("#title").textContent=`Halo, ${data.nama}.`;
+        document.querySelector("#reason").textContent=`Alasan: ${data.alasan}`;
+        if(data.verified)return showEvidence();
+        if(!window.isSecureContext)throw new Error("Kamera membutuhkan alamat HTTPS. Hubungi admin.");
+        status("Izinkan kamera depan dan lokasi GPS...");
+        [stream,locationData]=await Promise.all([navigator.mediaDevices.getUserMedia({video:{facingMode:"user",width:{ideal:720},height:{ideal:960}},audio:false}),gps()]);
+        video.srcObject=stream;await video.play();capture.disabled=false;status(`Kamera dan GPS siap (akurasi ${Math.round(locationData.accuracy)} m).`);
+      }
+      capture.addEventListener("click",()=>{const w=video.videoWidth,h=video.videoHeight;if(!w||!h)return status("Kamera belum siap.",true);canvas.width=w;canvas.height=h;const c=canvas.getContext("2d");c.translate(w,0);c.scale(-1,1);c.drawImage(video,0,0,w,h);selfieData=canvas.toDataURL("image/jpeg",.86);video.hidden=true;canvas.style.display="block";guide.hidden=true;capture.hidden=true;retake.hidden=false;verify.hidden=false;status("Periksa selfie, lalu verifikasi wajah.");});
+      retake.addEventListener("click",()=>{selfieData=null;canvas.style.display="none";video.hidden=false;guide.hidden=false;capture.hidden=false;retake.hidden=true;verify.hidden=true;status("Ambil selfie dengan wajah terlihat jelas.");});
+      verify.addEventListener("click",async()=>{verify.disabled=true;retake.disabled=true;status("Memverifikasi wajah dan mencatat lokasi...");try{locationData=await gps();const response=await fetch(`/api/permission-camera/${encodeURIComponent(token)}/verify`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image:selfieData,...locationData})}),data=await response.json();if(!response.ok)throw new Error(data.error||"Verifikasi gagal.");showEvidence();}catch(error){status(error.message,true);verify.hidden=true;retake.hidden=true;}});
+      function showEvidence(){stopCamera();document.querySelector("#selfieStage").hidden=true;document.querySelector("#evidenceStage").hidden=false;document.querySelector("#step").textContent="Tahap 2 dari 2";document.querySelector("#title").textContent="Lengkapi buktinya.";document.querySelector("#lead").textContent="Wajah cocok. Sekarang unggah surat atau bukti izin secara terpisah.";}
+      evidenceInput.addEventListener("change",()=>{const file=evidenceInput.files[0];if(!file)return;if(!/^image\/(jpeg|png)$/.test(file.type)||file.size>6*1024*1024)return alert("Bukti harus JPG/PNG dan maksimal 6 MB.");const reader=new FileReader();reader.onload=()=>{evidenceData=reader.result;proof.src=evidenceData;proof.hidden=false;submitEvidence.disabled=false;};reader.readAsDataURL(file);});
+      submitEvidence.addEventListener("click",async()=>{submitEvidence.disabled=true;submitEvidence.textContent="Mengirim...";try{const response=await fetch(`/api/permission-camera/${encodeURIComponent(token)}/evidence`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image:evidenceData})}),data=await response.json();if(!response.ok)throw new Error(data.error||"Pengajuan gagal.");document.querySelector("#evidenceStage").hidden=true;document.querySelector("#step").textContent="Selesai";document.querySelector("#title").textContent="Izin terkirim.";document.querySelector("#lead").textContent="Pengajuan izin berhasil dicatat dan diteruskan kepada pihak terkait.";}catch(error){alert(error.message);submitEvidence.disabled=false;submitEvidence.textContent="Kirim pengajuan izin";}});
+      window.addEventListener("pagehide",stopCamera);init().catch(error=>{status(error.message||"Halaman tidak dapat dimulai.",true);capture.disabled=true;});
+    </script>
+  </body>
+</html>

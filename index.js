@@ -28,6 +28,7 @@ const {
 const app = express();
 const PORT = 3200;
 const CAMERA_SESSION_TTL_MS = 2 * 60 * 1000;
+const PERMISSION_SESSION_TTL_MS = 5 * 60 * 1000;
 const ATTENDANCE_RADIUS_METERS = 100;
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -36,6 +37,7 @@ const upload = multer({
 const loginOtps = new Map();
 const webSessions = new Map();
 const cameraSessions = new Map();
+const permissionSessions = new Map();
 
 app.use(express.json({ limit: "10mb" }));
 app.use(express.static("public"));
@@ -184,6 +186,41 @@ function getCameraSession(token) {
     return null;
   }
   return session;
+}
+
+function createPermissionSession(userId, alasan, tanggal) {
+  for (const [token, session] of permissionSessions) {
+    if (session.userId === userId) permissionSessions.delete(token);
+  }
+
+  const token = crypto.randomBytes(32).toString("hex");
+  permissionSessions.set(token, {
+    userId,
+    alasan,
+    tanggal,
+    expiresAt: Date.now() + PERMISSION_SESSION_TTL_MS,
+    verified: false,
+    processing: false,
+  });
+  return token;
+}
+
+function getPermissionSession(token) {
+  const session = permissionSessions.get(token);
+  if (!session) return null;
+  if (session.expiresAt <= Date.now()) {
+    permissionSessions.delete(token);
+    return null;
+  }
+  return session;
+}
+
+function parseImageDataUrl(value) {
+  const match = String(value || "").match(
+    /^data:(image\/(?:jpeg|png));base64,([A-Za-z0-9+/=]+)$/
+  );
+  if (!match || match[2].length > 8 * 1024 * 1024) return null;
+  return { mimetype: match[1], data: match[2] };
 }
 
 function clearPendingIzin(sender) {
@@ -1145,17 +1182,13 @@ client.on("message", async (msg) => {
 
     clearPendingAbsen(sender);
     clearPendingIzin(sender);
-    pendingIzin[sender] = {
-      alasan,
-      tanggal: waktu.tanggal,
-      timeout: setTimeout(() => clearPendingIzin(sender), 2 * 60 * 1000),
-    };
-
-    const instruksiSakit = alasan.toLowerCase().includes("sakit")
-      ? "\n🤒 Karena izin sakit, pastikan wajah kamu dan surat/bukti sakit terlihat bersama dalam foto."
-      : "";
+    const token = createPermissionSession(sender, alasan, waktu.tanggal);
+    const permissionUrl = `${publicBaseUrl()}/permission.html?token=${token}`;
     return msg.reply(
-      `📷 Kirim *foto bukti izin* dalam waktu 2 menit.${instruksiSakit}\n\nIzin baru dicatat setelah foto diterima.`
+      `Buka tautan berikut untuk mengajukan izin:\n${permissionUrl}\n\n` +
+        "Tahap 1: ambil selfie langsung dan izinkan GPS.\n" +
+        "Tahap 2: unggah foto surat atau bukti izin secara terpisah.\n" +
+        "Tautan berlaku selama 5 menit."
     );
   }
 
@@ -1833,6 +1866,142 @@ function removeUnusedWaliRole(userId, kelas, roles) {
   if (!masihMenjadiWali) delete roles[userId];
 }
 
+app.get("/api/permission-camera/:token", (req, res) => {
+  const session = getPermissionSession(req.params.token);
+  if (!session) {
+    return res.status(410).json({ error: "Tautan izin sudah tidak berlaku." });
+  }
+  const kontak = loadJSON(KONTAK_PATH);
+  res.json({
+    nama: kontak[session.userId] || "Siswa",
+    alasan: session.alasan,
+    expiresAt: session.expiresAt,
+    verified: session.verified,
+  });
+});
+
+app.post("/api/permission-camera/:token/verify", async (req, res) => {
+  const session = getPermissionSession(req.params.token);
+  if (!session || session.processing || session.verified) {
+    return res.status(410).json({ error: "Tahap verifikasi sudah tidak berlaku." });
+  }
+  const foto = parseImageDataUrl(req.body.image);
+  const latitude = Number(req.body.latitude);
+  const longitude = Number(req.body.longitude);
+  const accuracy = Number(req.body.accuracy);
+  if (!foto) return res.status(400).json({ error: "Selfie kamera tidak valid." });
+  if (
+    !Number.isFinite(latitude) ||
+    !Number.isFinite(longitude) ||
+    latitude < -90 ||
+    latitude > 90 ||
+    longitude < -180 ||
+    longitude > 180 ||
+    !Number.isFinite(accuracy) ||
+    accuracy <= 0
+  ) {
+    return res.status(400).json({ error: "Lokasi GPS tidak valid." });
+  }
+
+  session.processing = true;
+  try {
+    const queued = antreVerifikasiWajah(session.userId, foto.data);
+    const cocok = await queued.promise;
+    if (!cocok) {
+      permissionSessions.delete(req.params.token);
+      return res.status(400).json({
+        error: "Wajah tidak dikenali. Kirim perintah izin lagi untuk mencoba ulang.",
+      });
+    }
+    session.verified = true;
+    session.processing = false;
+    session.selfie = foto;
+    session.lokasi = { latitude, longitude, accuracy };
+    session.expiresAt = Date.now() + PERMISSION_SESSION_TTL_MS;
+    res.json({ ok: true, expiresAt: session.expiresAt });
+  } catch (error) {
+    permissionSessions.delete(req.params.token);
+    console.error(`[Verifikasi Izin ERROR] ${session.userId}:`, error.message);
+    res.status(400).json({ error: "Selfie gagal diverifikasi. Kirim perintah izin lagi." });
+  }
+});
+
+app.post("/api/permission-camera/:token/evidence", async (req, res) => {
+  const token = req.params.token;
+  const session = getPermissionSession(token);
+  if (!session || !session.verified || session.processing) {
+    return res.status(410).json({ error: "Sesi unggah bukti sudah tidak berlaku." });
+  }
+  const bukti = parseImageDataUrl(req.body.image);
+  if (!bukti) return res.status(400).json({ error: "Foto bukti tidak valid." });
+
+  session.processing = true;
+  try {
+    const storage = loadJSON(STORAGE_PATH);
+    const izinData = loadIzin();
+    const permissionError = validatePermission(
+      getDailyStudentStatus(storage, izinData, session.tanggal, session.userId)
+    );
+    if (permissionError) throw new Error(permissionError);
+
+    const nomor = session.userId.replace("@c.us", "");
+    ensureDir(IZIN_BUKTI_DIR);
+    ensureDir(FACE_REC);
+    const buktiPath = `${IZIN_BUKTI_DIR}/${session.tanggal}-${nomor}-bukti.jpg`;
+    const selfiePath = `${IZIN_BUKTI_DIR}/${session.tanggal}-${nomor}-selfie.jpg`;
+    fs.writeFileSync(buktiPath, Buffer.from(bukti.data, "base64"));
+    fs.writeFileSync(selfiePath, Buffer.from(session.selfie.data, "base64"));
+
+    const kontak = loadJSON(KONTAK_PATH);
+    izinData[session.tanggal] = izinData[session.tanggal] || {};
+    izinData[session.tanggal][session.userId] = {
+      alasan: session.alasan,
+      nama: kontak[session.userId] || session.userId,
+      bukti: buktiPath,
+      selfie: selfiePath,
+      lokasi: session.lokasi,
+      terverifikasiWajah: true,
+    };
+    await saveIzin(izinData);
+    permissionSessions.delete(token);
+
+    const kelasSiswa = findKelasSiswa(loadKelas(), session.userId);
+    const caption =
+      `📩 *Pengajuan Izin Siswa*\n` +
+      `👤 Nama: *${kontak[session.userId] || session.userId}*\n` +
+      `🏫 Kelas: ${kelasSiswa?.namaKelas || "-"}\n` +
+      `📅 Tanggal: ${session.tanggal}\n` +
+      `📌 Alasan: ${session.alasan}\n` +
+      `✅ Wajah terverifikasi dan lokasi tercatat`;
+    const mediaMsg = new MessageMedia(bukti.mimetype, bukti.data, "bukti-izin.jpg");
+    const penerima = new Set(
+      Object.entries(loadRoles())
+        .filter(([, role]) => role === "admin")
+        .map(([id]) => id)
+    );
+    if (kelasSiswa?.waliKelas) penerima.add(kelasSiswa.waliKelas);
+    if (kelasSiswa?.siswa[session.userId]?.orangTua) {
+      penerima.add(kelasSiswa.siswa[session.userId].orangTua);
+    }
+    penerima.delete(session.userId);
+    for (const id of penerima) {
+      antreNotifikasi(
+        () => kirimMediaAman(id, mediaMsg, caption),
+        `izin web ${session.userId} -> ${id}`
+      );
+    }
+    await kirimPesanAman(
+      session.userId,
+      `✅ Izin hari ini berhasil dicatat.\nAlasan: ${session.alasan}`
+    );
+    res.json({ ok: true, tanggal: session.tanggal });
+  } catch (error) {
+    permissionSessions.delete(token);
+    console.error(`[Bukti Izin ERROR] ${session.userId}:`, error.message);
+    res.status(400).json({ error: error.message || "Bukti izin gagal disimpan." });
+  }
+});
+
 app.get("/api/attendance-camera/:token", (req, res) => {
   const session = getCameraSession(req.params.token);
   if (!session || session.processing) {
@@ -1857,9 +2026,8 @@ app.post("/api/attendance-camera/:token", async (req, res) => {
   const latitude = Number(req.body.latitude);
   const longitude = Number(req.body.longitude);
   const accuracy = Number(req.body.accuracy);
-  const image = String(req.body.image || "");
-  const match = image.match(/^data:(image\/(?:jpeg|png));base64,([A-Za-z0-9+/=]+)$/);
-  if (!match || match[2].length > 8 * 1024 * 1024) {
+  const foto = parseImageDataUrl(req.body.image);
+  if (!foto) {
     return res.status(400).json({ error: "Hasil foto kamera tidak valid." });
   }
   if (
@@ -1880,7 +2048,6 @@ app.post("/api/attendance-camera/:token", async (req, res) => {
 
   session.processing = true;
   cameraSessions.delete(token);
-  const foto = { mimetype: match[1], data: match[2] };
   try {
     const queued = antreVerifikasiWajah(session.userId, foto.data);
     const cocok = await queued.promise;
