@@ -582,7 +582,7 @@ client.on("message", async (msg) => {
     return msg.reply(teksBantuan(role, terdaftar));
   }
 
-  if (!terdaftar && !["admin", "wali_kelas"].includes(role)) {
+  if (!terdaftar && !["admin", "wali_kelas"].includes(role) && body.startsWith("!")) {
     return msg.reply(
       "❌ Nomor kamu belum terdaftar di absensi. Hubungi admin untuk didaftarkan."
     );
@@ -623,12 +623,6 @@ client.on("message", async (msg) => {
 
   // Absen masuk/pulang
   if (body.startsWith("!masuk") || body.startsWith("!pulang")) {
-    if (!kontak[sender]) {
-      return msg.reply(
-        "❌ Nomor kamu belum terdaftar. Hubungi admin untuk mendaftar."
-      );
-    }
-
     const tipe = body.startsWith("!masuk") ? "masuk" : "pulang";
     const nomor = sender.replace("@c.us", "");
     const attendanceError = validateAttendance(
@@ -670,10 +664,6 @@ client.on("message", async (msg) => {
   }
 
   if (body.startsWith("!izin ")) {
-    if (!kontak[sender]) {
-      return msg.reply("❌ Nomor kamu belum terdaftar. Tidak bisa mengajukan izin.");
-    }
-
     const alasan = msg.body.trim().slice(6).trim();
     if (alasan.length < 3) return msg.reply("⚠️ Alasan izin terlalu singkat.");
     const permissionError = validatePermission(
