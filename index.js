@@ -1,3 +1,5 @@
+require("dotenv").config();
+
 const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
 const fs = require("fs");
 const qrcode = require("qrcode-terminal");
@@ -25,12 +27,15 @@ const {
 } = require("./lib/attendance-rules");
 const app = express();
 const PORT = 3200;
+const CAMERA_SESSION_TTL_MS = 2 * 60 * 1000;
+const ATTENDANCE_RADIUS_METERS = 100;
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
 });
 const loginOtps = new Map();
 const webSessions = new Map();
+const cameraSessions = new Map();
 
 app.use(express.json({ limit: "10mb" }));
 app.use(express.static("public"));
@@ -147,6 +152,38 @@ function isValidDate(value) {
 function clearPendingAbsen(sender) {
   if (pendingAbsen[sender]?.timeout) clearTimeout(pendingAbsen[sender].timeout);
   delete pendingAbsen[sender];
+}
+
+function publicBaseUrl() {
+  return String(process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(
+    /\/$/,
+    ""
+  );
+}
+
+function createCameraSession(userId, tipe) {
+  for (const [token, session] of cameraSessions) {
+    if (session.userId === userId) cameraSessions.delete(token);
+  }
+
+  const token = crypto.randomBytes(32).toString("hex");
+  cameraSessions.set(token, {
+    userId,
+    tipe,
+    expiresAt: Date.now() + CAMERA_SESSION_TTL_MS,
+    processing: false,
+  });
+  return token;
+}
+
+function getCameraSession(token) {
+  const session = cameraSessions.get(token);
+  if (!session) return null;
+  if (session.expiresAt <= Date.now()) {
+    cameraSessions.delete(token);
+    return null;
+  }
+  return session;
 }
 
 function clearPendingIzin(sender) {
@@ -310,6 +347,94 @@ async function kirimMediaAman(id, media, caption) {
   } catch (error) {
     console.error(`[Notifikasi Media ERROR] ${id}:`, error.message);
   }
+}
+
+async function catatAbsensiKamera(userId, tipe, lokasi, foto) {
+  const storage = loadJSON(STORAGE_PATH);
+  const kontak = loadJSON(KONTAK_PATH);
+  const jamResmi = loadJSON(JAM_PATH, {
+    masuk: "09:00:00",
+    pulang: "16:00:00",
+    toleransi: 0,
+    mulaiMasuk: "00:00:00",
+    selesaiMasuk: "23:59:59",
+    mulaiPulang: "00:00:00",
+    selesaiPulang: "23:59:59",
+  });
+  const waktu = getWaktu();
+  const attendanceError = validateAttendance(
+    getDailyStudentStatus(storage, loadIzin(), waktu.tanggal, userId),
+    tipe
+  );
+  if (attendanceError) throw new Error(attendanceError);
+
+  const mulaiAbsen =
+    tipe === "masuk" ? jamResmi.mulaiMasuk : jamResmi.mulaiPulang;
+  const selesaiAbsen =
+    tipe === "masuk" ? jamResmi.selesaiMasuk : jamResmi.selesaiPulang;
+  if (!isWithinAttendanceWindow(waktu.jam, mulaiAbsen, selesaiAbsen)) {
+    throw new Error(
+      `Absen ${tipe} hanya dapat dilakukan pukul ${String(
+        mulaiAbsen || "00:00"
+      ).slice(0, 5)}-${String(selesaiAbsen || "23:59").slice(0, 5)}.`
+    );
+  }
+
+  const lokasiKantor = loadJSON(LOKASI_PATH, {
+    latitude: -6.7329,
+    longitude: 108.5522,
+  });
+  if (haversine(lokasi, lokasiKantor) > ATTENDANCE_RADIUS_METERS) {
+    throw new Error("Kamu berada di luar area sekolah.");
+  }
+
+  const jamMasuk = normalizeJam(jamResmi.masuk);
+  const jamPulang = normalizeJam(jamResmi.pulang);
+  const status =
+    tipe === "masuk"
+      ? getArrivalStatus(waktu.jam, jamMasuk, jamResmi.toleransi)
+      : waktu.jam >= jamPulang
+      ? "Sesuai Waktu"
+      : "Pulang Cepat";
+  const dataHariIni = (storage[waktu.tanggal] = storage[waktu.tanggal] || {});
+  const userLog = (dataHariIni[userId] = dataHariIni[userId] || {});
+  userLog[tipe] = {
+    waktu: waktu.jam,
+    lokasi,
+    status,
+    foto,
+    nama: kontak[userId],
+  };
+  await saveJSON(STORAGE_PATH, storage);
+
+  const mediaMsg = new MessageMedia(
+    foto.mimetype,
+    foto.data,
+    `${userId.replace("@c.us", "")}.jpg`
+  );
+  const kelasSiswa = findKelasSiswa(loadKelas(), userId);
+  const caption =
+    `*${kontak[userId] || userId}* telah absen *${tipe}*\n` +
+    `Status: *${status}*\n` +
+    `Jam: ${waktu.jam}`;
+  const penerima = new Set(
+    Object.entries(loadRoles())
+      .filter(([, role]) => role === "admin")
+      .map(([id]) => id)
+  );
+  if (kelasSiswa?.waliKelas) penerima.add(kelasSiswa.waliKelas);
+  if (kelasSiswa?.siswa[userId]?.orangTua) {
+    penerima.add(kelasSiswa.siswa[userId].orangTua);
+  }
+  penerima.delete(userId);
+  for (const id of penerima) {
+    antreNotifikasi(
+      () => kirimMediaAman(id, mediaMsg, caption),
+      `absen kamera ${userId} -> ${id}`
+    );
+  }
+
+  return { status, waktu: waktu.jam, tanggal: waktu.tanggal };
 }
 
 function tunggu(ms) {
@@ -842,15 +967,13 @@ client.on("message", async (msg) => {
 
     clearPendingIzin(sender);
     clearPendingAbsen(sender);
-    pendingAbsen[sender] = {
-      tipe,
-      foto: null,
-      lokasi: null,
-      timeout: setTimeout(() => delete pendingAbsen[sender], 2 * 60 * 1000),
-    };
+    const token = createCameraSession(sender, tipe);
+    const cameraUrl = `${publicBaseUrl()}/camera.html?token=${token}`;
 
     return msg.reply(
-      `📸 Kirim foto selfie untuk absen *${tipe}* dalam waktu 2 menit.`
+      `Buka tautan berikut untuk absen *${tipe}*:\n${cameraUrl}\n\n` +
+        "Ambil selfie langsung dari kamera dan izinkan akses lokasi. " +
+        "Tautan hanya berlaku selama 2 menit dan hanya bisa digunakan sekali."
     );
   }
 
@@ -1710,6 +1833,80 @@ function removeUnusedWaliRole(userId, kelas, roles) {
   if (!masihMenjadiWali) delete roles[userId];
 }
 
+app.get("/api/attendance-camera/:token", (req, res) => {
+  const session = getCameraSession(req.params.token);
+  if (!session || session.processing) {
+    return res.status(410).json({ error: "Tautan absensi sudah tidak berlaku." });
+  }
+
+  const kontak = loadJSON(KONTAK_PATH);
+  res.json({
+    tipe: session.tipe,
+    nama: kontak[session.userId] || "Siswa",
+    expiresAt: session.expiresAt,
+  });
+});
+
+app.post("/api/attendance-camera/:token", async (req, res) => {
+  const token = req.params.token;
+  const session = getCameraSession(token);
+  if (!session || session.processing) {
+    return res.status(410).json({ error: "Tautan absensi sudah tidak berlaku." });
+  }
+
+  const latitude = Number(req.body.latitude);
+  const longitude = Number(req.body.longitude);
+  const accuracy = Number(req.body.accuracy);
+  const image = String(req.body.image || "");
+  const match = image.match(/^data:(image\/(?:jpeg|png));base64,([A-Za-z0-9+/=]+)$/);
+  if (!match || match[2].length > 8 * 1024 * 1024) {
+    return res.status(400).json({ error: "Hasil foto kamera tidak valid." });
+  }
+  if (
+    !Number.isFinite(latitude) ||
+    !Number.isFinite(longitude) ||
+    latitude < -90 ||
+    latitude > 90 ||
+    longitude < -180 ||
+    longitude > 180
+  ) {
+    return res.status(400).json({ error: "Lokasi GPS tidak valid." });
+  }
+  if (!Number.isFinite(accuracy) || accuracy <= 0 || accuracy > 100) {
+    return res.status(400).json({
+      error: "Akurasi GPS harus 100 meter atau lebih baik. Coba di area terbuka.",
+    });
+  }
+
+  session.processing = true;
+  cameraSessions.delete(token);
+  const foto = { mimetype: match[1], data: match[2] };
+  try {
+    const queued = antreVerifikasiWajah(session.userId, foto.data);
+    const cocok = await queued.promise;
+    if (!cocok) {
+      throw new Error(
+        "Wajah tidak dikenali. Kirim perintah absensi lagi untuk mengambil selfie baru."
+      );
+    }
+
+    const result = await catatAbsensiKamera(
+      session.userId,
+      session.tipe,
+      { latitude, longitude, accuracy },
+      foto
+    );
+    await kirimPesanAman(
+      session.userId,
+      `✅ Absen ${session.tipe} dicatat (${result.status}) pada ${result.waktu}.`
+    );
+    res.json({ ok: true, tipe: session.tipe, ...result });
+  } catch (error) {
+    console.error(`[Kamera Absensi ERROR] ${session.userId}:`, error.message);
+    res.status(400).json({ error: error.message || "Absensi gagal diproses." });
+  }
+});
+
 app.post("/api/auth/request-otp", async (req, res) => {
   const nomor = normalizeNomor(req.body.nomor);
   const id = `${nomor}@c.us`;
@@ -2227,6 +2424,15 @@ app.get("/qr", (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`🌐 Akses QR di: http://localhost:${PORT}/qr`);
+  if (!process.env.PUBLIC_BASE_URL) {
+    console.warn(
+      "⚠️ PUBLIC_BASE_URL belum diatur. Tautan kamera hanya akan memakai localhost dan tidak dapat dibuka dari ponsel lain."
+    );
+  } else if (!publicBaseUrl().startsWith("https://")) {
+    console.warn(
+      "⚠️ PUBLIC_BASE_URL sebaiknya memakai HTTPS agar kamera dan GPS diizinkan browser ponsel."
+    );
+  }
 });
 
 async function startBot() {

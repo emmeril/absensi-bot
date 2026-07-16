@@ -15,6 +15,7 @@
     "canvas": "^3.1.0",
     "cors": "^2.8.5",
     "dayjs": "^1.11.13",
+    "dotenv": "^17.4.2",
     "express": "^5.1.0",
     "face-api.js": "^0.22.2",
     "haversine-distance": "^1.2.4",

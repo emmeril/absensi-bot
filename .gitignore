@@ -2,6 +2,9 @@
 .wwebjs_cache
 .wwebjs_cache.backup
 node_modules
+.env
+.env.*
+!.env.example
 pnpm-lock.yaml
 pnpm-workspace.yaml
 face-server
