@@ -386,6 +386,40 @@ async function kirimMediaAman(id, media, caption) {
   }
 }
 
+function getAttendanceWindow(jamResmi, tipe) {
+  return tipe === "masuk"
+    ? { mulai: jamResmi.mulaiMasuk, selesai: jamResmi.selesaiMasuk }
+    : { mulai: jamResmi.mulaiPulang, selesai: jamResmi.selesaiPulang };
+}
+
+function getAttendanceStatus(waktu, jamResmi, tipe) {
+  if (tipe === "masuk") {
+    return getArrivalStatus(
+      waktu,
+      normalizeJam(jamResmi.masuk),
+      jamResmi.toleransi
+    );
+  }
+
+  return waktu >= normalizeJam(jamResmi.pulang)
+    ? "Sesuai Waktu"
+    : "Pulang Cepat";
+}
+
+function getStudentNotificationRecipients(studentId, kelasSiswa) {
+  const recipients = new Set(
+    Object.entries(loadRoles())
+      .filter(([, role]) => role === "admin")
+      .map(([id]) => id)
+  );
+  if (kelasSiswa?.waliKelas) recipients.add(kelasSiswa.waliKelas);
+  if (kelasSiswa?.siswa[studentId]?.orangTua) {
+    recipients.add(kelasSiswa.siswa[studentId].orangTua);
+  }
+  recipients.delete(studentId);
+  return recipients;
+}
+
 async function catatAbsensiKamera(userId, tipe, lokasi, foto) {
   const storage = loadJSON(STORAGE_PATH);
   const kontak = loadJSON(KONTAK_PATH);
@@ -405,10 +439,10 @@ async function catatAbsensiKamera(userId, tipe, lokasi, foto) {
   );
   if (attendanceError) throw new Error(attendanceError);
 
-  const mulaiAbsen =
-    tipe === "masuk" ? jamResmi.mulaiMasuk : jamResmi.mulaiPulang;
-  const selesaiAbsen =
-    tipe === "masuk" ? jamResmi.selesaiMasuk : jamResmi.selesaiPulang;
+  const { mulai: mulaiAbsen, selesai: selesaiAbsen } = getAttendanceWindow(
+    jamResmi,
+    tipe
+  );
   if (!isWithinAttendanceWindow(waktu.jam, mulaiAbsen, selesaiAbsen)) {
     throw new Error(
       `Absen ${tipe} hanya dapat dilakukan pukul ${String(
@@ -425,14 +459,7 @@ async function catatAbsensiKamera(userId, tipe, lokasi, foto) {
     throw new Error("Kamu berada di luar area sekolah.");
   }
 
-  const jamMasuk = normalizeJam(jamResmi.masuk);
-  const jamPulang = normalizeJam(jamResmi.pulang);
-  const status =
-    tipe === "masuk"
-      ? getArrivalStatus(waktu.jam, jamMasuk, jamResmi.toleransi)
-      : waktu.jam >= jamPulang
-      ? "Sesuai Waktu"
-      : "Pulang Cepat";
+  const status = getAttendanceStatus(waktu.jam, jamResmi, tipe);
   const dataHariIni = (storage[waktu.tanggal] = storage[waktu.tanggal] || {});
   const userLog = (dataHariIni[userId] = dataHariIni[userId] || {});
   userLog[tipe] = {
@@ -454,16 +481,7 @@ async function catatAbsensiKamera(userId, tipe, lokasi, foto) {
     `*${kontak[userId] || userId}* telah absen *${tipe}*\n` +
     `Status: *${status}*\n` +
     `Jam: ${waktu.jam}`;
-  const penerima = new Set(
-    Object.entries(loadRoles())
-      .filter(([, role]) => role === "admin")
-      .map(([id]) => id)
-  );
-  if (kelasSiswa?.waliKelas) penerima.add(kelasSiswa.waliKelas);
-  if (kelasSiswa?.siswa[userId]?.orangTua) {
-    penerima.add(kelasSiswa.siswa[userId].orangTua);
-  }
-  penerima.delete(userId);
+  const penerima = getStudentNotificationRecipients(userId, kelasSiswa);
   for (const id of penerima) {
     antreNotifikasi(
       () => kirimMediaAman(id, mediaMsg, caption),
@@ -984,10 +1002,10 @@ client.on("message", async (msg) => {
       tipe
     );
     if (attendanceError) return msg.reply(`❌ ${attendanceError}`);
-    const mulaiAbsen =
-      tipe === "masuk" ? jamResmi.mulaiMasuk : jamResmi.mulaiPulang;
-    const selesaiAbsen =
-      tipe === "masuk" ? jamResmi.selesaiMasuk : jamResmi.selesaiPulang;
+    const { mulai: mulaiAbsen, selesai: selesaiAbsen } = getAttendanceWindow(
+      jamResmi,
+      tipe
+    );
     if (!isWithinAttendanceWindow(waktu.jam, mulaiAbsen, selesaiAbsen)) {
       return msg.reply(
         `❌ Absen ${tipe} hanya dapat dilakukan pukul ${String(
@@ -1080,7 +1098,7 @@ client.on("message", async (msg) => {
     clearTimeout(absen.timeout);
 
     const jarak = haversine(lokasi, lokasiKantor);
-    if (jarak > 100) {
+    if (jarak > ATTENDANCE_RADIUS_METERS) {
       clearPendingAbsen(sender);
       return msg.reply("❌ Kamu berada di luar area sekolah.");
     }
@@ -1096,10 +1114,10 @@ client.on("message", async (msg) => {
       clearPendingAbsen(sender);
       return msg.reply(`❌ ${attendanceError}`);
     }
-    const mulaiAbsen =
-      tipe === "masuk" ? jamResmi.mulaiMasuk : jamResmi.mulaiPulang;
-    const selesaiAbsen =
-      tipe === "masuk" ? jamResmi.selesaiMasuk : jamResmi.selesaiPulang;
+    const { mulai: mulaiAbsen, selesai: selesaiAbsen } = getAttendanceWindow(
+      jamResmi,
+      tipe
+    );
     if (!isWithinAttendanceWindow(waktu.jam, mulaiAbsen, selesaiAbsen)) {
       clearPendingAbsen(sender);
       return msg.reply(
@@ -1109,15 +1127,7 @@ client.on("message", async (msg) => {
       );
     }
 
-    const jamMasuk = normalizeJam(jamResmi.masuk);
-    const jamPulang = normalizeJam(jamResmi.pulang);
-
-    const status =
-      tipe === "masuk"
-        ? getArrivalStatus(waktu.jam, jamMasuk, jamResmi.toleransi)
-        : waktu.jam >= jamPulang
-        ? "Sesuai Waktu"
-        : "Pulang Cepat";
+    const status = getAttendanceStatus(waktu.jam, jamResmi, tipe);
 
     userLog[tipe] = {
       waktu: waktu.jam,
@@ -1143,17 +1153,7 @@ client.on("message", async (msg) => {
       `🕘 *${kontak[sender] || sender}* telah absen *${tipe}*\n` +
       `Status: *${status}*\n` +
       `Jam: ${waktu.jam}`;
-    const penerima = new Set(
-      Object.entries(loadRoles())
-        .filter(([, penerimaRole]) => penerimaRole === "admin")
-        .map(([id]) => id)
-    );
-
-    if (kelasSiswa?.waliKelas) penerima.add(kelasSiswa.waliKelas);
-    if (kelasSiswa?.siswa[sender]?.orangTua) {
-      penerima.add(kelasSiswa.siswa[sender].orangTua);
-    }
-    penerima.delete(sender);
+    const penerima = getStudentNotificationRecipients(sender, kelasSiswa);
 
     for (const id of penerima) {
       antreNotifikasi(
@@ -1278,16 +1278,7 @@ client.on("message", async (msg) => {
       (izinSakit ? "\n✅ Wajah siswa terverifikasi" : "");
     const buktiMedia = new MessageMedia(media.mimetype, media.data, "bukti-izin.jpg");
 
-    const penerima = new Set(
-      Object.entries(loadRoles())
-        .filter(([, penerimaRole]) => penerimaRole === "admin")
-        .map(([id]) => id)
-    );
-    if (kelasSiswa?.waliKelas) penerima.add(kelasSiswa.waliKelas);
-    if (kelasSiswa?.siswa[sender]?.orangTua) {
-      penerima.add(kelasSiswa.siswa[sender].orangTua);
-    }
-    penerima.delete(sender);
+    const penerima = getStudentNotificationRecipients(sender, kelasSiswa);
 
     for (const id of penerima) {
       antreNotifikasi(
@@ -1974,16 +1965,10 @@ app.post("/api/permission-camera/:token/evidence", async (req, res) => {
       `📌 Alasan: ${session.alasan}\n` +
       `✅ Wajah terverifikasi dan lokasi tercatat`;
     const mediaMsg = new MessageMedia(bukti.mimetype, bukti.data, "bukti-izin.jpg");
-    const penerima = new Set(
-      Object.entries(loadRoles())
-        .filter(([, role]) => role === "admin")
-        .map(([id]) => id)
+    const penerima = getStudentNotificationRecipients(
+      session.userId,
+      kelasSiswa
     );
-    if (kelasSiswa?.waliKelas) penerima.add(kelasSiswa.waliKelas);
-    if (kelasSiswa?.siswa[session.userId]?.orangTua) {
-      penerima.add(kelasSiswa.siswa[session.userId].orangTua);
-    }
-    penerima.delete(session.userId);
     for (const id of penerima) {
       antreNotifikasi(
         () => kirimMediaAman(id, mediaMsg, caption),
