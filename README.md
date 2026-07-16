@@ -22,10 +22,9 @@ Ruang Hadir adalah aplikasi absensi sekolah berbasis WhatsApp dengan verifikasi 
 | `!pulang` | Memulai absensi pulang | Siswa terdaftar |
 | `!izin alasan` | Membuka proses izin dua tahap melalui tautan sekali pakai | Siswa terdaftar |
 | `!setlokasi` | Meminta pengiriman lokasi sekolah baru | Admin |
+| `!bantuan` | Menampilkan perintah yang tersedia sesuai role pengirim | Semua pengguna |
 
 Setelah mengirim `!masuk` atau `!pulang`, siswa menerima tautan sekali pakai yang berlaku selama 2 menit. Tautan membuka kamera depan dan GPS tanpa menyediakan pilihan unggah dari galeri. Setelah mengirim `!izin alasan`, siswa menerima tautan izin selama 5 menit untuk mengambil selfie langsung, mencatat GPS, lalu mengunggah surat atau bukti secara terpisah. Lokasi izin tidak dibatasi radius sekolah.
-
-Pengelolaan data lain sudah dipindahkan ke dashboard web. Perintah lama seperti `!setfoto` tidak tersedia.
 
 ## Persyaratan
 
