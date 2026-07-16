@@ -5,51 +5,32 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#12372a" />
     <title>Kamera Absensi | Ruang Hadir</title>
-    <style>
-      :root { --forest:#12372a; --leaf:#2f6b4f; --lime:#d9f99d; --paper:#f4f0e6; --ink:#17211b; --danger:#b42318; }
-      * { box-sizing:border-box; }
-      body { margin:0; min-height:100vh; color:var(--ink); background:radial-gradient(circle at 90% 5%,#d9f99d 0,transparent 30%),linear-gradient(145deg,#f8f4e9,#dfeadd); font-family:Georgia,"Times New Roman",serif; }
-      main { width:min(100%,560px); min-height:100vh; margin:auto; padding:calc(20px + env(safe-area-inset-top)) 18px calc(28px + env(safe-area-inset-bottom)); display:flex; flex-direction:column; gap:16px; }
-      header { display:flex; align-items:center; justify-content:space-between; gap:16px; }
-      .brand { font-weight:800; letter-spacing:-.03em; font-size:1.25rem; }
-      .badge { border:1px solid #aac5b4; border-radius:999px; padding:7px 11px; font:700 .72rem Arial,sans-serif; text-transform:uppercase; letter-spacing:.09em; background:#ffffff99; }
-      h1 { margin:8px 0 3px; font-size:clamp(2rem,9vw,3.3rem); line-height:.95; letter-spacing:-.055em; }
-      .lead { margin:0; color:#526259; font:400 .95rem/1.5 Arial,sans-serif; }
-      .camera { position:relative; overflow:hidden; aspect-ratio:3/4; max-height:62vh; border-radius:28px 28px 8px 28px; background:#07130e; box-shadow:0 22px 55px #173e2a35; }
-      video,canvas { width:100%; height:100%; object-fit:cover; display:block; }
-      video { transform:scaleX(-1); }
-      canvas { display:none; }
-      .guide { position:absolute; inset:12% 16%; border:2px dashed #d9f99dcc; border-radius:48% 48% 44% 44%; pointer-events:none; box-shadow:0 0 0 999px #06140d3d; }
-      .camera-label { position:absolute; left:14px; top:14px; border-radius:999px; padding:7px 10px; color:white; background:#07130ebd; font:700 .7rem Arial,sans-serif; letter-spacing:.08em; text-transform:uppercase; }
-      .status { min-height:44px; padding:12px 14px; border-left:4px solid var(--leaf); background:#fff9; font:600 .86rem/1.45 Arial,sans-serif; }
-      .status.error { border-color:var(--danger); color:var(--danger); }
-      .actions { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-      button { min-height:52px; border:0; border-radius:7px; padding:12px 16px; font:800 .9rem Arial,sans-serif; cursor:pointer; }
-      button.primary { color:white; background:var(--forest); box-shadow:0 8px 18px #12372a33; }
-      button.secondary { color:var(--forest); border:1px solid #9bb4a5; background:#fff9; }
-      button:disabled { cursor:not-allowed; opacity:.45; box-shadow:none; }
-      .wide { grid-column:1/-1; }
-      .fineprint { margin:0; text-align:center; color:#68766e; font:400 .72rem/1.45 Arial,sans-serif; }
-      [hidden] { display:none !important; }
-    </style>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = { theme: { extend: { colors: { forest: "#12372a", leaf: "#2f6b4f", lime: "#d9f99d", paper: "#f4f0e6", ink: "#17211b" }, fontFamily: { body: ["Trebuchet MS", "sans-serif"] } } } };
+    </script>
   </head>
-  <body>
-    <main>
-      <header><div class="brand">Ruang Hadir</div><div class="badge" id="typeBadge">Absensi</div></header>
-      <section><h1 id="title">Siapkan wajahmu.</h1><p class="lead" id="lead">Foto harus diambil sekarang menggunakan kamera depan.</p></section>
-      <section class="camera">
-        <video id="video" autoplay muted playsinline></video>
-        <canvas id="canvas"></canvas>
-        <div class="guide" id="guide"></div>
-        <div class="camera-label">Kamera langsung</div>
+  <body class="min-h-screen bg-[radial-gradient(circle_at_90%_5%,#d9f99d_0,transparent_30%),linear-gradient(145deg,#f8f4e9,#dfeadd)] font-body text-ink">
+    <main class="mx-auto flex min-h-screen w-full max-w-xl flex-col gap-4 px-4 pb-[calc(1.75rem+env(safe-area-inset-bottom))] pt-[calc(1.25rem+env(safe-area-inset-top))] sm:px-6 lg:max-w-5xl lg:justify-center">
+      <header class="flex items-center justify-between gap-4"><div class="text-xl font-black tracking-tight">Ruang Hadir</div><div class="rounded-full border border-emerald-800/25 bg-white/60 px-3 py-2 text-[11px] font-black uppercase tracking-[.12em]" id="typeBadge">Absensi</div></header>
+      <div class="grid gap-4 lg:grid-cols-[.8fr_1.2fr] lg:items-center lg:gap-10">
+        <section><p class="mb-3 hidden text-xs font-black uppercase tracking-[.2em] text-leaf lg:block">Verifikasi kehadiran</p><h1 class="text-4xl font-black leading-[.95] tracking-[-.05em] sm:text-5xl lg:text-7xl" id="title">Siapkan wajahmu.</h1><p class="mt-3 text-sm leading-6 text-slate-600 sm:text-base" id="lead">Foto harus diambil sekarang menggunakan kamera depan.</p></section>
+        <div class="flex flex-col gap-4">
+      <section class="relative mx-auto aspect-[3/4] max-h-[62vh] w-full max-w-md overflow-hidden rounded-[28px_28px_8px_28px] bg-[#07130e] shadow-2xl lg:max-h-[68vh]">
+        <video class="h-full w-full -scale-x-100 object-cover" id="video" autoplay muted playsinline></video>
+        <canvas class="hidden h-full w-full object-cover" id="canvas"></canvas>
+        <div class="pointer-events-none absolute inset-[12%_16%] rounded-[48%_48%_44%_44%] border-2 border-dashed border-lime/80 shadow-[0_0_0_999px_rgba(6,20,13,.24)]" id="guide"></div>
+        <div class="absolute left-3.5 top-3.5 rounded-full bg-[#07130ebd] px-3 py-2 text-[10px] font-black uppercase tracking-[.12em] text-white">Kamera langsung</div>
       </section>
-      <div class="status" id="status">Memeriksa tautan absensi...</div>
-      <div class="actions">
-        <button class="primary wide" id="capture" disabled>Ambil selfie</button>
-        <button class="secondary" id="retake" hidden>Foto ulang</button>
-        <button class="primary" id="submit" hidden>Kirim absensi</button>
+      <div class="min-h-11 border-l-4 border-leaf bg-white/70 px-4 py-3 text-sm font-bold leading-5" id="status">Memeriksa tautan absensi...</div>
+      <div class="grid grid-cols-2 gap-2.5">
+        <button class="col-span-2 min-h-13 rounded-lg bg-forest px-4 py-3.5 text-sm font-black text-white shadow-lg shadow-forest/20 disabled:cursor-not-allowed disabled:opacity-40" id="capture" disabled>Ambil selfie</button>
+        <button class="min-h-13 rounded-lg border border-emerald-900/30 bg-white/70 px-4 py-3.5 text-sm font-black text-forest" id="retake" hidden>Foto ulang</button>
+        <button class="min-h-13 rounded-lg bg-forest px-4 py-3.5 text-sm font-black text-white shadow-lg shadow-forest/20" id="submit" hidden>Kirim absensi</button>
       </div>
-      <p class="fineprint">Tidak ada akses galeri pada halaman ini. Foto, lokasi GPS, dan token sekali pakai dikirim hanya untuk proses absensi.</p>
+        </div>
+      </div>
+      <!-- <p class="text-center text-xs leading-5 text-slate-500">Tidak ada akses galeri pada halaman ini. Foto, lokasi GPS, dan token sekali pakai dikirim hanya untuk proses absensi.</p> -->
     </main>
     <script>
       const token = new URLSearchParams(location.search).get("token");
@@ -66,7 +47,9 @@
 
       function setStatus(message, error = false) {
         statusBox.textContent = message;
-        statusBox.classList.toggle("error", error);
+        statusBox.classList.toggle("border-red-600", error);
+        statusBox.classList.toggle("text-red-700", error);
+        statusBox.classList.toggle("border-leaf", !error);
       }
 
       function stopCamera() {

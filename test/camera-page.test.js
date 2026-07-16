@@ -35,3 +35,10 @@ test("halaman izin mencatat GPS tanpa pemeriksaan radius sekolah", () => {
   assert.match(permissionPage, /getCurrentPosition/);
   assert.doesNotMatch(permissionPage, /ATTENDANCE_RADIUS_METERS|haversine/);
 });
+
+test("halaman kamera dan izin menggunakan Tailwind tanpa stylesheet manual", () => {
+  for (const page of [cameraPage, permissionPage]) {
+    assert.match(page, /cdn\.tailwindcss\.com/);
+    assert.doesNotMatch(page, /<style>/);
+  }
+});
