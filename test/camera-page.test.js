@@ -36,9 +36,29 @@ test("halaman izin mencatat GPS tanpa pemeriksaan radius sekolah", () => {
   assert.doesNotMatch(permissionPage, /ATTENDANCE_RADIUS_METERS|haversine/);
 });
 
-test("halaman kamera dan izin menggunakan Tailwind tanpa stylesheet manual", () => {
+test("halaman kamera dan izin menggunakan Bootstrap tanpa Tailwind", () => {
   for (const page of [cameraPage, permissionPage]) {
-    assert.match(page, /cdn\.tailwindcss\.com/);
-    assert.doesNotMatch(page, /<style>/);
+    assert.match(page, /bootstrap@5\.3\.3\/dist\/css\/bootstrap\.min\.css/);
+    assert.doesNotMatch(page, /cdn\.tailwindcss\.com|tailwind\.config/);
   }
+});
+
+test("kamera dimulai sebelum halaman meminta lokasi GPS", () => {
+  for (const page of [cameraPage, permissionPage]) {
+    const cameraStart = page.indexOf("await startCamera()");
+    const locationStart = page.indexOf("await getLocation()", cameraStart) >= 0
+      ? page.indexOf("await getLocation()", cameraStart)
+      : page.indexOf("await gps()", cameraStart);
+    assert.ok(cameraStart >= 0);
+    assert.ok(locationStart > cameraStart);
+  }
+});
+
+test("halaman proses diganti dengan status berhasil setelah pengiriman sukses", () => {
+  assert.match(cameraPage, /id="successStage" hidden/);
+  assert.match(cameraPage, /attendanceStage\"\)\.hidden = true/);
+  assert.match(cameraPage, /successStage\"\)\.hidden = false/);
+  assert.match(permissionPage, /id="successStage" hidden/);
+  assert.match(permissionPage, /permissionStage\"\)\.hidden=true/);
+  assert.match(permissionPage, /successStage\"\)\.hidden=false/);
 });

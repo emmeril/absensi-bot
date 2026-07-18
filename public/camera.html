@@ -5,29 +5,57 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#12372a" />
     <title>Kamera Absensi | Ruang Hadir</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-      tailwind.config = { theme: { extend: { colors: { forest: "#12372a", leaf: "#2f6b4f", lime: "#d9f99d", paper: "#f4f0e6", ink: "#17211b" }, fontFamily: { body: ["Trebuchet MS", "sans-serif"] } } } };
-    </script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <style>
+      :root { --forest: #12372a; --leaf: #2f6b4f; --lime: #d9f99d; --ink: #17211b; }
+      [hidden] { display: none !important; }
+      body { min-height: 100vh; color: var(--ink); font-family: "Trebuchet MS", sans-serif; background: radial-gradient(circle at 90% 5%, var(--lime) 0, transparent 30%), linear-gradient(145deg, #f8f4e9, #dfeadd); }
+      .page-shell { min-height: 100vh; max-width: 1140px; padding-top: calc(1.25rem + env(safe-area-inset-top)); padding-bottom: calc(1.75rem + env(safe-area-inset-bottom)); }
+      .brand { font-size: 1.25rem; font-weight: 900; letter-spacing: -.03em; }
+      .type-badge { border: 1px solid rgba(18, 55, 42, .25); background: rgba(255, 255, 255, .6); font-size: .6875rem; font-weight: 900; letter-spacing: .12em; }
+      .eyebrow { color: var(--leaf); font-size: .75rem; font-weight: 900; letter-spacing: .2em; }
+      .hero-title { font-size: clamp(2.5rem, 7vw, 4.5rem); font-weight: 900; line-height: .95; letter-spacing: -.05em; }
+      .camera-frame { position: relative; width: 100%; max-width: 28rem; max-height: 68vh; aspect-ratio: 3 / 4; overflow: hidden; border-radius: 28px 28px 8px 28px; background: #07130e; box-shadow: 0 1rem 3rem rgba(0, 0, 0, .3); }
+      .camera-media { width: 100%; height: 100%; object-fit: cover; }
+      video.camera-media { transform: scaleX(-1); }
+      .face-guide { pointer-events: none; position: absolute; inset: 12% 16%; border: 2px dashed rgba(217, 249, 157, .8); border-radius: 48% 48% 44% 44%; box-shadow: 0 0 0 999px rgba(6, 20, 13, .24); }
+      .live-label { position: absolute; top: .875rem; left: .875rem; color: #fff; background: rgba(7, 19, 14, .74); font-size: .625rem; font-weight: 900; letter-spacing: .12em; }
+      .status-box { min-height: 2.75rem; border-left: 4px solid var(--leaf); background: rgba(255, 255, 255, .7); font-size: .875rem; font-weight: 700; line-height: 1.25rem; }
+      .btn-forest { --bs-btn-bg: var(--forest); --bs-btn-border-color: var(--forest); --bs-btn-hover-bg: #0b291f; --bs-btn-hover-border-color: #0b291f; --bs-btn-disabled-bg: var(--forest); --bs-btn-disabled-border-color: var(--forest); color: #fff; font-weight: 900; min-height: 3.25rem; }
+      .btn-outline-forest { --bs-btn-color: var(--forest); --bs-btn-border-color: rgba(18, 55, 42, .3); --bs-btn-hover-bg: var(--forest); --bs-btn-hover-border-color: var(--forest); font-weight: 900; min-height: 3.25rem; background: rgba(255, 255, 255, .7); }
+      .success-card { width: min(100%, 36rem); border: 1px solid rgba(18, 55, 42, .18); border-radius: 8px 36px 36px 36px; background: rgba(255, 255, 255, .78); box-shadow: 0 1.5rem 4rem rgba(18, 55, 42, .14); }
+      .success-icon { width: 5.5rem; height: 5.5rem; color: #fff; background: var(--forest); font-size: 3rem; font-weight: 900; box-shadow: 0 .75rem 2rem rgba(18, 55, 42, .25); }
+      @media (max-width: 991.98px) { .page-shell { max-width: 36rem; } .camera-frame { max-height: 62vh; } }
+    </style>
   </head>
-  <body class="min-h-screen bg-[radial-gradient(circle_at_90%_5%,#d9f99d_0,transparent_30%),linear-gradient(145deg,#f8f4e9,#dfeadd)] font-body text-ink">
-    <main class="mx-auto flex min-h-screen w-full max-w-xl flex-col gap-4 px-4 pb-[calc(1.75rem+env(safe-area-inset-bottom))] pt-[calc(1.25rem+env(safe-area-inset-top))] sm:px-6 lg:max-w-5xl lg:justify-center">
-      <header class="flex items-center justify-between gap-4"><div class="text-xl font-black tracking-tight">Ruang Hadir</div><div class="rounded-full border border-emerald-800/25 bg-white/60 px-3 py-2 text-[11px] font-black uppercase tracking-[.12em]" id="typeBadge">Absensi</div></header>
-      <div class="grid gap-4 lg:grid-cols-[.8fr_1.2fr] lg:items-center lg:gap-10">
-        <section><p class="mb-3 hidden text-xs font-black uppercase tracking-[.2em] text-leaf lg:block">Verifikasi kehadiran</p><h1 class="text-4xl font-black leading-[.95] tracking-[-.05em] sm:text-5xl lg:text-7xl" id="title">Siapkan wajahmu.</h1><p class="mt-3 text-sm leading-6 text-slate-600 sm:text-base" id="lead">Foto harus diambil sekarang menggunakan kamera depan.</p></section>
-        <div class="flex flex-col gap-4">
-      <section class="relative mx-auto aspect-[3/4] max-h-[62vh] w-full max-w-md overflow-hidden rounded-[28px_28px_8px_28px] bg-[#07130e] shadow-2xl lg:max-h-[68vh]">
-        <video class="h-full w-full -scale-x-100 object-cover" id="video" autoplay muted playsinline></video>
-        <canvas class="hidden h-full w-full object-cover" id="canvas"></canvas>
-        <div class="pointer-events-none absolute inset-[12%_16%] rounded-[48%_48%_44%_44%] border-2 border-dashed border-lime/80 shadow-[0_0_0_999px_rgba(6,20,13,.24)]" id="guide"></div>
-        <div class="absolute left-3.5 top-3.5 rounded-full bg-[#07130ebd] px-3 py-2 text-[10px] font-black uppercase tracking-[.12em] text-white">Kamera langsung</div>
+  <body>
+    <main class="container page-shell d-flex flex-column justify-content-lg-center gap-3 px-3 px-sm-4">
+      <div id="attendanceStage">
+      <header class="d-flex align-items-center justify-content-between gap-3"><div class="brand">Ruang Hadir</div><div class="type-badge rounded-pill px-3 py-2 text-uppercase" id="typeBadge">Absensi</div></header>
+      <div class="row align-items-lg-center g-4 g-lg-5 mt-0">
+        <section class="col-lg-5"><p class="eyebrow mb-3 d-none d-lg-block text-uppercase">Verifikasi kehadiran</p><h1 class="hero-title" id="title">Siapkan wajahmu.</h1><p class="mt-3 text-secondary lh-lg" id="lead">Foto harus diambil sekarang menggunakan kamera depan.</p></section>
+        <div class="col-lg-7 d-flex flex-column gap-3">
+      <section class="camera-frame mx-auto">
+        <video class="camera-media" id="video" autoplay muted playsinline></video>
+        <canvas class="camera-media" id="canvas" style="display: none"></canvas>
+        <div class="face-guide" id="guide"></div>
+        <div class="live-label rounded-pill px-3 py-2 text-uppercase">Kamera langsung</div>
       </section>
-      <div class="min-h-11 border-l-4 border-leaf bg-white/70 px-4 py-3 text-sm font-bold leading-5" id="status">Memeriksa tautan absensi...</div>
-      <div class="grid grid-cols-2 gap-2.5">
-        <button class="col-span-2 min-h-13 rounded-lg bg-forest px-4 py-3.5 text-sm font-black text-white shadow-lg shadow-forest/20 disabled:cursor-not-allowed disabled:opacity-40" id="capture" disabled>Ambil selfie</button>
-        <button class="min-h-13 rounded-lg border border-emerald-900/30 bg-white/70 px-4 py-3.5 text-sm font-black text-forest" id="retake" hidden>Foto ulang</button>
-        <button class="min-h-13 rounded-lg bg-forest px-4 py-3.5 text-sm font-black text-white shadow-lg shadow-forest/20" id="submit" hidden>Kirim absensi</button>
+      <div class="status-box px-3 py-2" id="status">Memeriksa tautan absensi...</div>
+      <div class="row g-2">
+        <div class="col-12"><button class="btn btn-forest w-100 shadow" id="capture" disabled>Ambil selfie</button></div>
+        <div class="col-6"><button class="btn btn-outline-forest w-100" id="retake" hidden>Foto ulang</button></div>
+        <div class="col-6"><button class="btn btn-forest w-100 shadow" id="submit" hidden>Kirim absensi</button></div>
       </div>
+      </div>
+      <section class="success-card mx-auto p-4 p-sm-5 text-center" id="successStage" hidden>
+        <div class="success-icon rounded-circle d-flex align-items-center justify-content-center mx-auto mb-4" aria-hidden="true">&#10003;</div>
+        <p class="eyebrow mb-3 text-uppercase">Absensi tercatat</p>
+        <h1 class="hero-title">Berhasil.</h1>
+        <p class="mt-4 mb-2 fs-5 fw-bold" id="successTitle">Absensi berhasil dicatat.</p>
+        <p class="mb-0 text-secondary lh-lg" id="successDetail"></p>
+        <p class="mt-4 mb-0 small text-secondary">Halaman ini sekarang boleh ditutup.</p>
+      </section>
         </div>
       </div>
       <!-- <p class="text-center text-xs leading-5 text-slate-500">Tidak ada akses galeri pada halaman ini. Foto, lokasi GPS, dan token sekali pakai dikirim hanya untuk proses absensi.</p> -->
@@ -47,13 +75,32 @@
 
       function setStatus(message, error = false) {
         statusBox.textContent = message;
-        statusBox.classList.toggle("border-red-600", error);
-        statusBox.classList.toggle("text-red-700", error);
-        statusBox.classList.toggle("border-leaf", !error);
+        statusBox.classList.toggle("border-danger", error);
+        statusBox.classList.toggle("text-danger", error);
       }
 
       function stopCamera() {
         if (stream) stream.getTracks().forEach((track) => track.stop());
+      }
+
+      async function startCamera() {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw new Error("Kamera tidak tersedia. Buka tautan ini di Chrome/Safari melalui HTTPS.");
+        }
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "user", width: { ideal: 720 }, height: { ideal: 960 } },
+            audio: false,
+          });
+          video.srcObject = stream;
+          await video.play();
+        } catch (error) {
+          if (error.name === "NotAllowedError") {
+            throw new Error("Akses kamera ditolak. Izinkan kamera di pengaturan browser lalu muat ulang halaman.");
+          }
+          if (error.name === "NotFoundError") throw new Error("Kamera depan tidak ditemukan di perangkat ini.");
+          throw new Error("Kamera tidak dapat dibuka. Tutup aplikasi lain yang memakai kamera lalu muat ulang.");
+        }
       }
 
       function getLocation() {
@@ -80,15 +127,10 @@
         document.querySelector("#title").textContent = `Halo, ${data.nama}.`;
         document.querySelector("#lead").textContent = `Ambil selfie langsung untuk absen ${data.tipe}. Tautan segera kedaluwarsa.`;
         if (!window.isSecureContext) throw new Error("Kamera membutuhkan alamat HTTPS. Hubungi admin untuk memperbaiki tautan bot.");
-        setStatus("Izinkan kamera depan dan lokasi GPS...");
-        const results = await Promise.all([
-          navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 720 }, height: { ideal: 960 } }, audio: false }),
-          getLocation(),
-        ]);
-        stream = results[0];
-        locationData = results[1];
-        video.srcObject = stream;
-        await video.play();
+        setStatus("Izinkan akses kamera depan...");
+        await startCamera();
+        setStatus("Kamera siap. Sekarang izinkan lokasi GPS...");
+        locationData = await getLocation();
         captureButton.disabled = false;
         setStatus(`Kamera dan GPS siap (akurasi ${Math.round(locationData.accuracy)} m). Posisikan wajah di dalam garis.`);
       }
@@ -138,11 +180,10 @@
           const data = await response.json();
           if (!response.ok) throw new Error(data.error || "Absensi gagal diproses.");
           stopCamera();
-          document.querySelector("#title").textContent = "Absensi berhasil.";
-          document.querySelector("#lead").textContent = `${data.tipe} dicatat pukul ${data.waktu} dengan status ${data.status}.`;
-          setStatus("Berhasil. Halaman ini sekarang boleh ditutup.");
-          retakeButton.hidden = true;
-          submitButton.hidden = true;
+          document.querySelector("#attendanceStage").hidden = true;
+          document.querySelector("#successStage").hidden = false;
+          document.querySelector("#successTitle").textContent = `Absen ${data.tipe} berhasil.`;
+          document.querySelector("#successDetail").textContent = `Dicatat pukul ${data.waktu} dengan status ${data.status}.`;
         } catch (error) {
           setStatus(error.message, true);
           submitButton.hidden = true;

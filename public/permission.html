@@ -5,35 +5,64 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#17324d" />
     <title>Pengajuan Izin | Ruang Hadir</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-      tailwind.config = { theme: { extend: { colors: { navy: "#17324d", school: "#3976a8", ink: "#172533" }, fontFamily: { body: ["Trebuchet MS", "sans-serif"] } } } };
-    </script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <style>
+      :root { --navy: #17324d; --school: #3976a8; --ink: #172533; }
+      [hidden] { display: none !important; }
+      body { min-height: 100vh; color: var(--ink); font-family: "Trebuchet MS", sans-serif; background: radial-gradient(circle at 8% 4%, #c7ebff 0, transparent 30%), linear-gradient(145deg, #f8f5ec, #e4edf1); }
+      .page-shell { min-height: 100vh; max-width: 1140px; padding-top: calc(1.25rem + env(safe-area-inset-top)); padding-bottom: calc(1.75rem + env(safe-area-inset-bottom)); }
+      .brand { font-size: 1.25rem; font-weight: 900; letter-spacing: -.03em; }
+      .step-badge { border: 1px solid rgba(23, 50, 77, .2); background: rgba(255, 255, 255, .6); font-size: .6875rem; font-weight: 900; letter-spacing: .12em; }
+      .eyebrow { color: var(--school); font-size: .75rem; font-weight: 900; letter-spacing: .2em; }
+      .hero-title { font-size: clamp(2.5rem, 7vw, 4.5rem); font-weight: 900; line-height: .95; letter-spacing: -.05em; }
+      .info-box { border-left: 4px solid var(--school); background: rgba(255, 255, 255, .7); font-size: .875rem; font-weight: 700; line-height: 1.25rem; }
+      .camera-frame { position: relative; width: 100%; max-width: 28rem; max-height: 68vh; aspect-ratio: 3 / 4; overflow: hidden; border-radius: 28px 28px 8px 28px; background: #071522; box-shadow: 0 1rem 3rem rgba(0, 0, 0, .3); }
+      .camera-media { width: 100%; height: 100%; object-fit: cover; }
+      video.camera-media { transform: scaleX(-1); }
+      .face-guide { pointer-events: none; position: absolute; inset: 12% 16%; border: 2px dashed rgba(224, 242, 254, .8); border-radius: 48%; box-shadow: 0 0 0 999px rgba(7, 21, 34, .25); }
+      .btn-navy { --bs-btn-bg: var(--navy); --bs-btn-border-color: var(--navy); --bs-btn-hover-bg: #0e253a; --bs-btn-hover-border-color: #0e253a; --bs-btn-disabled-bg: var(--navy); --bs-btn-disabled-border-color: var(--navy); color: #fff; font-weight: 900; min-height: 3.25rem; }
+      .btn-outline-navy { --bs-btn-color: var(--navy); --bs-btn-border-color: rgba(23, 50, 77, .3); --bs-btn-hover-bg: var(--navy); --bs-btn-hover-border-color: var(--navy); font-weight: 900; min-height: 3.25rem; background: rgba(255, 255, 255, .7); }
+      .evidence-card { border: 1px solid rgba(23, 50, 77, .2); border-radius: 8px 24px 24px 24px; background: rgba(255, 255, 255, .75); }
+      .proof-image { width: 100%; max-height: 340px; object-fit: contain; background: #f1f5f9; }
+      .success-card { width: min(100%, 36rem); border: 1px solid rgba(23, 50, 77, .18); border-radius: 8px 36px 36px 36px; background: rgba(255, 255, 255, .78); box-shadow: 0 1.5rem 4rem rgba(23, 50, 77, .14); }
+      .success-icon { width: 5.5rem; height: 5.5rem; color: #fff; background: var(--navy); font-size: 3rem; font-weight: 900; box-shadow: 0 .75rem 2rem rgba(23, 50, 77, .25); }
+      @media (max-width: 991.98px) { .page-shell { max-width: 36rem; } .camera-frame { max-height: 58vh; } }
+    </style>
   </head>
-  <body class="min-h-screen bg-[radial-gradient(circle_at_8%_4%,#c7ebff_0,transparent_30%),linear-gradient(145deg,#f8f5ec,#e4edf1)] font-body text-ink">
-    <main class="mx-auto flex min-h-screen w-full max-w-xl flex-col gap-4 px-4 pb-[calc(1.75rem+env(safe-area-inset-bottom))] pt-[calc(1.25rem+env(safe-area-inset-top))] sm:px-6 lg:max-w-5xl lg:justify-center">
-      <header class="flex items-center justify-between gap-4"><div class="text-xl font-black tracking-tight">Ruang Hadir</div><div class="rounded-full border border-sky-900/20 bg-white/60 px-3 py-2 text-[11px] font-black uppercase tracking-[.12em]" id="step">Tahap 1 dari 2</div></header>
-      <div class="grid gap-4 lg:grid-cols-[.8fr_1.2fr] lg:items-center lg:gap-10">
-      <section><p class="mb-3 hidden text-xs font-black uppercase tracking-[.2em] text-school lg:block">Pengajuan izin</p><h1 class="text-4xl font-black leading-[.95] tracking-[-.05em] sm:text-5xl lg:text-7xl" id="title">Verifikasi dirimu.</h1><p class="mt-3 text-sm leading-6 text-slate-600 sm:text-base" id="lead">Selfie harus diambil langsung dari kamera depan.</p><div class="mt-4 border-l-4 border-school bg-white/70 px-4 py-3 text-sm font-bold leading-5" id="reason">Memuat alasan izin...</div></section>
-      <div>
-      <section class="space-y-4" id="selfieStage">
-        <div class="relative mx-auto aspect-[3/4] max-h-[58vh] w-full max-w-md overflow-hidden rounded-[28px_28px_8px_28px] bg-[#071522] shadow-2xl lg:max-h-[68vh]"><video class="h-full w-full -scale-x-100 object-cover" id="video" autoplay muted playsinline></video><canvas class="hidden h-full w-full object-cover" id="canvas"></canvas><div class="pointer-events-none absolute inset-[12%_16%] rounded-[48%] border-2 border-dashed border-sky-100/80 shadow-[0_0_0_999px_rgba(7,21,34,.25)]" id="guide"></div></div>
-        <div class="min-h-11 border-l-4 border-school bg-white/70 px-4 py-3 text-sm font-bold leading-5" id="status">Memeriksa tautan izin...</div>
-        <div class="grid grid-cols-2 gap-2.5">
-          <button class="col-span-2 min-h-13 rounded-lg bg-navy px-4 py-3.5 text-sm font-black text-white shadow-lg shadow-navy/20 disabled:cursor-not-allowed disabled:opacity-40" id="capture" disabled>Ambil selfie</button>
-          <button class="min-h-13 rounded-lg border border-sky-900/30 bg-white/70 px-4 py-3.5 text-sm font-black text-navy" id="retake" hidden>Foto ulang</button>
-          <button class="min-h-13 rounded-lg bg-navy px-4 py-3.5 text-sm font-black text-white shadow-lg shadow-navy/20" id="verify" hidden>Verifikasi wajah</button>
+  <body>
+    <main class="container page-shell d-flex flex-column justify-content-lg-center gap-3 px-3 px-sm-4">
+      <div id="permissionStage">
+      <header class="d-flex align-items-center justify-content-between gap-3"><div class="brand">Ruang Hadir</div><div class="step-badge rounded-pill px-3 py-2 text-uppercase" id="step">Tahap 1 dari 2</div></header>
+      <div class="row align-items-lg-center g-4 g-lg-5 mt-0">
+      <section class="col-lg-5"><p class="eyebrow mb-3 d-none d-lg-block text-uppercase">Pengajuan izin</p><h1 class="hero-title" id="title">Verifikasi dirimu.</h1><p class="mt-3 text-secondary lh-lg" id="lead">Selfie harus diambil langsung dari kamera depan.</p><div class="info-box mt-3 px-3 py-2" id="reason">Memuat alasan izin...</div></section>
+      <div class="col-lg-7">
+      <section class="d-flex flex-column gap-3" id="selfieStage">
+        <div class="camera-frame mx-auto"><video class="camera-media" id="video" autoplay muted playsinline></video><canvas class="camera-media" id="canvas" style="display: none"></canvas><div class="face-guide" id="guide"></div></div>
+        <div class="info-box px-3 py-2" id="status">Memeriksa tautan izin...</div>
+        <div class="row g-2">
+          <div class="col-12"><button class="btn btn-navy w-100 shadow" id="capture" disabled>Ambil selfie</button></div>
+          <div class="col-6"><button class="btn btn-outline-navy w-100" id="retake" hidden>Foto ulang</button></div>
+          <div class="col-6"><button class="btn btn-navy w-100 shadow" id="verify" hidden>Verifikasi wajah</button></div>
         </div>
       </section>
-      <section class="rounded-[8px_24px_24px_24px] border border-sky-900/20 bg-white/75 p-5 shadow-xl shadow-slate-700/5 sm:p-7" id="evidenceStage" hidden>
-        <h2 class="text-2xl font-black tracking-tight">Unggah bukti izin</h2>
-        <p class="mb-5 mt-2 text-sm leading-6 text-slate-600">Ambil foto surat menggunakan kamera atau pilih foto bukti yang sudah tersimpan di galeri.</p>
-        <label class="grid min-h-13 cursor-pointer place-items-center rounded-lg border border-sky-900/30 bg-white/70 px-4 py-3.5 text-center text-sm font-black text-navy" for="evidence">Pilih atau foto bukti</label>
-        <input class="sr-only" id="evidence" type="file" accept="image/jpeg,image/png" />
-        <img class="my-4 max-h-[340px] w-full rounded-xl bg-slate-100 object-contain" id="proof" alt="Pratinjau bukti izin" hidden />
-        <button class="min-h-13 w-full rounded-lg bg-navy px-4 py-3.5 text-sm font-black text-white shadow-lg shadow-navy/20 disabled:cursor-not-allowed disabled:opacity-40" id="submitEvidence" disabled>Kirim pengajuan izin</button>
+      <section class="evidence-card p-4 p-sm-5 shadow" id="evidenceStage" hidden>
+        <h2 class="h4 fw-black fw-bold">Unggah bukti izin</h2>
+        <p class="mb-4 mt-2 text-secondary lh-lg">Ambil foto surat menggunakan kamera atau pilih foto bukti yang sudah tersimpan di galeri.</p>
+        <label class="btn btn-outline-navy d-flex align-items-center justify-content-center w-100" for="evidence">Pilih atau foto bukti</label>
+        <input class="visually-hidden" id="evidence" type="file" accept="image/jpeg,image/png" />
+        <img class="proof-image my-3 rounded-3" id="proof" alt="Pratinjau bukti izin" hidden />
+        <button class="btn btn-navy w-100 shadow" id="submitEvidence" disabled>Kirim pengajuan izin</button>
       </section>
       </div></div>
+      </div>
+      <section class="success-card mx-auto p-4 p-sm-5 text-center" id="successStage" hidden>
+        <div class="success-icon rounded-circle d-flex align-items-center justify-content-center mx-auto mb-4" aria-hidden="true">&#10003;</div>
+        <p class="eyebrow mb-3 text-uppercase">Pengajuan tercatat</p>
+        <h1 class="hero-title">Berhasil.</h1>
+        <p class="mt-4 mb-2 fs-5 fw-bold">Izin berhasil dikirim.</p>
+        <p class="mb-0 text-secondary lh-lg">Pengajuan izin dan bukti sudah dicatat serta diteruskan kepada pihak terkait.</p>
+        <p class="mt-4 mb-0 small text-secondary">Halaman ini sekarang boleh ditutup.</p>
+      </section>
       <!-- <p class="text-center text-xs leading-5 text-slate-500">Lokasi GPS hanya dicatat sebagai informasi pengajuan izin dan tidak harus berada di area sekolah.</p> -->
     </main>
     <script>
@@ -42,8 +71,19 @@
       const statusBox = document.querySelector("#status"), capture = document.querySelector("#capture"), retake = document.querySelector("#retake"), verify = document.querySelector("#verify");
       const evidenceInput = document.querySelector("#evidence"), proof = document.querySelector("#proof"), submitEvidence = document.querySelector("#submitEvidence");
       let stream, selfieData, evidenceData, locationData;
-      function status(message,error=false){statusBox.textContent=message;statusBox.classList.toggle("border-red-600",error);statusBox.classList.toggle("text-red-700",error);statusBox.classList.toggle("border-school",!error);}
+      function status(message,error=false){statusBox.textContent=message;statusBox.classList.toggle("border-danger",error);statusBox.classList.toggle("text-danger",error);}
       function stopCamera(){if(stream)stream.getTracks().forEach(track=>track.stop());}
+      async function startCamera(){
+        if(!navigator.mediaDevices?.getUserMedia)throw new Error("Kamera tidak tersedia. Buka tautan ini di Chrome/Safari melalui HTTPS.");
+        try{
+          stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"user",width:{ideal:720},height:{ideal:960}},audio:false});
+          video.srcObject=stream;await video.play();
+        }catch(error){
+          if(error.name==="NotAllowedError")throw new Error("Akses kamera ditolak. Izinkan kamera di pengaturan browser lalu muat ulang halaman.");
+          if(error.name==="NotFoundError")throw new Error("Kamera depan tidak ditemukan di perangkat ini.");
+          throw new Error("Kamera tidak dapat dibuka. Tutup aplikasi lain yang memakai kamera lalu muat ulang.");
+        }
+      }
       function gps(){return new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(p=>resolve({latitude:p.coords.latitude,longitude:p.coords.longitude,accuracy:p.coords.accuracy}),()=>reject(new Error("Lokasi tidak dapat dibaca. Izinkan GPS lalu muat ulang.")),{enableHighAccuracy:true,timeout:20000,maximumAge:0}));}
       async function init(){
         if(!token)throw new Error("Token izin tidak ditemukan.");
@@ -53,16 +93,17 @@
         document.querySelector("#reason").textContent=`Alasan: ${data.alasan}`;
         if(data.verified)return showEvidence();
         if(!window.isSecureContext)throw new Error("Kamera membutuhkan alamat HTTPS. Hubungi admin.");
-        status("Izinkan kamera depan dan lokasi GPS...");
-        [stream,locationData]=await Promise.all([navigator.mediaDevices.getUserMedia({video:{facingMode:"user",width:{ideal:720},height:{ideal:960}},audio:false}),gps()]);
-        video.srcObject=stream;await video.play();capture.disabled=false;status(`Kamera dan GPS siap (akurasi ${Math.round(locationData.accuracy)} m).`);
+        status("Izinkan akses kamera depan...");
+        await startCamera();
+        status("Kamera siap. Sekarang izinkan lokasi GPS...");
+        locationData=await gps();capture.disabled=false;status(`Kamera dan GPS siap (akurasi ${Math.round(locationData.accuracy)} m).`);
       }
       capture.addEventListener("click",()=>{const w=video.videoWidth,h=video.videoHeight;if(!w||!h)return status("Kamera belum siap.",true);canvas.width=w;canvas.height=h;const c=canvas.getContext("2d");c.translate(w,0);c.scale(-1,1);c.drawImage(video,0,0,w,h);selfieData=canvas.toDataURL("image/jpeg",.86);video.hidden=true;canvas.style.display="block";guide.hidden=true;capture.hidden=true;retake.hidden=false;verify.hidden=false;status("Periksa selfie, lalu verifikasi wajah.");});
       retake.addEventListener("click",()=>{selfieData=null;canvas.style.display="none";video.hidden=false;guide.hidden=false;capture.hidden=false;retake.hidden=true;verify.hidden=true;status("Ambil selfie dengan wajah terlihat jelas.");});
       verify.addEventListener("click",async()=>{verify.disabled=true;retake.disabled=true;status("Memverifikasi wajah dan mencatat lokasi...");try{locationData=await gps();const response=await fetch(`/api/permission-camera/${encodeURIComponent(token)}/verify`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image:selfieData,...locationData})}),data=await response.json();if(!response.ok)throw new Error(data.error||"Verifikasi gagal.");showEvidence();}catch(error){status(error.message,true);verify.hidden=true;retake.hidden=true;}});
       function showEvidence(){stopCamera();document.querySelector("#selfieStage").hidden=true;document.querySelector("#evidenceStage").hidden=false;document.querySelector("#step").textContent="Tahap 2 dari 2";document.querySelector("#title").textContent="Lengkapi buktinya.";document.querySelector("#lead").textContent="Wajah cocok. Sekarang unggah surat atau bukti izin secara terpisah.";}
       evidenceInput.addEventListener("change",()=>{const file=evidenceInput.files[0];if(!file)return;if(!/^image\/(jpeg|png)$/.test(file.type)||file.size>6*1024*1024)return alert("Bukti harus JPG/PNG dan maksimal 6 MB.");const reader=new FileReader();reader.onload=()=>{evidenceData=reader.result;proof.src=evidenceData;proof.hidden=false;submitEvidence.disabled=false;};reader.readAsDataURL(file);});
-      submitEvidence.addEventListener("click",async()=>{submitEvidence.disabled=true;submitEvidence.textContent="Mengirim...";try{const response=await fetch(`/api/permission-camera/${encodeURIComponent(token)}/evidence`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image:evidenceData})}),data=await response.json();if(!response.ok)throw new Error(data.error||"Pengajuan gagal.");document.querySelector("#evidenceStage").hidden=true;document.querySelector("#step").textContent="Selesai";document.querySelector("#title").textContent="Izin terkirim.";document.querySelector("#lead").textContent="Pengajuan izin berhasil dicatat dan diteruskan kepada pihak terkait.";}catch(error){alert(error.message);submitEvidence.disabled=false;submitEvidence.textContent="Kirim pengajuan izin";}});
+      submitEvidence.addEventListener("click",async()=>{submitEvidence.disabled=true;submitEvidence.textContent="Mengirim...";try{const response=await fetch(`/api/permission-camera/${encodeURIComponent(token)}/evidence`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image:evidenceData})}),data=await response.json();if(!response.ok)throw new Error(data.error||"Pengajuan gagal.");document.querySelector("#permissionStage").hidden=true;document.querySelector("#successStage").hidden=false;}catch(error){alert(error.message);submitEvidence.disabled=false;submitEvidence.textContent="Kirim pengajuan izin";}});
       window.addEventListener("pagehide",stopCamera);init().catch(error=>{status(error.message||"Halaman tidak dapat dimulai.",true);capture.disabled=true;});
     </script>
   </body>
