@@ -16,6 +16,7 @@ module.exports = {
         FACE_TIMEOUT_MS: "60000",
         NOTIFICATION_CONCURRENCY: "2",
         NOTIFICATION_QUEUE_LIMIT: "200",
+        LID_LOOKUP_TIMEOUT_MS: "1500",
       },
     },
   ],

@@ -526,15 +526,12 @@ const client = new Client({
     ],
     ignoreHTTPSErrors: true,
   },
-  webVersionCache: {
-    type: "remote",
-    remotePath:
-      "https://raw.githubusercontent.com/wppconnect-team/wa-version/refs/heads/main/html/2.3000.1031490220-alpha.html",
-  },
 });
 
 const pendingLokasi = {};
 const lidToPhoneCache = new Map();
+const pendingLidLookups = new Map();
+const failedLidLookups = new Map();
 
 client.on("qr", (qr) => {
   qrCodeData = qr;
@@ -556,8 +553,13 @@ client.on("disconnected", (reason) => {
 });
 
 client.on("message", async (msg) => {
+  const commandStartedAt = Date.now();
   const rawSender = msg.author || msg.from;
-  const sender = await resolveWhatsappUserId(client, rawSender, lidToPhoneCache);
+  const sender = await resolveWhatsappUserId(client, rawSender, lidToPhoneCache, {
+    pending: pendingLidLookups,
+    failures: failedLidLookups,
+    timeoutMs: Number(process.env.LID_LOOKUP_TIMEOUT_MS) || 1500,
+  });
   if (rawSender !== sender) {
     console.log(`[WhatsApp ID] ${rawSender} -> ${sender}`);
   }
@@ -578,12 +580,28 @@ client.on("message", async (msg) => {
   const role = roles[sender] || "user";
   const terdaftar = Boolean(kontak[sender]);
 
+  async function replyCommand(message) {
+    const lookupDuration = Date.now() - commandStartedAt;
+    const replyStartedAt = Date.now();
+    try {
+      return await msg.reply(message);
+    } finally {
+      if (body.startsWith("!")) {
+        console.log(
+          `[Command Performance] ${body.split(/\s+/)[0]} ${sender}: ` +
+            `lookup+handler=${lookupDuration}ms reply=${Date.now() - replyStartedAt}ms ` +
+            `total=${Date.now() - commandStartedAt}ms`
+        );
+      }
+    }
+  }
+
   if (body === "!bantuan") {
-    return msg.reply(teksBantuan(role, terdaftar));
+    return replyCommand(teksBantuan(role, terdaftar));
   }
 
   if (!terdaftar && !["admin", "wali_kelas"].includes(role) && body.startsWith("!")) {
-    return msg.reply(
+    return replyCommand(
       "❌ Nomor kamu belum terdaftar di absensi. Hubungi admin untuk didaftarkan."
     );
   }
@@ -599,26 +617,26 @@ client.on("message", async (msg) => {
     body.startsWith("!") &&
     !commandDiizinkan
   ) {
-    return msg.reply(
+    return replyCommand(
       "❌ Perintah tidak dikenali. Ketik *!bantuan* untuk melihat perintah yang tersedia."
     );
   }
 
   // Set lokasi
   if (body === "!setlokasi") {
-    if (role !== "admin") return msg.reply("❌ Hanya admin.");
+    if (role !== "admin") return replyCommand("❌ Hanya admin.");
     pendingLokasi[sender] = true;
-    return msg.reply("📍 Bagikan lokasi sekolah sekarang melalui fitur Lokasi WhatsApp.");
+    return replyCommand("📍 Bagikan lokasi sekolah sekarang melalui fitur Lokasi WhatsApp.");
   }
   if (msg.type === "location" && pendingLokasi[sender]) {
     const validation = validateLocationMessage(msg);
     if (!validation.valid) {
-      return msg.reply(locationRejectionMessage(validation.reason));
+      return replyCommand(locationRejectionMessage(validation.reason));
     }
 
     await saveJSON(LOKASI_PATH, validation.location);
     delete pendingLokasi[sender];
-    return msg.reply("✅ Lokasi sekolah disimpan.");
+    return replyCommand("✅ Lokasi sekolah disimpan.");
   }
 
   // Absen masuk/pulang
@@ -629,13 +647,13 @@ client.on("message", async (msg) => {
       getDailyStudentStatus(storage, loadIzin(), waktu.tanggal, sender),
       tipe
     );
-    if (attendanceError) return msg.reply(`❌ ${attendanceError}`);
+    if (attendanceError) return replyCommand(`❌ ${attendanceError}`);
     const { mulai: mulaiAbsen, selesai: selesaiAbsen } = getAttendanceWindow(
       jamResmi,
       tipe
     );
     if (!isWithinAttendanceWindow(waktu.jam, mulaiAbsen, selesaiAbsen)) {
-      return msg.reply(
+      return replyCommand(
         `❌ Absen ${tipe} hanya dapat dilakukan pukul ${String(
           mulaiAbsen || "00:00"
         ).slice(0, 5)}–${String(selesaiAbsen || "23:59").slice(0, 5)}.`
@@ -643,7 +661,7 @@ client.on("message", async (msg) => {
     }
 
     if (!fs.existsSync(`${FACE_REC}/${nomor}.jpg`)) {
-      return msg.reply(
+      return replyCommand(
         "⚠️ Foto referensi wajah belum ada. Hubungi admin atau wali kelas untuk mengunggah foto melalui dashboard."
       );
     }
@@ -651,7 +669,7 @@ client.on("message", async (msg) => {
     const token = createCameraSession(sender, tipe);
     const cameraUrl = `${publicBaseUrl()}/camera.html?token=${token}`;
 
-    return msg.reply(
+    return replyCommand(
       `Buka tautan berikut untuk absen *${tipe}*:\n${cameraUrl}\n\n` +
         "Ambil selfie langsung dari kamera dan izinkan akses lokasi. " +
         "Tautan hanya berlaku selama 2 menit dan hanya bisa digunakan sekali."
@@ -660,20 +678,20 @@ client.on("message", async (msg) => {
 
   // Pengajuan izin wajib dilengkapi foto bukti.
   if (body === "!izin") {
-    return msg.reply("⚠️ Format: *!izin alasan*\nContoh: *!izin sakit demam*");
+    return replyCommand("⚠️ Format: *!izin alasan*\nContoh: *!izin sakit demam*");
   }
 
   if (body.startsWith("!izin ")) {
     const alasan = msg.body.trim().slice(6).trim();
-    if (alasan.length < 3) return msg.reply("⚠️ Alasan izin terlalu singkat.");
+    if (alasan.length < 3) return replyCommand("⚠️ Alasan izin terlalu singkat.");
     const permissionError = validatePermission(
       getDailyStudentStatus(storage, loadIzin(), waktu.tanggal, sender)
     );
-    if (permissionError) return msg.reply(`❌ ${permissionError}`);
+    if (permissionError) return replyCommand(`❌ ${permissionError}`);
 
     const token = createPermissionSession(sender, alasan, waktu.tanggal);
     const permissionUrl = `${publicBaseUrl()}/permission.html?token=${token}`;
-    return msg.reply(
+    return replyCommand(
       `Buka tautan berikut untuk mengajukan izin:\n${permissionUrl}\n\n` +
         "Tahap 1: ambil selfie langsung dan izinkan GPS.\n" +
         "Tahap 2: unggah foto surat atau bukti izin secara terpisah.\n" +
