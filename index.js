@@ -9,7 +9,12 @@ const XLSX = require("xlsx");
 const express = require("express");
 const multer = require("multer");
 const crypto = require("crypto");
-const { DB_PATH, initJsonStore, saveJsonData } = require("./models/database");
+const {
+  DB_PATH,
+  closeDatabase,
+  initJsonStore,
+  saveJsonData,
+} = require("./models/database");
 const { resolveWhatsappUserId } = require("./lib/whatsapp-id");
 const { getWhatsappConfig } = require("./lib/whatsapp-config");
 const { qrToSvg } = require("./lib/qr-svg");
@@ -19,6 +24,7 @@ const {
 } = require("./lib/location-message");
 const { FaceWorkerPool } = require("./services/face-worker-pool");
 const { TaskQueue } = require("./lib/task-queue");
+const { JsonState } = require("./lib/json-state");
 const {
   getDailyStudentStatus,
   getArrivalStatus,
@@ -85,7 +91,7 @@ const JSON_STORES = {
   [USER_NAMES_PATH]: { path: USER_NAMES_PATH, fallback: {} },
 };
 
-let jsonCache = {};
+const jsonState = new JsonState({ write: saveJsonData });
 
 const facePool = new FaceWorkerPool({
   size: Number(process.env.FACE_WORKER_COUNT) || 2,
@@ -103,11 +109,15 @@ function cloneData(data) {
 }
 
 function loadJSON(path, fallback = {}) {
-  return cloneData(jsonCache[path] ?? fallback);
+  return jsonState.read(path, fallback);
 }
 async function saveJSON(path, data) {
-  jsonCache[path] = cloneData(data);
-  await saveJsonData(path, jsonCache[path]);
+  return jsonState.update(path, (draft) => {
+    draft[path] = cloneData(data);
+  });
+}
+async function updateJSON(paths, mutate) {
+  return jsonState.update(paths, mutate);
 }
 function getWaktu() {
   const now = moment();
@@ -306,9 +316,9 @@ function teksBantuan(role, terdaftar) {
 }
 
 async function saveDashboardUserName(id, name) {
-  const names = loadJSON(USER_NAMES_PATH, {});
-  names[id] = toTitleCase(String(name || "").trim());
-  await saveJSON(USER_NAMES_PATH, names);
+  await updateJSON(USER_NAMES_PATH, (draft) => {
+    draft[USER_NAMES_PATH][id] = toTitleCase(String(name || "").trim());
+  });
 }
 
 async function resolveDashboardUserName(id, role) {
@@ -361,16 +371,8 @@ function loadIzin() {
   return loadJSON(IZIN_PATH, {});
 }
 
-async function saveIzin(data) {
-  await saveJSON(IZIN_PATH, data);
-}
-
 function loadKelas() {
   return loadJSON(KELAS_PATH, {});
-}
-
-async function saveKelas(data) {
-  await saveJSON(KELAS_PATH, data);
 }
 
 function findKelasSiswa(dataKelas, siswaId) {
@@ -433,7 +435,6 @@ function getStudentNotificationRecipients(studentId, kelasSiswa) {
 }
 
 async function catatAbsensiKamera(userId, tipe, lokasi, foto) {
-  const storage = loadJSON(STORAGE_PATH);
   const kontak = loadJSON(KONTAK_PATH);
   const jamResmi = loadJSON(JAM_PATH, {
     masuk: "09:00:00",
@@ -445,24 +446,6 @@ async function catatAbsensiKamera(userId, tipe, lokasi, foto) {
     selesaiPulang: "23:59:59",
   });
   const waktu = getWaktu();
-  const attendanceError = validateAttendance(
-    getDailyStudentStatus(storage, loadIzin(), waktu.tanggal, userId),
-    tipe
-  );
-  if (attendanceError) throw new Error(attendanceError);
-
-  const { mulai: mulaiAbsen, selesai: selesaiAbsen } = getAttendanceWindow(
-    jamResmi,
-    tipe
-  );
-  if (!isWithinAttendanceWindow(waktu.jam, mulaiAbsen, selesaiAbsen)) {
-    throw new Error(
-      `Absen ${tipe} hanya dapat dilakukan pukul ${String(
-        mulaiAbsen || "00:00"
-      ).slice(0, 5)}-${String(selesaiAbsen || "23:59").slice(0, 5)}.`
-    );
-  }
-
   const lokasiKantor = loadJSON(LOKASI_PATH, {
     latitude: -6.7329,
     longitude: 108.5522,
@@ -472,16 +455,36 @@ async function catatAbsensiKamera(userId, tipe, lokasi, foto) {
   }
 
   const status = getAttendanceStatus(waktu.jam, jamResmi, tipe);
-  const dataHariIni = (storage[waktu.tanggal] = storage[waktu.tanggal] || {});
-  const userLog = (dataHariIni[userId] = dataHariIni[userId] || {});
-  userLog[tipe] = {
-    waktu: waktu.jam,
-    lokasi,
-    status,
-    foto,
-    nama: kontak[userId],
-  };
-  await saveJSON(STORAGE_PATH, storage);
+  await updateJSON([STORAGE_PATH, IZIN_PATH], (draft) => {
+    const storage = draft[STORAGE_PATH];
+    const attendanceError = validateAttendance(
+      getDailyStudentStatus(storage, draft[IZIN_PATH], waktu.tanggal, userId),
+      tipe
+    );
+    if (attendanceError) throw new Error(attendanceError);
+
+    const { mulai: mulaiAbsen, selesai: selesaiAbsen } = getAttendanceWindow(
+      jamResmi,
+      tipe
+    );
+    if (!isWithinAttendanceWindow(waktu.jam, mulaiAbsen, selesaiAbsen)) {
+      throw new Error(
+        `Absen ${tipe} hanya dapat dilakukan pukul ${String(
+          mulaiAbsen || "00:00"
+        ).slice(0, 5)}-${String(selesaiAbsen || "23:59").slice(0, 5)}.`
+      );
+    }
+
+    const dataHariIni = (storage[waktu.tanggal] = storage[waktu.tanggal] || {});
+    const userLog = (dataHariIni[userId] = dataHariIni[userId] || {});
+    userLog[tipe] = {
+      waktu: waktu.jam,
+      lokasi,
+      status,
+      foto,
+      nama: kontak[userId],
+    };
+  });
 
   const mediaMsg = new MessageMedia(
     foto.mimetype,
@@ -832,13 +835,6 @@ app.post("/api/permission-camera/:token/evidence", async (req, res) => {
 
   session.processing = true;
   try {
-    const storage = loadJSON(STORAGE_PATH);
-    const izinData = loadIzin();
-    const permissionError = validatePermission(
-      getDailyStudentStatus(storage, izinData, session.tanggal, session.userId)
-    );
-    if (permissionError) throw new Error(permissionError);
-
     const nomor = session.userId.replace("@c.us", "");
     ensureDir(IZIN_BUKTI_DIR);
     ensureDir(FACE_REC);
@@ -848,16 +844,28 @@ app.post("/api/permission-camera/:token/evidence", async (req, res) => {
     fs.writeFileSync(selfiePath, Buffer.from(session.selfie.data, "base64"));
 
     const kontak = loadJSON(KONTAK_PATH);
-    izinData[session.tanggal] = izinData[session.tanggal] || {};
-    izinData[session.tanggal][session.userId] = {
-      alasan: session.alasan,
-      nama: kontak[session.userId] || session.userId,
-      bukti: buktiPath,
-      selfie: selfiePath,
-      lokasi: session.lokasi,
-      terverifikasiWajah: true,
-    };
-    await saveIzin(izinData);
+    await updateJSON([STORAGE_PATH, IZIN_PATH], (draft) => {
+      const permissionError = validatePermission(
+        getDailyStudentStatus(
+          draft[STORAGE_PATH],
+          draft[IZIN_PATH],
+          session.tanggal,
+          session.userId
+        )
+      );
+      if (permissionError) throw new Error(permissionError);
+
+      const izinData = draft[IZIN_PATH];
+      izinData[session.tanggal] = izinData[session.tanggal] || {};
+      izinData[session.tanggal][session.userId] = {
+        alasan: session.alasan,
+        nama: kontak[session.userId] || session.userId,
+        bukti: buktiPath,
+        selfie: selfiePath,
+        lokasi: session.lokasi,
+        terverifikasiWajah: true,
+      };
+    });
     permissionSessions.delete(token);
 
     const kelasSiswa = findKelasSiswa(loadKelas(), session.userId);
@@ -1124,14 +1132,20 @@ app.post("/api/admins", requireWebAdmin, async (req, res) => {
   }
 
   const id = `${nomor}@c.us`;
-  const roles = loadRoles();
-  if (roles[id] === "admin") {
-    return res.status(409).json({ error: "Nomor tersebut sudah menjadi admin." });
+  try {
+    await updateJSON([ROLE_PATH, USER_NAMES_PATH], (draft) => {
+      if (draft[ROLE_PATH][id] === "admin") {
+        const error = new Error("Nomor tersebut sudah menjadi admin.");
+        error.code = "ALREADY_EXISTS";
+        throw error;
+      }
+      draft[ROLE_PATH][id] = "admin";
+      draft[USER_NAMES_PATH][id] = nama;
+    });
+  } catch (error) {
+    if (error.code === "ALREADY_EXISTS") return res.status(409).json({ error: error.message });
+    throw error;
   }
-
-  roles[id] = "admin";
-  await saveJSON(ROLE_PATH, roles);
-  await saveDashboardUserName(id, nama);
   res.status(201).json({ ok: true, nomor, nama, role: "admin" });
 });
 
@@ -1146,14 +1160,15 @@ app.delete("/api/admins/:number", requireWebAdmin, async (req, res) => {
     return res.status(400).json({ error: "Anda tidak dapat menghapus akun admin sendiri." });
   }
 
-  const roles = loadRoles();
-  if (roles[id] !== "admin") {
-    return res.status(404).json({ error: "Admin tidak ditemukan." });
-  }
-
-  delete roles[id];
+  let found = false;
+  await updateJSON(ROLE_PATH, (draft) => {
+    if (draft[ROLE_PATH][id] === "admin") {
+      found = true;
+      delete draft[ROLE_PATH][id];
+    }
+  });
+  if (!found) return res.status(404).json({ error: "Admin tidak ditemukan." });
   loginOtps.delete(id);
-  await saveJSON(ROLE_PATH, roles);
   res.json({ ok: true, nomor });
 });
 
@@ -1165,34 +1180,45 @@ app.post("/api/classes", requireWebAdmin, async (req, res) => {
     return res.status(400).json({ error: "Data kelas dan wali kelas belum valid." });
   }
 
-  const kelas = loadKelas();
-  const roles = loadRoles();
-  const waliSebelumnya = kelas[nama]?.waliKelas;
-  kelas[nama] = kelas[nama] || { siswa: {} };
-  kelas[nama].waliKelas = `${waliKelas}@c.us`;
-  kelas[nama].namaWali = namaWali;
   const waliId = `${waliKelas}@c.us`;
-  if (roles[waliId] !== "admin") roles[waliId] = "wali_kelas";
-  await saveDashboardUserName(waliId, namaWali);
-  removeUnusedWaliRole(waliSebelumnya, kelas, roles);
-  await saveKelas(kelas);
-  await saveJSON(ROLE_PATH, roles);
+  await updateJSON([KELAS_PATH, ROLE_PATH, USER_NAMES_PATH], (draft) => {
+    const kelas = draft[KELAS_PATH];
+    const roles = draft[ROLE_PATH];
+    const waliSebelumnya = kelas[nama]?.waliKelas;
+    kelas[nama] = kelas[nama] || { siswa: {} };
+    kelas[nama].waliKelas = waliId;
+    kelas[nama].namaWali = namaWali;
+    if (roles[waliId] !== "admin") roles[waliId] = "wali_kelas";
+    draft[USER_NAMES_PATH][waliId] = namaWali;
+    removeUnusedWaliRole(waliSebelumnya, kelas, roles);
+  });
   res.json({ ok: true });
 });
 
 app.delete("/api/classes/:name", requireWebAdmin, async (req, res) => {
   const nama = String(req.params.name || "").toUpperCase();
-  const kelas = loadKelas();
-  if (!kelas[nama]) return res.status(404).json({ error: "Kelas tidak ditemukan." });
-  if (Object.keys(kelas[nama].siswa || {}).length) {
-    return res.status(400).json({ error: "Pindahkan siswa sebelum menghapus kelas." });
+  try {
+    await updateJSON([KELAS_PATH, ROLE_PATH], (draft) => {
+      const kelas = draft[KELAS_PATH];
+      if (!kelas[nama]) {
+        const error = new Error("Kelas tidak ditemukan.");
+        error.code = "NOT_FOUND";
+        throw error;
+      }
+      if (Object.keys(kelas[nama].siswa || {}).length) {
+        const error = new Error("Pindahkan siswa sebelum menghapus kelas.");
+        error.code = "NOT_EMPTY";
+        throw error;
+      }
+      const waliKelas = kelas[nama].waliKelas;
+      delete kelas[nama];
+      removeUnusedWaliRole(waliKelas, kelas, draft[ROLE_PATH]);
+    });
+  } catch (error) {
+    if (error.code === "NOT_FOUND") return res.status(404).json({ error: error.message });
+    if (error.code === "NOT_EMPTY") return res.status(400).json({ error: error.message });
+    throw error;
   }
-  const waliKelas = kelas[nama].waliKelas;
-  delete kelas[nama];
-  const roles = loadRoles();
-  removeUnusedWaliRole(waliKelas, kelas, roles);
-  await saveKelas(kelas);
-  await saveJSON(ROLE_PATH, roles);
   res.json({ ok: true });
 });
 
@@ -1205,45 +1231,44 @@ app.post("/api/students", requireWebAdmin, async (req, res) => {
     return res.status(400).json({ error: "Nomor atau nama siswa belum valid." });
   }
 
-  const kontak = loadJSON(KONTAK_PATH);
-  const kelas = loadKelas();
   const siswaId = `${nomor}@c.us`;
-  if (namaKelas && !kelas[namaKelas]) {
+  if (namaKelas && !loadKelas()[namaKelas]) {
     return res.status(400).json({ error: "Kelas belum tersedia." });
   }
   if (namaKelas && !/^62\d{8,14}$/.test(orangTua)) {
     return res.status(400).json({ error: "Nomor orang tua belum valid." });
   }
 
-  kontak[siswaId] = nama;
-  for (const data of Object.values(kelas)) {
-    if (data.siswa) delete data.siswa[siswaId];
-  }
-  if (namaKelas) {
-    kelas[namaKelas].siswa = kelas[namaKelas].siswa || {};
-    kelas[namaKelas].siswa[siswaId] = {
-      nama,
-      orangTua: `${orangTua}@c.us`,
-    };
-  }
-  await saveJSON(KONTAK_PATH, kontak);
-  await saveKelas(kelas);
+  await updateJSON([KONTAK_PATH, KELAS_PATH], (draft) => {
+    const kontak = draft[KONTAK_PATH];
+    const kelas = draft[KELAS_PATH];
+    if (namaKelas && !kelas[namaKelas]) throw new Error("Kelas tidak lagi tersedia.");
+    kontak[siswaId] = nama;
+    for (const data of Object.values(kelas)) {
+      if (data.siswa) delete data.siswa[siswaId];
+    }
+    if (namaKelas) {
+      kelas[namaKelas].siswa = kelas[namaKelas].siswa || {};
+      kelas[namaKelas].siswa[siswaId] = { nama, orangTua: `${orangTua}@c.us` };
+    }
+  });
   res.json({ ok: true });
 });
 
 app.delete("/api/students/:number", requireWebAdmin, async (req, res) => {
   const nomor = normalizeNomor(req.params.number);
   const siswaId = `${nomor}@c.us`;
-  const kontak = loadJSON(KONTAK_PATH);
-  const kelas = loadKelas();
-  if (!kontak[siswaId]) return res.status(404).json({ error: "Siswa tidak ditemukan." });
-
-  delete kontak[siswaId];
-  for (const data of Object.values(kelas)) {
-    if (data.siswa) delete data.siswa[siswaId];
-  }
-  await saveJSON(KONTAK_PATH, kontak);
-  await saveKelas(kelas);
+  let foundStudent = false;
+  await updateJSON([KONTAK_PATH, KELAS_PATH], (draft) => {
+    const kontak = draft[KONTAK_PATH];
+    if (!kontak[siswaId]) return;
+    foundStudent = true;
+    delete kontak[siswaId];
+    for (const data of Object.values(draft[KELAS_PATH])) {
+      if (data.siswa) delete data.siswa[siswaId];
+    }
+  });
+  if (!foundStudent) return res.status(404).json({ error: "Siswa tidak ditemukan." });
   res.json({ ok: true });
 });
 
@@ -1314,16 +1339,31 @@ app.post("/api/permissions", requireWebAdmin, async (req, res) => {
   if (!kontak[siswaId] || !isValidDate(tanggal) || alasan.length < 3) {
     return res.status(400).json({ error: "Data izin belum lengkap atau tidak valid." });
   }
-  const izin = loadIzin();
-  const permissionError = validatePermission(
-    getDailyStudentStatus(loadJSON(STORAGE_PATH), izin, tanggal, siswaId)
-  );
-  if (permissionError) {
-    return res.status(409).json({ error: permissionError });
+  try {
+    await updateJSON([STORAGE_PATH, IZIN_PATH], (draft) => {
+      const permissionError = validatePermission(
+        getDailyStudentStatus(
+          draft[STORAGE_PATH],
+          draft[IZIN_PATH],
+          tanggal,
+          siswaId
+        )
+      );
+      if (permissionError) {
+        const error = new Error(permissionError);
+        error.code = "ATTENDANCE_CONFLICT";
+        throw error;
+      }
+      const izin = draft[IZIN_PATH];
+      izin[tanggal] = izin[tanggal] || {};
+      izin[tanggal][siswaId] = { nama: kontak[siswaId], alasan };
+    });
+  } catch (error) {
+    if (error.code === "ATTENDANCE_CONFLICT") {
+      return res.status(409).json({ error: error.message });
+    }
+    throw error;
   }
-  izin[tanggal] = izin[tanggal] || {};
-  izin[tanggal][siswaId] = { nama: kontak[siswaId], alasan };
-  await saveIzin(izin);
 
   const kelasSiswa = findKelasSiswa(loadKelas(), siswaId);
   if (kelasSiswa) {
@@ -1340,10 +1380,11 @@ app.post("/api/permissions", requireWebAdmin, async (req, res) => {
 });
 
 app.delete("/api/permissions/:date/:number", requireWebAdmin, async (req, res) => {
-  const izin = loadIzin();
   const siswaId = `${normalizeNomor(req.params.number)}@c.us`;
-  if (izin[req.params.date]) delete izin[req.params.date][siswaId];
-  await saveIzin(izin);
+  await updateJSON(IZIN_PATH, (draft) => {
+    const izin = draft[IZIN_PATH];
+    if (izin[req.params.date]) delete izin[req.params.date][siswaId];
+  });
   res.json({ ok: true });
 });
 
@@ -1493,7 +1534,7 @@ app.listen(PORT, () => {
 
 async function startBot() {
   try {
-    jsonCache = await initJsonStore(JSON_STORES);
+    jsonState.replace(await initJsonStore(JSON_STORES));
     await ensureDefaultRoles();
     console.log(`Database Sequelize siap: ${DB_PATH}`);
     await client.initialize();
@@ -1509,10 +1550,16 @@ async function shutdown(signal, exitCode = 0) {
   isShuttingDown = true;
   console.log(`Menutup aplikasi (${signal})...`);
   try {
+    await facePool.close();
     await client.destroy();
   } catch (error) {
-    console.error("Gagal menutup client WhatsApp:", error);
+    console.error("Gagal menutup layanan:", error);
   } finally {
+    try {
+      await closeDatabase();
+    } catch (error) {
+      console.error("Gagal menutup database:", error);
+    }
     process.exit(exitCode);
   }
 }

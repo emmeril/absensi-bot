@@ -42,10 +42,14 @@ class FaceWorkerPool {
   }
 
   async close() {
+    if (this.closing) return;
     this.closing = true;
     const error = this.#error("Worker ditutup", "POOL_CLOSED");
     for (const job of this.queue.splice(0)) job.reject(error);
-    for (const job of this.jobs.values()) job.reject(error);
+    for (const job of this.jobs.values()) {
+      clearTimeout(job.timer);
+      job.reject(error);
+    }
     this.jobs.clear();
     await Promise.all(this.workers.map(({ worker }) => worker.terminate()));
     this.workers = [];
