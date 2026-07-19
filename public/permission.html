@@ -7,53 +7,72 @@
     <title>Pengajuan Izin | Ruang Hadir</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
     <style>
-      :root { --navy: #17324d; --school: #3976a8; --ink: #172533; }
+      :root { --navy: #17324d; --school: #3976a8; --ink: #172533; --paper: rgba(255, 255, 255, .82); }
       [hidden] { display: none !important; }
-      body { min-height: 100vh; color: var(--ink); font-family: "Trebuchet MS", sans-serif; background: radial-gradient(circle at 8% 4%, #c7ebff 0, transparent 30%), linear-gradient(145deg, #f8f5ec, #e4edf1); }
-      .page-shell { min-height: 100vh; max-width: 1140px; padding-top: calc(1.25rem + env(safe-area-inset-top)); padding-bottom: calc(1.75rem + env(safe-area-inset-bottom)); }
+      body { min-height: 100vh; margin: 0; color: var(--ink); font-family: "Trebuchet MS", sans-serif; background: radial-gradient(circle at 8% 4%, #c7ebff 0, transparent 30%), linear-gradient(145deg, #f8f5ec, #e4edf1); }
+      .page-shell { min-height: 100vh; max-width: 1140px; padding-top: calc(1.5rem + env(safe-area-inset-top)); padding-bottom: calc(1.5rem + env(safe-area-inset-bottom)); }
+      .stage { width: 100%; }
+      .page-header { margin-bottom: clamp(1.75rem, 4vw, 3.5rem); }
       .brand { font-size: 1.25rem; font-weight: 900; letter-spacing: -.03em; }
       .step-badge { border: 1px solid rgba(23, 50, 77, .2); background: rgba(255, 255, 255, .6); font-size: .6875rem; font-weight: 900; letter-spacing: .12em; }
       .eyebrow { color: var(--school); font-size: .75rem; font-weight: 900; letter-spacing: .2em; }
       .hero-title { font-size: clamp(2.5rem, 7vw, 4.5rem); font-weight: 900; line-height: .95; letter-spacing: -.05em; }
-      .info-box { border-left: 4px solid var(--school); background: rgba(255, 255, 255, .7); font-size: .875rem; font-weight: 700; line-height: 1.25rem; }
-      .camera-frame { position: relative; width: 100%; max-width: 28rem; max-height: 68vh; aspect-ratio: 3 / 4; overflow: hidden; border-radius: 28px 28px 8px 28px; background: #071522; box-shadow: 0 1rem 3rem rgba(0, 0, 0, .3); }
+      .hero-copy { max-width: 30rem; }
+      .info-box { min-height: 3rem; border-left: 4px solid var(--school); border-radius: 4px 12px 12px 4px; background: rgba(23, 50, 77, .07); font-size: .875rem; font-weight: 700; line-height: 1.35rem; }
+      .camera-panel { width: 100%; max-width: 31rem; margin-inline: auto; padding: clamp(.75rem, 2vw, 1rem); border: 1px solid rgba(23, 50, 77, .14); border-radius: 32px 32px 12px 32px; background: var(--paper); box-shadow: 0 1.5rem 4rem rgba(23, 50, 77, .14); backdrop-filter: blur(12px); }
+      .camera-frame { position: relative; width: 100%; max-height: 62vh; aspect-ratio: 3 / 4; overflow: hidden; border-radius: 24px 24px 8px 24px; background: #071522; }
       .camera-media { width: 100%; height: 100%; object-fit: cover; }
       video.camera-media { transform: scaleX(-1); }
       .face-guide { pointer-events: none; position: absolute; inset: 12% 16%; border: 2px dashed rgba(224, 242, 254, .8); border-radius: 48%; box-shadow: 0 0 0 999px rgba(7, 21, 34, .25); }
       .btn-navy { --bs-btn-bg: var(--navy); --bs-btn-border-color: var(--navy); --bs-btn-hover-bg: #0e253a; --bs-btn-hover-border-color: #0e253a; --bs-btn-disabled-bg: var(--navy); --bs-btn-disabled-border-color: var(--navy); color: #fff; font-weight: 900; min-height: 3.25rem; }
       .btn-outline-navy { --bs-btn-color: var(--navy); --bs-btn-border-color: rgba(23, 50, 77, .3); --bs-btn-hover-bg: var(--navy); --bs-btn-hover-border-color: var(--navy); font-weight: 900; min-height: 3.25rem; background: rgba(255, 255, 255, .7); }
-      .evidence-card { border: 1px solid rgba(23, 50, 77, .2); border-radius: 8px 24px 24px 24px; background: rgba(255, 255, 255, .75); }
+      .evidence-card { width: 100%; max-width: 31rem; margin-inline: auto; border: 1px solid rgba(23, 50, 77, .14); border-radius: 12px 32px 32px 32px; background: var(--paper); box-shadow: 0 1.5rem 4rem rgba(23, 50, 77, .14); backdrop-filter: blur(12px); }
       .proof-image { width: 100%; max-height: 340px; object-fit: contain; background: #f1f5f9; }
       .success-card { width: min(100%, 36rem); border: 1px solid rgba(23, 50, 77, .18); border-radius: 8px 36px 36px 36px; background: rgba(255, 255, 255, .78); box-shadow: 0 1.5rem 4rem rgba(23, 50, 77, .14); }
       .success-icon { width: 5.5rem; height: 5.5rem; color: #fff; background: var(--navy); font-size: 3rem; font-weight: 900; box-shadow: 0 .75rem 2rem rgba(23, 50, 77, .25); }
-      @media (max-width: 991.98px) { .page-shell { max-width: 36rem; } .camera-frame { max-height: 58vh; } }
+      @media (max-width: 991.98px) { .page-shell { max-width: 38rem; } .page-header { margin-bottom: 1.5rem; } .hero-copy { text-align: center; margin-inline: auto; } .camera-frame { max-height: 56vh; } }
+      @media (max-width: 575.98px) { .page-shell { padding-inline: 1rem; } .camera-panel { border-radius: 24px 24px 8px 24px; } .camera-frame { max-height: 52vh; border-radius: 18px 18px 6px 18px; } .evidence-card { border-radius: 8px 24px 24px 24px; } .hero-title { font-size: clamp(2.35rem, 13vw, 3.25rem); } }
     </style>
   </head>
   <body>
-    <main class="container page-shell d-flex flex-column justify-content-lg-center gap-3 px-3 px-sm-4">
-      <div id="permissionStage">
-      <header class="d-flex align-items-center justify-content-between gap-3"><div class="brand">Ruang Hadir</div><div class="step-badge rounded-pill px-3 py-2 text-uppercase" id="step">Tahap 1 dari 2</div></header>
-      <div class="row align-items-lg-center g-4 g-lg-5 mt-0">
-      <section class="col-lg-5"><p class="eyebrow mb-3 d-none d-lg-block text-uppercase">Pengajuan izin</p><h1 class="hero-title" id="title">Verifikasi dirimu.</h1><p class="mt-3 text-secondary lh-lg" id="lead">Selfie harus diambil langsung dari kamera depan.</p><div class="info-box mt-3 px-3 py-2" id="reason">Memuat alasan izin...</div></section>
-      <div class="col-lg-7">
-      <section class="d-flex flex-column gap-3" id="selfieStage">
-        <div class="camera-frame mx-auto"><video class="camera-media" id="video" autoplay muted playsinline></video><canvas class="camera-media" id="canvas" style="display: none"></canvas><div class="face-guide" id="guide"></div></div>
-        <div class="info-box px-3 py-2" id="status">Memeriksa tautan izin...</div>
-        <div class="row g-2">
-          <div class="col-12"><button class="btn btn-navy w-100 shadow" id="capture" disabled>Ambil selfie</button></div>
-          <div class="col-6"><button class="btn btn-outline-navy w-100" id="retake" hidden>Foto ulang</button></div>
-          <div class="col-6"><button class="btn btn-navy w-100 shadow" id="verify" hidden>Verifikasi wajah</button></div>
+    <main class="container page-shell d-flex align-items-center px-3 px-sm-4">
+      <div class="stage" id="permissionStage">
+        <header class="page-header d-flex align-items-center justify-content-between gap-3">
+          <div class="brand">Ruang Hadir</div>
+          <div class="step-badge rounded-pill px-3 py-2 text-uppercase" id="step">Tahap 1 dari 2</div>
+        </header>
+        <div class="row align-items-center g-4 g-lg-5">
+          <section class="col-lg-5 hero-copy">
+            <p class="eyebrow mb-3 text-uppercase">Pengajuan izin</p>
+            <h1 class="hero-title" id="title">Verifikasi dirimu.</h1>
+            <p class="mt-3 mb-0 text-secondary lh-lg" id="lead">Selfie harus diambil langsung dari kamera depan.</p>
+            <div class="info-box d-flex align-items-center mt-3 px-3 py-2 text-start" id="reason">Memuat alasan izin...</div>
+          </section>
+          <div class="col-lg-7">
+            <section class="camera-panel d-flex flex-column gap-3" id="selfieStage">
+              <div class="camera-frame">
+                <video class="camera-media" id="video" autoplay muted playsinline></video>
+                <canvas class="camera-media" id="canvas" style="display: none"></canvas>
+                <div class="face-guide" id="guide"></div>
+              </div>
+              <div class="info-box d-flex align-items-center px-3 py-2" id="status">Memeriksa tautan izin...</div>
+              <div class="row g-2">
+                <div class="col-12"><button class="btn btn-navy w-100" id="capture" disabled>Ambil selfie</button></div>
+                <div class="col-6"><button class="btn btn-outline-navy w-100" id="retake" hidden>Foto ulang</button></div>
+                <div class="col-6"><button class="btn btn-navy w-100" id="verify" hidden>Verifikasi wajah</button></div>
+              </div>
+            </section>
+            <section class="evidence-card p-4 p-sm-5" id="evidenceStage" hidden>
+              <p class="eyebrow mb-2 text-uppercase">Tahap terakhir</p>
+              <h2 class="h3 fw-bold">Unggah bukti izin</h2>
+              <p class="mb-4 mt-2 text-secondary lh-lg">Ambil foto surat menggunakan kamera atau pilih foto bukti yang sudah tersimpan di galeri.</p>
+              <label class="btn btn-outline-navy d-flex align-items-center justify-content-center w-100" for="evidence">Pilih atau foto bukti</label>
+              <input class="visually-hidden" id="evidence" type="file" accept="image/jpeg,image/png" />
+              <img class="proof-image my-3 rounded-3" id="proof" alt="Pratinjau bukti izin" hidden />
+              <button class="btn btn-navy w-100" id="submitEvidence" disabled>Kirim pengajuan izin</button>
+            </section>
+          </div>
         </div>
-      </section>
-      <section class="evidence-card p-4 p-sm-5 shadow" id="evidenceStage" hidden>
-        <h2 class="h4 fw-black fw-bold">Unggah bukti izin</h2>
-        <p class="mb-4 mt-2 text-secondary lh-lg">Ambil foto surat menggunakan kamera atau pilih foto bukti yang sudah tersimpan di galeri.</p>
-        <label class="btn btn-outline-navy d-flex align-items-center justify-content-center w-100" for="evidence">Pilih atau foto bukti</label>
-        <input class="visually-hidden" id="evidence" type="file" accept="image/jpeg,image/png" />
-        <img class="proof-image my-3 rounded-3" id="proof" alt="Pratinjau bukti izin" hidden />
-        <button class="btn btn-navy w-100 shadow" id="submitEvidence" disabled>Kirim pengajuan izin</button>
-      </section>
-      </div></div>
       </div>
       <section class="success-card mx-auto p-4 p-sm-5 text-center" id="successStage" hidden>
         <div class="success-icon rounded-circle d-flex align-items-center justify-content-center mx-auto mb-4" aria-hidden="true">&#10003;</div>
@@ -63,7 +82,6 @@
         <p class="mb-0 text-secondary lh-lg">Pengajuan izin dan bukti sudah dicatat serta diteruskan kepada pihak terkait.</p>
         <p class="mt-4 mb-0 small text-secondary">Halaman ini sekarang boleh ditutup.</p>
       </section>
-      <!-- <p class="text-center text-xs leading-5 text-slate-500">Lokasi GPS hanya dicatat sebagai informasi pengajuan izin dan tidak harus berada di area sekolah.</p> -->
     </main>
     <script>
       const token = new URLSearchParams(location.search).get("token");
