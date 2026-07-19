@@ -1,6 +1,6 @@
 require("dotenv").config();
 
-const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
+const { Client, MessageMedia } = require("whatsapp-web.js");
 const fs = require("fs");
 const qrcode = require("qrcode-terminal");
 const moment = require("moment");
@@ -11,6 +11,7 @@ const multer = require("multer");
 const crypto = require("crypto");
 const { DB_PATH, initJsonStore, saveJsonData } = require("./models/database");
 const { resolveWhatsappUserId } = require("./lib/whatsapp-id");
+const { getWhatsappConfig } = require("./lib/whatsapp-config");
 const { qrToSvg } = require("./lib/qr-svg");
 const {
   validateLocationMessage,
@@ -503,30 +504,7 @@ async function catatAbsensiKamera(userId, tipe, lokasi, foto) {
   return { status, waktu: waktu.jam, tanggal: waktu.tanggal };
 }
 
-const client = new Client({
-  authStrategy: new LocalAuth(), // Simpan sesi login secara lokal
-  puppeteer: {
-    executablePath:
-      process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium",
-    headless: true,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-accelerated-2d-canvas",
-      "--no-first-run",
-      "--no-zygote",
-      "--disable-gpu",
-      "--disable-software-rasterizer",
-      "--disable-features=VizDisplayCompositor",
-      "--disable-background-timer-throttling",
-      "--disable-backgrounding-occluded-windows",
-      "--disable-renderer-backgrounding",
-      "--max-old-space-size=512",
-    ],
-    ignoreHTTPSErrors: true,
-  },
-});
+const client = new Client(getWhatsappConfig());
 
 const pendingLokasi = {};
 const lidToPhoneCache = new Map();
@@ -548,8 +526,14 @@ client.on("ready", () => {
 
 client.on("disconnected", (reason) => {
   console.log("❌ WhatsApp disconnected:", reason);
-  fs.rmSync(".wwebjs_auth", { recursive: true, force: true });
-  process.exit(); // atau restart otomatis
+  isReady = false;
+  qrCodeData = null;
+  void shutdown("WA_DISCONNECTED", 1);
+});
+
+client.on("auth_failure", (message) => {
+  isReady = false;
+  console.error("❌ Autentikasi WhatsApp gagal:", message);
 });
 
 client.on("message", async (msg) => {
@@ -1512,11 +1496,28 @@ async function startBot() {
     jsonCache = await initJsonStore(JSON_STORES);
     await ensureDefaultRoles();
     console.log(`Database Sequelize siap: ${DB_PATH}`);
-    client.initialize();
+    await client.initialize();
   } catch (error) {
     console.error("Gagal inisialisasi database:", error);
     process.exit(1);
   }
 }
+
+let isShuttingDown = false;
+async function shutdown(signal, exitCode = 0) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log(`Menutup aplikasi (${signal})...`);
+  try {
+    await client.destroy();
+  } catch (error) {
+    console.error("Gagal menutup client WhatsApp:", error);
+  } finally {
+    process.exit(exitCode);
+  }
+}
+
+process.once("SIGINT", () => shutdown("SIGINT"));
+process.once("SIGTERM", () => shutdown("SIGTERM"));
 
 startBot();

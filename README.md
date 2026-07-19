@@ -87,6 +87,16 @@ Variabel lingkungan opsional:
 | `DB_PATH` | `data/absensi.sqlite` | Lokasi database SQLite |
 | `PUPPETEER_EXECUTABLE_PATH` | `/usr/bin/chromium` | Lokasi executable Chromium/Chrome |
 | `PUBLIC_BASE_URL` | `http://localhost:3200` | Alamat publik HTTPS yang dibuka siswa untuk kamera absensi |
+| `WA_CLIENT_ID` | `absensi-bot` | ID sesi `LocalAuth`; hanya huruf, angka, `_`, dan `-` |
+| `WA_AUTH_DATA_PATH` | `.wwebjs_auth` | Direktori penyimpanan sesi WhatsApp |
+| `WA_AUTH_TIMEOUT_MS` | `60000` | Batas waktu autentikasi WhatsApp Web |
+| `WA_QR_MAX_RETRIES` | `0` | Batas pembaruan QR; `0` berarti tanpa batas |
+| `WA_TAKEOVER_ON_CONFLICT` | `false` | Ambil alih jika sesi browser lain terdeteksi |
+| `WA_TAKEOVER_TIMEOUT_MS` | `0` | Waktu tunggu sebelum mengambil alih sesi |
+| `WA_DEVICE_NAME` | `Ruang Hadir` | Nama perangkat tertaut yang tampil di WhatsApp |
+| `WA_BROWSER_NAME` | `Chrome` | Nama browser perangkat tertaut yang didukung library |
+| `WA_HEADLESS` | `true` | Jalankan Chromium tanpa jendela grafis |
+| `WA_WEB_VERSION` | kosong | Versi WhatsApp Web tertentu; sebaiknya biarkan kosong |
 | `FACE_WORKER_COUNT` | `2` | Jumlah worker verifikasi wajah |
 | `FACE_QUEUE_LIMIT` | `100` | Batas antrean verifikasi wajah |
 | `FACE_TIMEOUT_MS` | `60000` | Batas waktu verifikasi wajah dalam milidetik |
@@ -112,7 +122,7 @@ Pada proses pertama, pindai QR WhatsApp yang tampil di terminal atau buka:
 - Dashboard: `http://localhost:3200`
 - Status/QR WhatsApp: `http://localhost:3200/qr`
 
-Sesi WhatsApp disimpan di `.wwebjs_auth`, sehingga pemindaian QR biasanya hanya diperlukan sekali.
+Sesi WhatsApp disimpan di `.wwebjs_auth`, sehingga pemindaian QR biasanya hanya diperlukan sekali. Putusnya koneksi biasa tidak menghapus direktori sesi; hapus direktori tersebut secara manual hanya jika memang ingin logout dan menautkan ulang akun.
 
 Untuk produksi menggunakan PM2:
 
