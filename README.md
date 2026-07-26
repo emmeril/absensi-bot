@@ -100,6 +100,10 @@ Variabel lingkungan opsional:
 | `FACE_WORKER_COUNT` | `2` | Jumlah worker verifikasi wajah |
 | `FACE_QUEUE_LIMIT` | `100` | Batas antrean verifikasi wajah |
 | `FACE_TIMEOUT_MS` | `60000` | Batas waktu verifikasi wajah dalam milidetik |
+| `WA_SEND_MAX_RETRIES` | `3` | Jumlah percobaan ulang pengiriman WhatsApp setelah kegagalan |
+| `WA_SEND_RETRY_BASE_DELAY_MS` | `5000` | Jeda awal retry pengiriman WhatsApp dalam milidetik |
+| `WA_SEND_RETRY_MAX_DELAY_MS` | `60000` | Batas maksimum jeda retry pengiriman WhatsApp dalam milidetik |
+| `WA_SEND_RETRY_JITTER_RATIO` | `0.35` | Variasi acak jeda retry (`0` sampai `1`) untuk menghindari burst |
 | `NOTIFICATION_CONCURRENCY` | `2` | Jumlah notifikasi yang dikirim bersamaan |
 | `NOTIFICATION_QUEUE_LIMIT` | `200` | Batas antrean notifikasi |
 

@@ -25,6 +25,7 @@ const {
 const { FaceWorkerPool } = require("./services/face-worker-pool");
 const { TaskQueue } = require("./lib/task-queue");
 const { JsonState } = require("./lib/json-state");
+const { createWhatsappSender } = require("./lib/whatsapp-send");
 const {
   getDailyStudentStatus,
   getArrivalStatus,
@@ -101,6 +102,14 @@ const facePool = new FaceWorkerPool({
 const notificationQueue = new TaskQueue({
   concurrency: Number(process.env.NOTIFICATION_CONCURRENCY) || 2,
   maxQueue: Number(process.env.NOTIFICATION_QUEUE_LIMIT) || 200,
+});
+const sendWhatsappWithRetry = createWhatsappSender({
+  onRetry: ({ attempt, delayMs, error }) => {
+    console.warn(
+      `[WhatsApp Retry] Percobaan ulang ${attempt} dalam ${delayMs} ms:`,
+      error.message
+    );
+  },
 });
 const activeFaceJobs = new Set();
 
@@ -385,7 +394,7 @@ function findKelasSiswa(dataKelas, siswaId) {
 async function kirimPesanAman(id, pesan) {
   if (!id) return;
   try {
-    await client.sendMessage(id, pesan);
+    await sendWhatsappWithRetry(() => client.sendMessage(id, pesan));
   } catch (error) {
     console.error(`[Notifikasi ERROR] ${id}:`, error.message);
   }
@@ -394,7 +403,9 @@ async function kirimPesanAman(id, pesan) {
 async function kirimMediaAman(id, media, caption) {
   if (!id) return;
   try {
-    await client.sendMessage(id, media, { caption });
+    await sendWhatsappWithRetry(() =>
+      client.sendMessage(id, media, { caption })
+    );
   } catch (error) {
     console.error(`[Notifikasi Media ERROR] ${id}:`, error.message);
   }
@@ -571,7 +582,7 @@ client.on("message", async (msg) => {
     const lookupDuration = Date.now() - commandStartedAt;
     const replyStartedAt = Date.now();
     try {
-      return await msg.reply(message);
+      return await sendWhatsappWithRetry(() => msg.reply(message));
     } finally {
       if (body.startsWith("!")) {
         console.log(
@@ -994,9 +1005,11 @@ app.post("/api/auth/request-otp", async (req, res) => {
     attempts: 0,
   });
   try {
-    await client.sendMessage(
-      id,
-      `🔐 *Kode Login Ruang Hadir*\n\nKode OTP: *${code}*\nBerlaku selama 5 menit. Jangan berikan kode ini kepada siapa pun.`
+    await sendWhatsappWithRetry(() =>
+      client.sendMessage(
+        id,
+        `🔐 *Kode Login Ruang Hadir*\n\nKode OTP: *${code}*\nBerlaku selama 5 menit. Jangan berikan kode ini kepada siapa pun.`
+      )
     );
     res.json({ ok: true });
   } catch (error) {
