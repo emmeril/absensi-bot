@@ -15,7 +15,10 @@ const {
   initJsonStore,
   saveJsonData,
 } = require("./models/database");
-const { resolveWhatsappUserId } = require("./lib/whatsapp-id");
+const {
+  resolveWhatsappRecipientId,
+  resolveWhatsappUserId,
+} = require("./lib/whatsapp-id");
 const { getWhatsappConfig } = require("./lib/whatsapp-config");
 const { qrToSvg } = require("./lib/qr-svg");
 const {
@@ -25,7 +28,10 @@ const {
 const { FaceWorkerPool } = require("./services/face-worker-pool");
 const { TaskQueue } = require("./lib/task-queue");
 const { JsonState } = require("./lib/json-state");
-const { createWhatsappSender } = require("./lib/whatsapp-send");
+const {
+  createWhatsappSender,
+  isRetryableWhatsappError,
+} = require("./lib/whatsapp-send");
 const {
   getDailyStudentStatus,
   getArrivalStatus,
@@ -98,7 +104,7 @@ const JSON_STORES = {
 const jsonState = new JsonState({ write: saveJsonData });
 
 const facePool = new FaceWorkerPool({
-  size: Number(process.env.FACE_WORKER_COUNT) || 2,
+  size: Number(process.env.FACE_WORKER_COUNT) || 1,
   maxQueue: Number(process.env.FACE_QUEUE_LIMIT) || 100,
   timeoutMs: Number(process.env.FACE_TIMEOUT_MS) || 60000,
 });
@@ -107,6 +113,7 @@ const notificationQueue = new TaskQueue({
   maxQueue: Number(process.env.NOTIFICATION_QUEUE_LIMIT) || 200,
 });
 const sendWhatsappWithRetry = createWhatsappSender({
+  shouldRetry: isRetryableWhatsappError,
   onRetry: ({ attempt, delayMs, error }) => {
     console.warn(
       `[WhatsApp Retry] Percobaan ulang ${attempt} dalam ${delayMs} ms:`,
@@ -246,9 +253,20 @@ function antreVerifikasiWajah(userId, fotoBase64) {
 
   activeFaceJobs.add(userId);
   try {
+    const startedAt = Date.now();
     const queued = facePool.verify(userId.replace("@c.us", ""), fotoBase64);
     queued.promise = queued.promise
-      .then((result) => result.match === true)
+      .then((result) => {
+        const durationMs = Date.now() - startedAt;
+        const slowLogMs = Number(process.env.FACE_SLOW_LOG_MS) || 10000;
+        if (durationMs >= slowLogMs) {
+          console.log(
+            `[Face Performance SLOW] ${userId}: ${durationMs}ms ` +
+              `(posisi antrean ${queued.position})`
+          );
+        }
+        return result.match === true;
+      })
       .finally(() => activeFaceJobs.delete(userId));
     return queued;
   } catch (e) {
@@ -261,6 +279,18 @@ function antreNotifikasi(task, context) {
   notificationQueue.add(task).catch((error) => {
     console.error(`[Antrean Notifikasi ERROR] ${context}:`, error.message);
   });
+}
+
+function logVerificationFailure(context, userId, error) {
+  const expected =
+    error.code === "FACE_JOB_ACTIVE" ||
+    (error.code === "FACE_NOT_DETECTED" && /foto selfie/i.test(error.message)) ||
+    /^(?:Kamu berada di luar area sekolah|Wajah tidak (?:dikenali|ditemukan))/.test(
+      error.message
+    );
+  const label = expected ? "DITOLAK" : "ERROR";
+  if (expected) console.log(`[${context} ${label}] ${userId}:`, error.message);
+  else console.error(`[${context} ${label}] ${userId}:`, error.message);
 }
 
 function loadRoles() {
@@ -397,7 +427,17 @@ function findKelasSiswa(dataKelas, siswaId) {
 async function kirimPesanAman(id, pesan) {
   if (!id) return;
   try {
-    await sendWhatsappWithRetry(() => client.sendMessage(id, pesan));
+    const recipientId = await resolveWhatsappRecipientId(
+      client,
+      id,
+      lidToPhoneCache,
+      {
+        pending: pendingLidLookups,
+        failures: failedLidLookups,
+        timeoutMs: Number(process.env.WA_RECIPIENT_LOOKUP_TIMEOUT_MS) || 5000,
+      }
+    );
+    await sendWhatsappWithRetry(() => client.sendMessage(recipientId, pesan));
   } catch (error) {
     console.error(`[Notifikasi ERROR] ${id}:`, error.message);
   }
@@ -406,8 +446,18 @@ async function kirimPesanAman(id, pesan) {
 async function kirimMediaAman(id, media, caption) {
   if (!id) return;
   try {
+    const recipientId = await resolveWhatsappRecipientId(
+      client,
+      id,
+      lidToPhoneCache,
+      {
+        pending: pendingLidLookups,
+        failures: failedLidLookups,
+        timeoutMs: Number(process.env.WA_RECIPIENT_LOOKUP_TIMEOUT_MS) || 5000,
+      }
+    );
     await sendWhatsappWithRetry(() =>
-      client.sendMessage(id, media, { caption })
+      client.sendMessage(recipientId, media, { caption })
     );
   } catch (error) {
     console.error(`[Notifikasi Media ERROR] ${id}:`, error.message);
@@ -542,8 +592,10 @@ function cleanupRuntimeState() {
   for (const [token, session] of permissionSessions) {
     if (session.expiresAt <= now) permissionSessions.delete(token);
   }
-  for (const [id, expiresAt] of failedLidLookups) {
-    if (expiresAt <= now) failedLidLookups.delete(id);
+  for (const [id, failure] of failedLidLookups) {
+    const expiresAt =
+      typeof failure === "number" ? failure : Number(failure?.expiresAt);
+    if (expiresAt && expiresAt <= now) failedLidLookups.delete(id);
   }
   for (const [id, expiresAt] of pendingLokasi) {
     if (expiresAt <= now) pendingLokasi.delete(id);
@@ -587,7 +639,7 @@ client.on("message", async (msg) => {
   const sender = await resolveWhatsappUserId(client, rawSender, lidToPhoneCache, {
     pending: pendingLidLookups,
     failures: failedLidLookups,
-    timeoutMs: Number(process.env.LID_LOOKUP_TIMEOUT_MS) || 1500,
+    timeoutMs: Number(process.env.LID_LOOKUP_TIMEOUT_MS) || 4000,
   });
   if (rawSender !== sender) {
     console.log(`[WhatsApp ID] ${rawSender} -> ${sender}`);
@@ -861,7 +913,7 @@ app.post("/api/permission-camera/:token/verify", async (req, res) => {
     res.json({ ok: true, expiresAt: session.expiresAt });
   } catch (error) {
     permissionSessions.delete(req.params.token);
-    console.error(`[Verifikasi Izin ERROR] ${session.userId}:`, error.message);
+    logVerificationFailure("Verifikasi Izin", session.userId, error);
     res.status(400).json({ error: "Selfie gagal diverifikasi. Kirim perintah izin lagi." });
   }
 });
@@ -1008,7 +1060,7 @@ app.post("/api/attendance-camera/:token", async (req, res) => {
     );
     res.json({ ok: true, tipe: session.tipe, ...result });
   } catch (error) {
-    console.error(`[Kamera Absensi ERROR] ${session.userId}:`, error.message);
+    logVerificationFailure("Kamera Absensi", session.userId, error);
     res.status(400).json({ error: error.message || "Absensi gagal diproses." });
   }
 });

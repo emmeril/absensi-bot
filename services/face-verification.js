@@ -8,10 +8,18 @@ faceapi.env.monkeyPatch({ Canvas, Image, ImageData });
 
 const MODEL_PATH = process.env.FACE_MODEL_PATH || path.join(__dirname, "..", "models");
 const REFERENCE_PATH = path.join(__dirname, "..", "face_rec");
+const REFERENCE_CACHE_LIMIT = Math.max(
+  1,
+  Number(process.env.FACE_REFERENCE_CACHE_LIMIT) || 500
+);
+const TINY_INPUT_SIZE = Number(process.env.FACE_TINY_INPUT_SIZE) || 320;
+const TINY_SCORE_THRESHOLD = Number(process.env.FACE_TINY_SCORE_THRESHOLD) || 0.45;
+const referenceDescriptorCache = new Map();
 
 let modelError = null;
 let modelLoaded = false;
 const modelReady = Promise.all([
+  faceapi.nets.tinyFaceDetector.loadFromDisk(MODEL_PATH),
   faceapi.nets.ssdMobilenetv1.loadFromDisk(MODEL_PATH),
   faceapi.nets.faceRecognitionNet.loadFromDisk(MODEL_PATH),
   faceapi.nets.faceLandmark68Net.loadFromDisk(MODEL_PATH),
@@ -35,10 +43,22 @@ async function imageToCanvas(source) {
 }
 
 async function detectFaceDescriptor(input, label) {
-  const result = await faceapi
-    .detectSingleFace(input)
+  const tinyOptions = new faceapi.TinyFaceDetectorOptions({
+    inputSize: TINY_INPUT_SIZE,
+    scoreThreshold: TINY_SCORE_THRESHOLD,
+  });
+  let result = await faceapi
+    .detectSingleFace(input, tinyOptions)
     .withFaceLandmarks()
     .withFaceDescriptor();
+
+  // SSD is slower but helps preserve detection quality for difficult photos.
+  if (!result) {
+    result = await faceapi
+      .detectSingleFace(input)
+      .withFaceLandmarks()
+      .withFaceDescriptor();
+  }
 
   if (!result) {
     const error = new Error(`Wajah tidak ditemukan pada ${label}`);
@@ -47,6 +67,27 @@ async function detectFaceDescriptor(input, label) {
   }
 
   return result.descriptor;
+}
+
+async function referenceDescriptor(referenceFile) {
+  const stat = fs.statSync(referenceFile);
+  const cached = referenceDescriptorCache.get(referenceFile);
+  if (cached?.mtimeMs === stat.mtimeMs && cached?.size === stat.size) {
+    return cached.descriptor;
+  }
+
+  const referenceCanvas = await imageToCanvas(referenceFile);
+  const descriptor = await detectFaceDescriptor(referenceCanvas, "foto referensi");
+  referenceDescriptorCache.delete(referenceFile);
+  referenceDescriptorCache.set(referenceFile, {
+    descriptor,
+    mtimeMs: stat.mtimeMs,
+    size: stat.size,
+  });
+  while (referenceDescriptorCache.size > REFERENCE_CACHE_LIMIT) {
+    referenceDescriptorCache.delete(referenceDescriptorCache.keys().next().value);
+  }
+  return descriptor;
 }
 
 async function verifyFace(id, photo) {
@@ -64,15 +105,14 @@ async function verifyFace(id, photo) {
     throw error;
   }
 
-  const referenceCanvas = await imageToCanvas(referenceFile);
   const selfieBuffer = Buffer.from(String(photo).split(",").pop(), "base64");
   const selfieCanvas = await imageToCanvas(selfieBuffer);
-  const referenceDescriptor = await detectFaceDescriptor(
-    referenceCanvas,
-    "foto referensi"
-  );
+  const referenceFaceDescriptor = await referenceDescriptor(referenceFile);
   const selfieDescriptor = await detectFaceDescriptor(selfieCanvas, "foto selfie");
-  const distance = faceapi.euclideanDistance(referenceDescriptor, selfieDescriptor);
+  const distance = faceapi.euclideanDistance(
+    referenceFaceDescriptor,
+    selfieDescriptor
+  );
 
   return { match: distance < 0.45, distance };
 }

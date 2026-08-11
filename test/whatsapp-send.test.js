@@ -1,6 +1,10 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { createWhatsappSender, retryDelayMs } = require("../lib/whatsapp-send");
+const {
+  createWhatsappSender,
+  isRetryableWhatsappError,
+  retryDelayMs,
+} = require("../lib/whatsapp-send");
 
 test("retry delay memakai exponential backoff dan batas maksimum", () => {
   assert.equal(
@@ -56,4 +60,25 @@ test("error terakhir diteruskan setelah retry habis", async () => {
   await assert.rejects(send(async () => { throw new Error("gagal"); }), {
     message: "gagal",
   });
+});
+
+test("error recipient permanen tidak diulang", async () => {
+  let attempts = 0;
+  const send = createWhatsappSender({
+    maxRetries: 3,
+    baseDelayMs: 10,
+    maxDelayMs: 100,
+    jitterRatio: 0,
+    sleep: async () => {},
+    shouldRetry: isRetryableWhatsappError,
+  });
+
+  await assert.rejects(
+    send(async () => {
+      attempts += 1;
+      throw new Error("No LID for user");
+    }),
+    /No LID for user/
+  );
+  assert.equal(attempts, 1);
 });

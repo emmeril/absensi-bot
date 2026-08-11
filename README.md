@@ -97,15 +97,21 @@ Variabel lingkungan opsional:
 | `WA_BROWSER_NAME` | `Chrome` | Nama browser perangkat tertaut yang didukung library |
 | `WA_HEADLESS` | `true` | Jalankan Chromium tanpa jendela grafis |
 | `WA_WEB_VERSION` | kosong | Versi WhatsApp Web tertentu; sebaiknya biarkan kosong |
-| `FACE_WORKER_COUNT` | `2` | Jumlah worker verifikasi wajah |
+| `FACE_WORKER_COUNT` | `1` | Jumlah worker verifikasi wajah; tambah hanya jika RAM dan CPU mencukupi |
 | `FACE_QUEUE_LIMIT` | `100` | Batas antrean verifikasi wajah |
 | `FACE_TIMEOUT_MS` | `60000` | Batas waktu verifikasi wajah dalam milidetik |
+| `FACE_SLOW_LOG_MS` | `10000` | Catat verifikasi yang melampaui durasi ini sebagai log performa |
+| `FACE_REFERENCE_CACHE_LIMIT` | `500` | Jumlah descriptor foto referensi yang disimpan per worker |
+| `FACE_TINY_INPUT_SIZE` | `320` | Resolusi detektor wajah cepat; kelipatan 32 antara 128–608 |
+| `FACE_TINY_SCORE_THRESHOLD` | `0.45` | Ambang keyakinan detektor wajah cepat |
 | `WA_SEND_MAX_RETRIES` | `3` | Jumlah percobaan ulang pengiriman WhatsApp setelah kegagalan |
 | `WA_SEND_RETRY_BASE_DELAY_MS` | `5000` | Jeda awal retry pengiriman WhatsApp dalam milidetik |
 | `WA_SEND_RETRY_MAX_DELAY_MS` | `60000` | Batas maksimum jeda retry pengiriman WhatsApp dalam milidetik |
 | `WA_SEND_RETRY_JITTER_RATIO` | `0.35` | Variasi acak jeda retry (`0` sampai `1`) untuk menghindari burst |
 | `NOTIFICATION_CONCURRENCY` | `2` | Jumlah notifikasi yang dikirim bersamaan |
 | `NOTIFICATION_QUEUE_LIMIT` | `200` | Batas antrean notifikasi |
+| `LID_LOOKUP_TIMEOUT_MS` | `4000` | Batas pencarian nomor telepon dari ID LID pesan masuk |
+| `WA_RECIPIENT_LOOKUP_TIMEOUT_MS` | `5000` | Batas pencarian ID aktual untuk penerima pesan keluar |
 
 Nilai tersebut dapat disimpan di `.env`. Alternatifnya, atur langsung melalui PowerShell:
 
