@@ -2,16 +2,23 @@ const path = require("path");
 const { Worker } = require("worker_threads");
 
 class FaceWorkerPool {
-  constructor({ size = 2, maxQueue = 100, timeoutMs = 60000 } = {}) {
+  constructor({
+    size = 2,
+    maxQueue = 100,
+    timeoutMs = 60000,
+    workerFactory,
+  } = {}) {
     this.size = Math.max(1, size);
     this.maxQueue = Math.max(1, maxQueue);
     this.timeoutMs = Math.max(1000, timeoutMs);
     this.workerFile = path.join(__dirname, "..", "workers", "face-worker.js");
+    this.workerFactory = workerFactory || (() => new Worker(this.workerFile));
     this.workers = [];
     this.queue = [];
     this.jobs = new Map();
     this.nextJobId = 1;
     this.closing = false;
+    this.terminations = new Set();
 
     for (let index = 0; index < this.size; index += 1) this.#spawnWorker();
   }
@@ -51,19 +58,36 @@ class FaceWorkerPool {
       job.reject(error);
     }
     this.jobs.clear();
-    await Promise.all(this.workers.map(({ worker }) => worker.terminate()));
-    this.workers = [];
+    const workers = this.workers.splice(0);
+    await Promise.all([
+      ...workers.map((state) => {
+        state.stopping = true;
+        const { worker } = state;
+        return worker.terminate().catch(() => {});
+      }),
+      ...this.terminations,
+    ]);
   }
 
   #spawnWorker() {
     if (this.closing) return;
-    const state = { worker: new Worker(this.workerFile), busy: false, jobId: null };
+    const state = {
+      worker: this.workerFactory(),
+      busy: false,
+      jobId: null,
+      stopping: false,
+    };
     this.workers.push(state);
 
     state.worker.on("message", (message) => this.#finish(state, message));
     state.worker.on("error", (error) => this.#workerFailed(state, error));
     state.worker.on("exit", (code) => {
-      if (!this.closing && code !== 0) this.#workerFailed(state, this.#error(`Face worker berhenti (${code})`, "WORKER_EXIT"));
+      if (!state.stopping && !this.closing && code !== 0) {
+        this.#workerFailed(
+          state,
+          this.#error(`Face worker berhenti (${code})`, "WORKER_EXIT")
+        );
+      }
     });
   }
 
@@ -75,7 +99,6 @@ class FaceWorkerPool {
       state.jobId = job.jobId;
       job.timer = setTimeout(() => {
         this.#workerFailed(state, this.#error("Verifikasi wajah melebihi batas waktu", "FACE_TIMEOUT"));
-        state.worker.terminate().catch(() => {});
       }, this.timeoutMs);
       this.jobs.set(job.jobId, job);
       state.worker.postMessage({ jobId: job.jobId, userId: job.userId, photo: job.photo });
@@ -97,7 +120,8 @@ class FaceWorkerPool {
   }
 
   #workerFailed(state, error) {
-    if (!this.workers.includes(state)) return;
+    if (!this.workers.includes(state) || state.stopping) return;
+    state.stopping = true;
     const job = this.jobs.get(state.jobId);
     if (job) {
       clearTimeout(job.timer);
@@ -105,8 +129,18 @@ class FaceWorkerPool {
       job.reject(error);
     }
     this.workers = this.workers.filter((item) => item !== state);
-    if (!this.closing) this.#spawnWorker();
     this.#drain();
+
+    // Wait for the old worker to release its model/native allocations before
+    // starting a replacement. This avoids briefly keeping two model copies.
+    const termination = Promise.resolve(state.worker.terminate())
+      .catch(() => {})
+      .finally(() => {
+        this.terminations.delete(termination);
+        if (!this.closing) this.#spawnWorker();
+        this.#drain();
+      });
+    this.terminations.add(termination);
   }
 
   #error(message, code) {

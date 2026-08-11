@@ -7,15 +7,17 @@ module.exports = {
       exec_mode: "fork",
       autorestart: true,
       restart_delay: 3000,
-      max_memory_restart: "1G",
+      // Chromium plus face verification uses native memory outside V8's heap.
+      // Keep a safety restart threshold without restarting during normal load.
+      max_memory_restart: "1536M",
       node_args: "--max-old-space-size=768",
       env: {
         NODE_ENV: "production",
-        FACE_WORKER_COUNT: "2",
+        FACE_WORKER_COUNT: "1",
         FACE_QUEUE_LIMIT: "100",
         FACE_TIMEOUT_MS: "60000",
         NOTIFICATION_CONCURRENCY: "2",
-        NOTIFICATION_QUEUE_LIMIT: "200",
+        NOTIFICATION_QUEUE_LIMIT: "50",
         WA_SEND_MAX_RETRIES: "3",
         WA_SEND_RETRY_BASE_DELAY_MS: "5000",
         WA_SEND_RETRY_MAX_DELAY_MS: "60000",

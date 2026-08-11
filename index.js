@@ -37,6 +37,9 @@ const app = express();
 const PORT = 3200;
 const CAMERA_SESSION_TTL_MS = 2 * 60 * 1000;
 const PERMISSION_SESSION_TTL_MS = 5 * 60 * 1000;
+const LOCATION_REQUEST_TTL_MS = 5 * 60 * 1000;
+const STATE_CLEANUP_INTERVAL_MS = 60 * 1000;
+const LID_CACHE_MAX_ENTRIES = 5000;
 const ATTENDANCE_RADIUS_METERS = 100;
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -520,10 +523,38 @@ async function catatAbsensiKamera(userId, tipe, lokasi, foto) {
 
 const client = new Client(getWhatsappConfig());
 
-const pendingLokasi = {};
+const pendingLokasi = new Map();
 const lidToPhoneCache = new Map();
 const pendingLidLookups = new Map();
 const failedLidLookups = new Map();
+
+function cleanupRuntimeState() {
+  const now = Date.now();
+  for (const [token, session] of loginOtps) {
+    if (session.expiresAt <= now) loginOtps.delete(token);
+  }
+  for (const [token, session] of webSessions) {
+    if (session.expiresAt <= now) webSessions.delete(token);
+  }
+  for (const [token, session] of cameraSessions) {
+    if (session.expiresAt <= now) cameraSessions.delete(token);
+  }
+  for (const [token, session] of permissionSessions) {
+    if (session.expiresAt <= now) permissionSessions.delete(token);
+  }
+  for (const [id, expiresAt] of failedLidLookups) {
+    if (expiresAt <= now) failedLidLookups.delete(id);
+  }
+  for (const [id, expiresAt] of pendingLokasi) {
+    if (expiresAt <= now) pendingLokasi.delete(id);
+  }
+  while (lidToPhoneCache.size > LID_CACHE_MAX_ENTRIES) {
+    lidToPhoneCache.delete(lidToPhoneCache.keys().next().value);
+  }
+}
+
+const runtimeStateCleanup = setInterval(cleanupRuntimeState, STATE_CLEANUP_INTERVAL_MS);
+runtimeStateCleanup.unref();
 
 client.on("qr", (qr) => {
   qrCodeData = qr;
@@ -623,17 +654,17 @@ client.on("message", async (msg) => {
   // Set lokasi
   if (body === "!setlokasi") {
     if (role !== "admin") return replyCommand("❌ Hanya admin.");
-    pendingLokasi[sender] = true;
+    pendingLokasi.set(sender, Date.now() + LOCATION_REQUEST_TTL_MS);
     return replyCommand("📍 Bagikan lokasi sekolah sekarang melalui fitur Lokasi WhatsApp.");
   }
-  if (msg.type === "location" && pendingLokasi[sender]) {
+  if (msg.type === "location" && pendingLokasi.get(sender) > Date.now()) {
     const validation = validateLocationMessage(msg);
     if (!validation.valid) {
       return replyCommand(locationRejectionMessage(validation.reason));
     }
 
     await saveJSON(LOKASI_PATH, validation.location);
-    delete pendingLokasi[sender];
+    pendingLokasi.delete(sender);
     return replyCommand("✅ Lokasi sekolah disimpan.");
   }
 
@@ -1568,6 +1599,7 @@ async function shutdown(signal, exitCode = 0) {
   } catch (error) {
     console.error("Gagal menutup layanan:", error);
   } finally {
+    clearInterval(runtimeStateCleanup);
     try {
       await closeDatabase();
     } catch (error) {
