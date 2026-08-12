@@ -84,6 +84,7 @@ Variabel lingkungan opsional:
 
 | Variabel | Nilai awal | Keterangan |
 | --- | ---: | --- |
+| `TZ` | `Asia/Jakarta` | Zona waktu untuk tanggal, jam absensi, dan proses aplikasi |
 | `DB_PATH` | `data/absensi.sqlite` | Lokasi database SQLite |
 | `PUPPETEER_EXECUTABLE_PATH` | `/usr/bin/chromium` | Lokasi executable Chromium/Chrome |
 | `PUBLIC_BASE_URL` | `http://localhost:3200` | Alamat publik HTTPS yang dibuka siswa untuk kamera absensi |

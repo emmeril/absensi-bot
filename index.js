@@ -1,4 +1,5 @@
 require("dotenv").config();
+process.env.TZ = process.env.TZ || "Asia/Jakarta";
 
 const { Client, MessageMedia } = require("whatsapp-web.js");
 const fs = require("fs");

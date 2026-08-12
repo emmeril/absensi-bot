@@ -14,6 +14,7 @@ module.exports = {
       max_memory_restart: "1536M",
       node_args: "--max-old-space-size=768",
       env: {
+        TZ: "Asia/Jakarta",
         NODE_ENV: "production",
         FACE_WORKER_COUNT: "1",
         FACE_QUEUE_LIMIT: "100",
