@@ -25,6 +25,7 @@ module.exports = {
         FACE_TINY_SCORE_THRESHOLD: "0.45",
         NOTIFICATION_CONCURRENCY: "2",
         NOTIFICATION_QUEUE_LIMIT: "50",
+        WA_SEND_SAFETY_MODE: "automatic",
         WA_SEND_MAX_RETRIES: "3",
         WA_SEND_RETRY_BASE_DELAY_MS: "5000",
         WA_SEND_RETRY_MAX_DELAY_MS: "60000",

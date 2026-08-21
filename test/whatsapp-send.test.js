@@ -82,3 +82,110 @@ test("error recipient permanen tidak diulang", async () => {
   );
   assert.equal(attempts, 1);
 });
+
+test("pengiriman diberi jeda otomatis dan jeda tambahan untuk penerima yang sama", async () => {
+  let currentTime = 0;
+  const delays = [];
+  const send = createWhatsappSender({
+    safetyMode: "automatic",
+    minIntervalMs: 100,
+    maxIntervalMs: 100,
+    recipientIntervalMs: 250,
+    maxPerMinute: 0,
+    maxRetries: 0,
+    now: () => currentTime,
+    random: () => 0,
+    sleep: async (delay) => {
+      delays.push(delay);
+      currentTime += delay;
+    },
+  });
+
+  await send(async () => "pertama", { recipientId: "6281@c.us" });
+  await send(async () => "kedua", { recipientId: "6281@c.us" });
+
+  assert.deepEqual(delays, [100, 250]);
+});
+
+test("kegagalan berulang memicu cooldown otomatis", async () => {
+  let currentTime = 0;
+  const delays = [];
+  let attempts = 0;
+  const send = createWhatsappSender({
+    safetyMode: "automatic",
+    minIntervalMs: 0,
+    maxIntervalMs: 0,
+    recipientIntervalMs: 0,
+    maxPerMinute: 0,
+    maxRetries: 0,
+    failureThreshold: 2,
+    failureCooldownMs: 500,
+    now: () => currentTime,
+    sleep: async (delay) => {
+      delays.push(delay);
+      currentTime += delay;
+    },
+  });
+
+  await assert.rejects(send(async () => {
+    attempts += 1;
+    throw new Error("gagal pertama");
+  }));
+  await assert.rejects(send(async () => {
+    attempts += 1;
+    throw new Error("gagal kedua");
+  }));
+  await send(async () => "pulih");
+
+  assert.equal(attempts, 2);
+  assert.deepEqual(delays, [500]);
+});
+
+test("batas per menit menahan pengiriman berikutnya", async () => {
+  let currentTime = 0;
+  const delays = [];
+  const send = createWhatsappSender({
+    safetyMode: "automatic",
+    minIntervalMs: 0,
+    maxIntervalMs: 0,
+    recipientIntervalMs: 0,
+    maxPerMinute: 2,
+    maxRetries: 0,
+    now: () => currentTime,
+    sleep: async (delay) => {
+      delays.push(delay);
+      currentTime += delay;
+    },
+  });
+
+  await send(async () => "satu");
+  await send(async () => "dua");
+  await send(async () => "tiga");
+
+  assert.deepEqual(delays, [60_000]);
+});
+
+test("pesan prioritas didahulukan dari notifikasi yang masih mengantre", async () => {
+  let releaseFirst;
+  const firstGate = new Promise((resolve) => {
+    releaseFirst = resolve;
+  });
+  const order = [];
+  const send = createWhatsappSender({
+    safetyMode: "off",
+    maxRetries: 0,
+  });
+
+  const first = send(async () => {
+    order.push("pertama");
+    await firstGate;
+  });
+  const normal = send(async () => order.push("normal"));
+  const priority = send(async () => order.push("prioritas"), {
+    priority: "high",
+  });
+  releaseFirst();
+  await Promise.all([first, normal, priority]);
+
+  assert.deepEqual(order, ["pertama", "prioritas", "normal"]);
+});

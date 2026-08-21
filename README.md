@@ -111,6 +111,14 @@ Variabel lingkungan opsional:
 | `WA_SEND_RETRY_JITTER_RATIO` | `0.35` | Variasi acak jeda retry (`0` sampai `1`) untuk menghindari burst |
 | `NOTIFICATION_CONCURRENCY` | `2` | Jumlah notifikasi yang dikirim bersamaan |
 | `NOTIFICATION_QUEUE_LIMIT` | `200` | Batas antrean notifikasi |
+| `WA_SEND_SAFETY_MODE` | `automatic` | Proteksi ritme kirim otomatis: `automatic`, `conservative`, atau `off`; mode otomatis direkomendasikan |
+| `WA_SEND_MIN_INTERVAL_MS` | `1000` | Jeda minimum antar pengiriman |
+| `WA_SEND_MAX_INTERVAL_MS` | `2200` | Jeda maksimum antar pengiriman; jeda acak membantu mencegah burst |
+| `WA_SEND_RECIPIENT_INTERVAL_MS` | `3500` | Jeda minimum ke penerima yang sama |
+| `WA_SEND_MAX_PER_MINUTE` | `30` | Batas pengiriman per menit; `0` menonaktifkan batas |
+| `WA_SEND_QUEUE_LIMIT` | `500` | Batas antrean pengiriman WhatsApp |
+| `WA_SEND_FAILURE_THRESHOLD` | `5` | Kegagalan berulang sebelum jeda pemulihan otomatis |
+| `WA_SEND_FAILURE_COOLDOWN_MS` | `120000` | Durasi jeda pemulihan setelah kegagalan berulang |
 | `LID_LOOKUP_TIMEOUT_MS` | `4000` | Batas pencarian nomor telepon dari ID LID pesan masuk |
 | `WA_RECIPIENT_LOOKUP_TIMEOUT_MS` | `5000` | Batas pencarian ID aktual untuk penerima pesan keluar |
 
