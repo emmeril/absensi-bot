@@ -6,9 +6,9 @@ test("JsonState mencegah pembaruan bersamaan saling menimpa", async () => {
   const writes = [];
   const state = new JsonState({
     initial: { data: { count: 0, users: {} } },
-    write: async (key, value) => {
+    writeBatch: async (values) => {
       await new Promise((resolve) => setTimeout(resolve, 5));
-      writes.push([key, structuredClone(value)]);
+      writes.push(structuredClone(values));
     },
   });
 
@@ -32,7 +32,7 @@ test("JsonState mencegah pembaruan bersamaan saling menimpa", async () => {
 });
 
 test("JsonState tetap dapat dipakai setelah mutasi gagal", async () => {
-  const state = new JsonState({ initial: { data: { value: 1 } }, write: async () => {} });
+  const state = new JsonState({ initial: { data: { value: 1 } }, writeBatch: async () => {} });
 
   await assert.rejects(
     state.update("data", () => {

@@ -66,8 +66,12 @@ async function initJsonStore(stores) {
   }, {});
 }
 
-async function saveJsonData(key, value) {
-  await JsonStore.upsert({ key, value });
+async function saveJsonBatch(values) {
+  await sequelize.transaction(async (transaction) => {
+    for (const [key, value] of Object.entries(values)) {
+      await JsonStore.upsert({ key, value }, { transaction });
+    }
+  });
 }
 
 async function closeDatabase() {
@@ -79,6 +83,6 @@ module.exports = {
   JsonStore,
   closeDatabase,
   initJsonStore,
-  saveJsonData,
+  saveJsonBatch,
   sequelize,
 };

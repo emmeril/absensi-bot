@@ -3,7 +3,6 @@ process.env.TZ = process.env.TZ || "Asia/Jakarta";
 
 const { Client, MessageMedia } = require("whatsapp-web.js");
 const fs = require("fs");
-const qrcode = require("qrcode-terminal");
 const moment = require("moment");
 const haversine = require("haversine-distance");
 const XLSX = require("xlsx");
@@ -14,7 +13,7 @@ const {
   DB_PATH,
   closeDatabase,
   initJsonStore,
-  saveJsonData,
+  saveJsonBatch,
 } = require("./models/database");
 const {
   resolveWhatsappRecipientId,
@@ -29,6 +28,7 @@ const {
 const { FaceWorkerPool } = require("./services/face-worker-pool");
 const { TaskQueue } = require("./lib/task-queue");
 const { JsonState } = require("./lib/json-state");
+const { safeAsyncListener } = require("./lib/safe-async-listener");
 const {
   createWhatsappSender,
   isRetryableWhatsappError,
@@ -53,6 +53,7 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 },
 });
 const loginOtps = new Map();
+const otpCooldowns = new Map();
 const webSessions = new Map();
 const cameraSessions = new Map();
 const permissionSessions = new Map();
@@ -65,7 +66,6 @@ const KONTAK_PATH = "./kontak.json";
 const ROLE_PATH = "./roles.json";
 const LOKASI_PATH = "./lokasi.json";
 const JAM_PATH = "./jam.json";
-const EXPORTS_DIR = "./exports";
 const FACE_DB = "./face_db";
 const FACE_REC = "./face_rec";
 const IZIN_BUKTI_DIR = "./izin_bukti";
@@ -73,14 +73,10 @@ const IZIN_PATH = "./izin.json";
 const KELAS_PATH = "./kelas.json";
 const USER_NAMES_PATH = "./user_names.json";
 
-const DEFAULT_ROLES = {
-  "6287728972090@c.us": "admin",
-};
-
 const JSON_STORES = {
   [STORAGE_PATH]: { path: STORAGE_PATH, fallback: {} },
   [KONTAK_PATH]: { path: KONTAK_PATH, fallback: {} },
-  [ROLE_PATH]: { path: ROLE_PATH, fallback: DEFAULT_ROLES },
+  [ROLE_PATH]: { path: ROLE_PATH, fallback: {} },
   [LOKASI_PATH]: {
     path: LOKASI_PATH,
     fallback: { latitude: -6.7329, longitude: 108.5522 },
@@ -102,7 +98,7 @@ const JSON_STORES = {
   [USER_NAMES_PATH]: { path: USER_NAMES_PATH, fallback: {} },
 };
 
-const jsonState = new JsonState({ write: saveJsonData });
+const jsonState = new JsonState({ writeBatch: saveJsonBatch });
 
 const facePool = new FaceWorkerPool({
   size: Number(process.env.FACE_WORKER_COUNT) || 1,
@@ -153,14 +149,11 @@ function getWaktu() {
     jam: now.format("HH:mm:ss"),
   };
 }
-function exportExcel(data, filename) {
-  ensureDir(EXPORTS_DIR);
+function exportExcel(data) {
   const ws = XLSX.utils.json_to_sheet(data);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Rekap");
-  const filePath = `${EXPORTS_DIR}/Rekap-${filename}.xlsx`;
-  XLSX.writeFile(wb, filePath);
-  return filePath;
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
 }
 
 function ensureDir(dirPath) {
@@ -389,20 +382,6 @@ async function resolveDashboardUserName(id, role) {
   return knownName;
 }
 
-async function ensureDefaultRoles() {
-  const roles = loadRoles();
-  let changed = false;
-
-  for (const [id, role] of Object.entries(DEFAULT_ROLES)) {
-    if (roles[id] !== role) {
-      roles[id] = role;
-      changed = true;
-    }
-  }
-
-  if (changed) await saveJSON(ROLE_PATH, roles);
-}
-
 function toTitleCase(str) {
   return str
     .toLowerCase()
@@ -531,7 +510,8 @@ async function catatAbsensiKamera(userId, tipe, lokasi, foto) {
   }
 
   const status = getAttendanceStatus(waktu.jam, jamResmi, tipe);
-  await updateJSON([STORAGE_PATH, IZIN_PATH], (draft) => {
+  await updateJSON([STORAGE_PATH, IZIN_PATH, KONTAK_PATH], (draft) => {
+    if (!draft[KONTAK_PATH][userId]) throw new Error("Siswa sudah tidak terdaftar.");
     const storage = draft[STORAGE_PATH];
     const attendanceError = validateAttendance(
       getDailyStudentStatus(storage, draft[IZIN_PATH], waktu.tanggal, userId),
@@ -551,14 +531,10 @@ async function catatAbsensiKamera(userId, tipe, lokasi, foto) {
       );
     }
 
-    const dataHariIni = (storage[waktu.tanggal] = storage[waktu.tanggal] || {});
-    const userLog = (dataHariIni[userId] = dataHariIni[userId] || {});
-    userLog[tipe] = {
-      waktu: waktu.jam,
-      lokasi,
-      status,
-      foto,
-      nama: kontak[userId],
+    storage[waktu.tanggal] ||= {};
+    storage[waktu.tanggal][userId] ||= {};
+    storage[waktu.tanggal][userId][tipe] = {
+      waktu: waktu.jam, lokasi, status, foto, nama: draft[KONTAK_PATH][userId],
     };
   });
 
@@ -567,12 +543,11 @@ async function catatAbsensiKamera(userId, tipe, lokasi, foto) {
     foto.data,
     `${userId.replace("@c.us", "")}.jpg`
   );
-  const kelasSiswa = findKelasSiswa(loadKelas(), userId);
   const caption =
     `*${kontak[userId] || userId}* telah absen *${tipe}*\n` +
     `Status: *${status}*\n` +
     `Jam: ${waktu.jam}`;
-  const penerima = getStudentNotificationRecipients(userId, kelasSiswa);
+  const penerima = getStudentNotificationRecipients(userId, findKelasSiswa(loadKelas(), userId));
   for (const id of penerima) {
     antreNotifikasi(
       () => kirimMediaAman(id, mediaMsg, caption),
@@ -592,6 +567,9 @@ const failedLidLookups = new Map();
 
 function cleanupRuntimeState() {
   const now = Date.now();
+  for (const [id, expiresAt] of otpCooldowns) {
+    if (expiresAt <= now) otpCooldowns.delete(id);
+  }
   for (const [token, session] of loginOtps) {
     if (session.expiresAt <= now) loginOtps.delete(token);
   }
@@ -645,7 +623,7 @@ client.on("auth_failure", (message) => {
   console.error("❌ Autentikasi WhatsApp gagal:", message);
 });
 
-client.on("message", async (msg) => {
+client.on("message", safeAsyncListener(async (msg) => {
   const commandStartedAt = Date.now();
   const rawSender = msg.author || msg.from;
   const sender = await resolveWhatsappUserId(client, rawSender, lidToPhoneCache, {
@@ -795,10 +773,9 @@ client.on("message", async (msg) => {
     );
   }
 
-  function cetak(id) {
-    return `- ${kontak[id] || id}`;
-  }
-});
+}, (error) => {
+  console.error("[WhatsApp Message ERROR]", error.message);
+}));
 
 let qrCodeData = null;
 let isReady = false;
@@ -943,17 +920,22 @@ app.post("/api/permission-camera/:token/evidence", async (req, res) => {
   if (!bukti) return res.status(400).json({ error: "Foto bukti tidak valid." });
 
   session.processing = true;
+  const writtenFiles = [];
+  let saved = false;
   try {
-    const nomor = session.userId.replace("@c.us", "");
     ensureDir(IZIN_BUKTI_DIR);
-    ensureDir(FACE_REC);
-    const buktiPath = `${IZIN_BUKTI_DIR}/${session.tanggal}-${nomor}-bukti.jpg`;
-    const selfiePath = `${IZIN_BUKTI_DIR}/${session.tanggal}-${nomor}-selfie.jpg`;
+    const requestId = crypto.randomUUID();
+    const buktiPath = `${IZIN_BUKTI_DIR}/${requestId}-bukti.jpg`;
+    const selfiePath = `${IZIN_BUKTI_DIR}/${requestId}-selfie.jpg`;
     fs.writeFileSync(buktiPath, Buffer.from(bukti.data, "base64"));
+    writtenFiles.push(buktiPath);
     fs.writeFileSync(selfiePath, Buffer.from(session.selfie.data, "base64"));
+    writtenFiles.push(selfiePath);
 
     const kontak = loadJSON(KONTAK_PATH);
-    await updateJSON([STORAGE_PATH, IZIN_PATH], (draft) => {
+    await updateJSON([STORAGE_PATH, IZIN_PATH, KONTAK_PATH], (draft) => {
+      if (!draft[KONTAK_PATH][session.userId]) throw new Error("Siswa sudah tidak terdaftar.");
+      if (session.tanggal !== getWaktu().tanggal) throw new Error("Tautan sudah melewati tanggal pengajuan.");
       const permissionError = validatePermission(
         getDailyStudentStatus(
           draft[STORAGE_PATH],
@@ -964,17 +946,17 @@ app.post("/api/permission-camera/:token/evidence", async (req, res) => {
       );
       if (permissionError) throw new Error(permissionError);
 
-      const izinData = draft[IZIN_PATH];
-      izinData[session.tanggal] = izinData[session.tanggal] || {};
-      izinData[session.tanggal][session.userId] = {
-        alasan: session.alasan,
-        nama: kontak[session.userId] || session.userId,
-        bukti: buktiPath,
-        selfie: selfiePath,
-        lokasi: session.lokasi,
-        terverifikasiWajah: true,
+      draft[IZIN_PATH][session.tanggal] ||= {};
+      draft[IZIN_PATH][session.tanggal][session.userId] = {
+          alasan: session.alasan,
+          nama: kontak[session.userId] || session.userId,
+          bukti: buktiPath,
+          selfie: selfiePath,
+          lokasi: session.lokasi,
+          terverifikasiWajah: true,
       };
     });
+    saved = true;
     permissionSessions.delete(token);
 
     const kelasSiswa = findKelasSiswa(loadKelas(), session.userId);
@@ -986,10 +968,7 @@ app.post("/api/permission-camera/:token/evidence", async (req, res) => {
       `📌 Alasan: ${session.alasan}\n` +
       `✅ Wajah terverifikasi dan lokasi tercatat`;
     const mediaMsg = new MessageMedia(bukti.mimetype, bukti.data, "bukti-izin.jpg");
-    const penerima = getStudentNotificationRecipients(
-      session.userId,
-      kelasSiswa
-    );
+    const penerima = getStudentNotificationRecipients(session.userId, kelasSiswa);
     for (const id of penerima) {
       antreNotifikasi(
         () => kirimMediaAman(id, mediaMsg, caption),
@@ -1002,6 +981,11 @@ app.post("/api/permission-camera/:token/evidence", async (req, res) => {
     );
     res.json({ ok: true, tanggal: session.tanggal });
   } catch (error) {
+    if (!saved) {
+      for (const file of writtenFiles) {
+        try { fs.unlinkSync(file); } catch (cleanupError) { console.error("[Bukti Cleanup ERROR]", cleanupError.message); }
+      }
+    }
     permissionSessions.delete(token);
     console.error(`[Bukti Izin ERROR] ${session.userId}:`, error.message);
     res.status(400).json({ error: error.message || "Bukti izin gagal disimpan." });
@@ -1091,17 +1075,18 @@ app.post("/api/auth/request-otp", async (req, res) => {
     return res.status(503).json({ error: "Bot WhatsApp belum terhubung." });
   }
 
-  const existing = loginOtps.get(id);
-  if (existing && existing.sentAt + 60_000 > Date.now()) {
+  if (otpCooldowns.get(id) > Date.now()) {
     return res.status(429).json({ error: "Tunggu satu menit sebelum meminta OTP baru." });
   }
+  otpCooldowns.set(id, Date.now() + 60_000);
   const code = String(crypto.randomInt(100000, 1000000));
-  loginOtps.set(id, {
+  const issuedOtp = {
     hash: crypto.createHash("sha256").update(code).digest("hex"),
     expiresAt: Date.now() + 5 * 60_000,
     sentAt: Date.now(),
     attempts: 0,
-  });
+  };
+  loginOtps.set(id, issuedOtp);
   try {
     await sendWhatsappWithRetry(
       () =>
@@ -1113,7 +1098,7 @@ app.post("/api/auth/request-otp", async (req, res) => {
     );
     res.json({ ok: true });
   } catch (error) {
-    loginOtps.delete(id);
+    if (loginOtps.get(id) === issuedOtp) loginOtps.delete(id);
     res.status(500).json({ error: "Gagal mengirim OTP ke WhatsApp." });
   }
 });
@@ -1132,7 +1117,7 @@ app.post("/api/auth/verify", async (req, res) => {
   }
   otp.attempts++;
   if (otp.attempts > 5 || otp.hash !== codeHash) {
-    if (otp.attempts > 5) loginOtps.delete(id);
+    if (otp.attempts >= 5) loginOtps.delete(id);
     return res.status(400).json({ error: "Kode OTP tidak sesuai." });
   }
 
@@ -1567,8 +1552,9 @@ app.get("/api/export", (req, res) => {
     Pulang: storage[id]?.pulang?.waktu || "",
     StatusPulang: storage[id]?.pulang?.status || "",
   }));
-  const filePath = exportExcel(rows, tanggal);
-  res.download(filePath);
+  const buffer = exportExcel(rows);
+  res.attachment(`Rekap-${tanggal}.xlsx`);
+  res.send(buffer);
 });
 
 app.get("/qr", (req, res) => {
@@ -1648,7 +1634,6 @@ app.listen(PORT, () => {
 async function startBot() {
   try {
     jsonState.replace(await initJsonStore(JSON_STORES));
-    await ensureDefaultRoles();
     console.log(`Database Sequelize siap: ${DB_PATH}`);
     await client.initialize();
   } catch (error) {

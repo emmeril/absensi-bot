@@ -4,7 +4,7 @@ Ruang Hadir adalah aplikasi absensi sekolah berbasis WhatsApp dengan verifikasi 
 
 ## Fitur utama
 
-- Absensi dimulai melalui WhatsApp dan diselesaikan lewat halaman kamera langsung.
+- Absensi masuk/pulang otomatis dicatat setelah verifikasi wajah, lokasi, dan jadwal melalui halaman kamera.
 - Verifikasi selfie dengan foto referensi siswa.
 - Validasi lokasi menggunakan koordinat sekolah.
 - Pengajuan izin dua tahap: selfie terverifikasi lalu unggah bukti terpisah.
@@ -12,7 +12,8 @@ Ruang Hadir adalah aplikasi absensi sekolah berbasis WhatsApp dengan verifikasi 
 - Dashboard web untuk mengelola siswa, kelas, wali kelas, admin, jadwal, izin, dan laporan.
 - Ekspor laporan ke Excel.
 - Login dashboard menggunakan OTP yang dikirim melalui WhatsApp.
-- Penyimpanan lokal menggunakan SQLite.
+- Penyimpanan lokal menggunakan SQLite dengan transaksi atomik untuk pembaruan terkait.
+- Ekspor Excel dibuat dalam buffer terpisah untuk setiap permintaan.
 
 ## Perintah WhatsApp aktif
 
@@ -24,7 +25,7 @@ Ruang Hadir adalah aplikasi absensi sekolah berbasis WhatsApp dengan verifikasi 
 | `!setlokasi` | Meminta pengiriman lokasi sekolah baru | Admin |
 | `!bantuan` | Menampilkan perintah yang tersedia sesuai role pengirim | Semua pengguna |
 
-Setelah mengirim `!masuk` atau `!pulang`, siswa menerima tautan sekali pakai yang berlaku selama 2 menit. Tautan membuka kamera depan dan GPS tanpa menyediakan pilihan unggah dari galeri. Setelah mengirim `!izin alasan`, siswa menerima tautan izin selama 5 menit untuk mengambil selfie langsung, mencatat GPS, lalu mengunggah surat atau bukti secara terpisah. Lokasi izin tidak dibatasi radius sekolah.
+Setelah mengirim `!masuk` atau `!pulang`, siswa menerima tautan sekali pakai yang berlaku selama 2 menit. Tautan membuka kamera depan dan GPS tanpa menyediakan pilihan unggah dari galeri. Setelah mengirim `!izin alasan`, siswa menerima tautan izin selama 5 menit untuk mengambil selfie langsung, mencatat GPS, lalu mengunggah surat atau bukti secara terpisah. Lokasi izin tidak dibatasi radius sekolah. Absensi masuk/pulang langsung masuk laporan setelah lolos verifikasi. Izin langsung dicatat setelah selfie terverifikasi dan bukti diunggah, tanpa konfirmasi admin/wali kelas.
 
 ## Persyaratan
 
@@ -64,6 +65,8 @@ Pastikan nomor admin awal tersedia di `roles.json` dengan format WhatsApp beriku
 ```
 
 Gunakan kode negara tanpa tanda `+`; nomor Indonesia yang diawali `08` ditulis menjadi `628`.
+
+`roles.json` hanya diimpor ketika penyimpanan role belum ada di SQLite. Tidak ada nomor admin yang ditambahkan otomatis saat restart. Pada instalasi yang sudah berjalan, hapus admin yang tidak diperlukan melalui dashboard memakai akun admin lain; penghapusan tersebut tetap berlaku setelah restart.
 
 ## Konfigurasi
 
@@ -160,6 +163,7 @@ pm2 save
 5. Admin atau wali kelas mengunggah foto referensi wajah siswa melalui dashboard.
 6. Siswa mengirim `!masuk` atau `!pulang`, membuka tautan sekali pakai, lalu mengambil selfie langsung dan mengizinkan GPS.
 7. Untuk izin, siswa mengirim `!izin alasan`, memverifikasi selfie dan GPS melalui tautan, lalu mengunggah surat atau bukti pada tahap kedua.
+8. Absensi masuk/pulang dan izin yang memenuhi persyaratan langsung dicatat dan dikirimkan sebagai notifikasi kepada pihak terkait. Tidak ada tahap persetujuan admin/wali kelas.
 
 Wali kelas hanya dapat mengakses dan mengunggah foto siswa pada kelas yang menjadi tanggung jawabnya.
 
@@ -182,7 +186,7 @@ services/                Pool worker dan layanan verifikasi wajah
 workers/face-worker.js   Worker pemrosesan wajah
 test/                    Pengujian otomatis
 ecosystem.config.js      Konfigurasi PM2
-exports/                 Hasil ekspor laporan Excel
+exports/                 Arsip ekspor lama (ekspor baru langsung diunduh)
 ```
 
 Direktori seperti `.wwebjs_auth`, `data`, `face_db`, `face_rec`, dan `izin_bukti` berisi data lokal atau sensitif. Jangan memasukkannya ke repository publik atau membagikannya tanpa pemeriksaan terlebih dahulu.
@@ -195,3 +199,9 @@ Direktori seperti `.wwebjs_auth`, `data`, `face_db`, `face_rec`, dan `izin_bukti
 - Ganti nomor admin bawaan sebelum digunakan di lingkungan lain.
 - Cadangkan database SQLite dan foto referensi secara berkala.
 - Gunakan reverse proxy HTTPS apabila dashboard diakses di luar jaringan lokal.
+
+### Batas verifikasi foto dan lokasi
+
+Absensi masuk/pulang dan izin diproses otomatis tanpa konfirmasi admin/wali kelas. Pencocokan wajah, pemeriksaan koordinat dan radius sekolah untuk absensi, jadwal, serta larangan pencatatan ganda tetap berlaku. Izin memerlukan selfie terverifikasi dan unggahan bukti; lokasinya tidak dibatasi radius sekolah.
+
+Browser mengirim gambar dan koordinat yang dapat dimanipulasi. Pencocokan wajah bukan pemeriksaan liveness dan tidak membuktikan bahwa foto baru diambil. Alur otomatis ini tidak menjamin pencegahan foto lama atau GPS palsu.
