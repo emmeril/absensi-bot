@@ -1,7 +1,8 @@
 require("dotenv").config();
 process.env.TZ = process.env.TZ || "Asia/Jakarta";
 
-const { Client, MessageMedia } = require("whatsapp-web.js");
+const { MessageMedia } = require("whatsapp-web.js");
+const { WhatsappClient } = require("./lib/whatsapp-client");
 const fs = require("fs");
 const moment = require("moment");
 const haversine = require("haversine-distance");
@@ -558,7 +559,7 @@ async function catatAbsensiKamera(userId, tipe, lokasi, foto) {
   return { status, waktu: waktu.jam, tanggal: waktu.tanggal };
 }
 
-const client = new Client(getWhatsappConfig());
+const client = new WhatsappClient(getWhatsappConfig());
 
 const pendingLokasi = new Map();
 const lidToPhoneCache = new Map();
@@ -1635,10 +1636,16 @@ async function startBot() {
   try {
     jsonState.replace(await initJsonStore(JSON_STORES));
     console.log(`Database Sequelize siap: ${DB_PATH}`);
-    await client.initialize();
   } catch (error) {
     console.error("Gagal inisialisasi database:", error);
-    process.exit(1);
+    await shutdown("DATABASE_INIT_FAILED", 1);
+    return;
+  }
+  try {
+    await client.initialize();
+  } catch (error) {
+    console.error("Gagal inisialisasi WhatsApp:", error);
+    await shutdown("WA_INIT_FAILED", 1);
   }
 }
 

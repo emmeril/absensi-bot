@@ -116,7 +116,7 @@ function automaticFlowFixture() {
     ensureDir: () => {}, console: { error() {} },
     fs: { writeFileSync: (name, data) => files.set(name, data), unlinkSync: (name) => files.delete(name) },
   };
-  vm.runInNewContext(source.slice(source.indexOf("async function catatAbsensiKamera"), source.indexOf("const client = new Client")), context);
+  vm.runInNewContext(source.slice(source.indexOf("async function catatAbsensiKamera"), source.indexOf("const client = new WhatsappClient")), context);
   vm.runInNewContext(source.slice(source.indexOf('app.post("/api/permission-camera/:token/evidence"'), source.indexOf('app.get("/api/attendance-camera/:token"')), context);
   return { context, state, routes, files, sessions };
 }
