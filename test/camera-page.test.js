@@ -31,6 +31,16 @@ test("halaman izin memisahkan selfie kamera dan unggahan bukti", () => {
   assert.match(permissionPage, /Tahap 2 dari 2/);
 });
 
+test("kontrol bukti izin tetap berjarak dan terbaca di layar mobile", () => {
+  assert.match(permissionPage, /\.evidence-actions\s*\{[^}]*display:\s*grid;[^}]*gap:/);
+  assert.match(permissionPage, /--bs-btn-disabled-color:\s*#fff/);
+  assert.match(permissionPage, /\.evidence-actions \.btn\s*\{[^}]*white-space:\s*normal/);
+  assert.match(
+    permissionPage,
+    /class="evidence-actions"[\s\S]*id="evidence"[\s\S]*id="submitEvidence"/
+  );
+});
+
 test("halaman izin mencatat GPS tanpa pemeriksaan radius sekolah", () => {
   assert.match(permissionPage, /getCurrentPosition/);
   assert.doesNotMatch(permissionPage, /ATTENDANCE_RADIUS_METERS|haversine/);

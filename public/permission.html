@@ -24,14 +24,16 @@
       .camera-media { width: 100%; height: 100%; object-fit: cover; }
       video.camera-media { transform: scaleX(-1); }
       .face-guide { pointer-events: none; position: absolute; inset: 12% 16%; border: 2px dashed rgba(224, 242, 254, .8); border-radius: 48%; box-shadow: 0 0 0 999px rgba(7, 21, 34, .25); }
-      .btn-navy { --bs-btn-bg: var(--navy); --bs-btn-border-color: var(--navy); --bs-btn-hover-bg: #0e253a; --bs-btn-hover-border-color: #0e253a; --bs-btn-disabled-bg: var(--navy); --bs-btn-disabled-border-color: var(--navy); color: #fff; font-weight: 900; min-height: 3.25rem; }
+      .btn-navy { --bs-btn-color: #fff; --bs-btn-bg: var(--navy); --bs-btn-border-color: var(--navy); --bs-btn-hover-color: #fff; --bs-btn-hover-bg: #0e253a; --bs-btn-hover-border-color: #0e253a; --bs-btn-disabled-color: #fff; --bs-btn-disabled-bg: var(--navy); --bs-btn-disabled-border-color: var(--navy); --bs-btn-disabled-opacity: .62; color: #fff; font-weight: 900; min-height: 3.25rem; }
       .btn-outline-navy { --bs-btn-color: var(--navy); --bs-btn-border-color: rgba(23, 50, 77, .3); --bs-btn-hover-bg: var(--navy); --bs-btn-hover-border-color: var(--navy); font-weight: 900; min-height: 3.25rem; background: rgba(255, 255, 255, .7); }
       .evidence-card { width: 100%; max-width: 31rem; margin-inline: auto; border: 1px solid rgba(23, 50, 77, .14); border-radius: 12px 32px 32px 32px; background: var(--paper); box-shadow: 0 1.5rem 4rem rgba(23, 50, 77, .14); backdrop-filter: blur(12px); }
+      .evidence-actions { display: grid; gap: 1rem; }
+      .evidence-actions .btn { height: auto; padding: .8rem 1rem; line-height: 1.35; white-space: normal; }
       .proof-image { width: 100%; max-height: 340px; object-fit: contain; background: #f1f5f9; }
       .success-card { width: min(100%, 36rem); border: 1px solid rgba(23, 50, 77, .18); border-radius: 8px 36px 36px 36px; background: rgba(255, 255, 255, .78); box-shadow: 0 1.5rem 4rem rgba(23, 50, 77, .14); }
       .success-icon { width: 5.5rem; height: 5.5rem; color: #fff; background: var(--navy); font-size: 3rem; font-weight: 900; box-shadow: 0 .75rem 2rem rgba(23, 50, 77, .25); }
       @media (max-width: 991.98px) { .page-shell { max-width: 38rem; } .page-header { margin-bottom: 1.5rem; } .hero-copy { text-align: center; margin-inline: auto; } .camera-frame { max-height: 56vh; } }
-      @media (max-width: 575.98px) { .page-shell { padding-inline: 1rem; } .camera-panel { border-radius: 24px 24px 8px 24px; } .camera-frame { max-height: 52vh; border-radius: 18px 18px 6px 18px; } .evidence-card { border-radius: 8px 24px 24px 24px; } .hero-title { font-size: clamp(2.35rem, 13vw, 3.25rem); } }
+      @media (max-width: 575.98px) { .page-shell { padding-inline: 1rem; } .camera-panel { border-radius: 24px 24px 8px 24px; } .camera-frame { max-height: 52vh; border-radius: 18px 18px 6px 18px; } .evidence-card { border-radius: 8px 24px 24px 24px; } .evidence-actions { gap: .875rem; } .hero-title { font-size: clamp(2.35rem, 13vw, 3.25rem); } }
     </style>
   </head>
   <body>
@@ -66,10 +68,12 @@
               <p class="eyebrow mb-2 text-uppercase">Tahap terakhir</p>
               <h2 class="h3 fw-bold">Unggah bukti izin</h2>
               <p class="mb-4 mt-2 text-secondary lh-lg">Ambil foto surat menggunakan kamera atau pilih foto bukti yang sudah tersimpan di galeri.</p>
-              <label class="btn btn-outline-navy d-flex align-items-center justify-content-center w-100" for="evidence">Pilih atau foto bukti</label>
-              <input class="visually-hidden" id="evidence" type="file" accept="image/jpeg,image/png" />
-              <img class="proof-image my-3 rounded-3" id="proof" alt="Pratinjau bukti izin" hidden />
-              <button class="btn btn-navy w-100" id="submitEvidence" disabled>Kirim pengajuan izin</button>
+              <div class="evidence-actions">
+                <label class="btn btn-outline-navy d-flex align-items-center justify-content-center w-100" for="evidence">Pilih atau foto bukti</label>
+                <input class="visually-hidden" id="evidence" type="file" accept="image/jpeg,image/png" />
+                <img class="proof-image rounded-3" id="proof" alt="Pratinjau bukti izin" hidden />
+                <button class="btn btn-navy w-100" id="submitEvidence" disabled>Kirim pengajuan izin</button>
+              </div>
             </section>
           </div>
         </div>
