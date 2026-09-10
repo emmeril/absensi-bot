@@ -61,8 +61,13 @@ test("creates one main session and one session per unique wali number", () => {
 test("adapts text, location, forwarding metadata, and LID mapping", async () => {
   const sends = [];
   const socket = { sendMessage: async (...args) => sends.push(args) };
+  const lidMap = new Map();
   const message = adaptIncomingMessage({
-    key: { remoteJid: "12345@lid", fromMe: false },
+    key: {
+      remoteJid: "12345@lid",
+      remoteJidAlt: "628123456789@s.whatsapp.net",
+      fromMe: false,
+    },
     pushName: "Siswa",
     message: {
       locationMessage: {
@@ -71,7 +76,7 @@ test("adapts text, location, forwarding metadata, and LID mapping", async () => 
         contextInfo: { isForwarded: true, forwardingScore: 1 },
       },
     },
-  }, socket, new Map([["12345@lid", "628123456789@s.whatsapp.net"]]));
+  }, socket, lidMap);
 
   assert.equal(message.from, "628123456789@c.us");
   assert.equal(message.type, "location");
@@ -82,6 +87,7 @@ test("adapts text, location, forwarding metadata, and LID mapping", async () => 
     address: "",
   });
   assert.equal(message.isForwarded, true);
+  assert.equal(lidMap.get("12345@lid"), "628123456789@s.whatsapp.net");
   await message.reply("ok");
-  assert.deepEqual(sends, [["628123456789@s.whatsapp.net", { text: "ok" }]]);
+  assert.deepEqual(sends, [["12345@lid", { text: "ok" }]]);
 });
