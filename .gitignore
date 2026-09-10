@@ -11,6 +11,7 @@ pnpm-workspace.yaml
 face-server
 data/*.sqlite
 data/*.sqlite-*
+data/backups/
 models/
 face_db/
 face_rec/
