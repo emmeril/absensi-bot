@@ -1,6 +1,10 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { retryInjection } = require("../lib/whatsapp-client");
+const { EventEmitter } = require("node:events");
+const {
+  attachBrowserDisconnectMonitor,
+  retryInjection,
+} = require("../lib/whatsapp-client");
 
 const contextError = new Error("Protocol error: Execution context was destroyed.");
 
@@ -34,4 +38,29 @@ test("other errors and a closed browser are not retried", async () => {
     }, { canRetry: () => false, delay: async () => assert.fail("unexpected retry") }), error);
     assert.equal(attempts, 1);
   }
+});
+
+test("reports an unexpected browser exit only once", () => {
+  const browser = new EventEmitter();
+  let disconnects = 0;
+
+  attachBrowserDisconnectMonitor(browser, () => disconnects++);
+  browser.emit("disconnected");
+  browser.emit("disconnected");
+
+  assert.equal(disconnects, 1);
+});
+
+test("browser disconnect monitor can be removed during an intentional shutdown", () => {
+  const browser = new EventEmitter();
+  let disconnects = 0;
+
+  const removeMonitor = attachBrowserDisconnectMonitor(
+    browser,
+    () => disconnects++
+  );
+  removeMonitor();
+  browser.emit("disconnected");
+
+  assert.equal(disconnects, 0);
 });
