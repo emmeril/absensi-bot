@@ -29,12 +29,12 @@ Setelah mengirim `!masuk` atau `!pulang`, siswa menerima tautan sekali pakai yan
 
 ## Persyaratan
 
-- Node.js yang mendukung Express 5 (disarankan Node.js 20 LTS atau lebih baru).
+- Node.js 22.12 atau lebih baru.
 - npm.
 - Chromium atau Google Chrome untuk `whatsapp-web.js`.
 - Nomor WhatsApp aktif untuk akun bot.
 
-Pada Linux, lokasi Chromium bawaan adalah `/usr/bin/chromium`. Lokasi lain dapat diatur melalui `PUPPETEER_EXECUTABLE_PATH`.
+Pada Linux, beberapa lokasi Chromium umum (termasuk `/usr/bin/chromium`) dideteksi otomatis. Lokasi lain dan instalasi Windows harus diatur melalui `PUPPETEER_EXECUTABLE_PATH`. Aplikasi memakai `puppeteer-core`, jadi browser tidak diunduh otomatis oleh npm.
 
 ## Instalasi
 
@@ -56,32 +56,23 @@ Pada PowerShell:
 Copy-Item .env.example .env
 ```
 
-Pastikan nomor admin awal tersedia di `roles.json` dengan format WhatsApp berikut:
-
-```json
-{
-  "6281234567890@c.us": "admin"
-}
-```
+Isi `INITIAL_ADMIN_NUMBER` pada `.env` dengan nomor admin pertama.
 
 Gunakan kode negara tanpa tanda `+`; nomor Indonesia yang diawali `08` ditulis menjadi `628`.
 
-`roles.json` hanya diimpor ketika penyimpanan role belum ada di SQLite. Tidak ada nomor admin yang ditambahkan otomatis saat restart. Pada instalasi yang sudah berjalan, hapus admin yang tidak diperlukan melalui dashboard memakai akun admin lain; penghapusan tersebut tetap berlaku setelah restart.
+Nilai tersebut hanya digunakan ketika penyimpanan role belum ada di SQLite. Tidak ada nomor admin yang ditambahkan otomatis saat restart. Pada instalasi yang sudah berjalan, pengelolaan admin dilakukan melalui dashboard.
 
 ## Konfigurasi
 
-Konfigurasi dasar disimpan pada berkas berikut:
+Template konfigurasi awal tersedia pada berkas berikut:
 
 | Berkas | Kegunaan |
 | --- | --- |
-| `roles.json` | Daftar admin dan peran pengguna dashboard |
-| `lokasi.json` | Koordinat lokasi sekolah |
-| `jam.json` | Jadwal masuk dan pulang |
-| `kontak.json` | Data awal kontak sebelum migrasi SQLite |
-| `storage.json` | Data awal absensi sebelum migrasi SQLite |
-| `izin.json` | Data awal izin sebelum migrasi SQLite |
+| `roles.example.json` | Contoh format admin dan peran dashboard |
+| `lokasi.example.json` | Contoh koordinat lokasi sekolah |
+| `jam.example.json` | Contoh jadwal masuk dan pulang |
 
-Saat pertama dijalankan, data JSON awal dimasukkan ke database `data/absensi.sqlite`. Perubahan selanjutnya disimpan ke SQLite.
+File JSON runtime lama tetap dapat diimpor pada instalasi yang sudah ada, tetapi semuanya diabaikan Git karena dapat berisi data pribadi. Perubahan selanjutnya disimpan ke SQLite. Foto absensi disimpan sebagai file privat di `attendance_photos`; versi lama yang masih tertanam sebagai Base64 dimigrasikan otomatis saat startup.
 
 Variabel lingkungan opsional:
 
@@ -91,6 +82,11 @@ Variabel lingkungan opsional:
 | `DB_PATH` | `data/absensi.sqlite` | Lokasi database SQLite |
 | `PUPPETEER_EXECUTABLE_PATH` | `/usr/bin/chromium` | Lokasi executable Chromium/Chrome |
 | `PUBLIC_BASE_URL` | `http://localhost:3200` | Alamat publik HTTPS yang dibuka siswa untuk kamera absensi |
+| `INITIAL_ADMIN_NUMBER` | kosong | Nomor admin pertama untuk database baru |
+| `WA_EXPECTED_NUMBER` | kosong | Nomor akun WhatsApp bot yang diizinkan terhubung |
+| `QR_ACCESS_TOKEN` | kosong | Password HTTP Basic minimal 16 karakter untuk membuka `/qr` dari jaringan |
+| `TRUST_PROXY_HOPS` | `0` | Jumlah reverse proxy tepercaya di depan aplikasi |
+| `SESSION_COOKIE_SECURE` | otomatis | Paksa cookie sesi hanya melalui HTTPS |
 | `WA_CLIENT_ID` | `absensi-bot` | ID sesi `LocalAuth`; hanya huruf, angka, `_`, dan `-` |
 | `WA_AUTH_DATA_PATH` | `.wwebjs_auth` | Direktori penyimpanan sesi WhatsApp |
 | `WA_AUTH_TIMEOUT_MS` | `60000` | Batas waktu autentikasi WhatsApp Web |
@@ -173,6 +169,12 @@ Wali kelas hanya dapat mengakses dan mengunggah foto siswa pada kelas yang menja
 npm test
 ```
 
+Setelah mengubah kelas CSS dashboard, bangun ulang stylesheet lokal:
+
+```bash
+npm run build:css
+```
+
 Pengujian mencakup aturan absensi, validasi lokasi, QR SVG, antrean tugas, dan normalisasi ID WhatsApp.
 
 ## Struktur proyek
@@ -186,14 +188,16 @@ services/                Pool worker dan layanan verifikasi wajah
 workers/face-worker.js   Worker pemrosesan wajah
 test/                    Pengujian otomatis
 ecosystem.config.js      Konfigurasi PM2
-exports/                 Arsip ekspor lama (ekspor baru langsung diunduh)
+attendance_photos/       Foto absensi privat di luar blob SQLite
+exports/                 Arsip ekspor lokal; diabaikan Git
 ```
 
-Direktori seperti `.wwebjs_auth`, `data`, `face_db`, `face_rec`, dan `izin_bukti` berisi data lokal atau sensitif. Jangan memasukkannya ke repository publik atau membagikannya tanpa pemeriksaan terlebih dahulu.
+Direktori seperti `.wwebjs_auth`, `data`, `face_db`, `face_rec`, `attendance_photos`, `izin_bukti`, dan `exports` berisi data lokal atau sensitif dan telah diabaikan Git.
 
 ## Catatan keamanan
 
 - Jangan membagikan direktori sesi `.wwebjs_auth`.
+- Isi `WA_EXPECTED_NUMBER` dan `QR_ACCESS_TOKEN` pada produksi. `/qr` tanpa token hanya dapat dibuka langsung melalui localhost; akses jaringan akan meminta HTTP Basic dengan token sebagai password.
 - Batasi akses jaringan ke dashboard karena aplikasi saat ini berjalan melalui HTTP.
 - Gunakan HTTPS pada `PUBLIC_BASE_URL`; browser ponsel memblokir kamera pada alamat HTTP biasa.
 - Ganti nomor admin bawaan sebelum digunakan di lingkungan lain.

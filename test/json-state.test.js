@@ -45,3 +45,10 @@ test("JsonState tetap dapat dipakai setelah mutasi gagal", async () => {
 
   assert.equal(state.read("data").value, 2);
 });
+
+test("JsonState dapat menyalin bagian data tanpa menyalin seluruh dokumen", () => {
+  const state = new JsonState({ initial: { data: { a: { value: 1 }, b: { value: 2 } } }, writeBatch: async () => {} });
+  const selected = state.readSelected("data", (data) => data.a);
+  selected.value = 99;
+  assert.equal(state.read("data").a.value, 1);
+});

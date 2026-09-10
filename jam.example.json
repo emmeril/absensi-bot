@@ -1,0 +1,9 @@
+{
+  "masuk": "07:00:00",
+  "pulang": "14:00:00",
+  "toleransi": 0,
+  "mulaiMasuk": "00:00:00",
+  "selesaiMasuk": "23:59:59",
+  "mulaiPulang": "00:00:00",
+  "selesaiPulang": "23:59:59"
+}

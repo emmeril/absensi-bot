@@ -125,4 +125,9 @@ function faceServiceStatus() {
   };
 }
 
-module.exports = { verifyFace, faceServiceStatus };
+async function waitForFaceService() {
+  await modelReady;
+  return faceServiceStatus();
+}
+
+module.exports = { verifyFace, faceServiceStatus, waitForFaceService };

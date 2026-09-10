@@ -1,5 +1,9 @@
 const { parentPort } = require("worker_threads");
-const { verifyFace } = require("../services/face-verification");
+const { verifyFace, waitForFaceService } = require("../services/face-verification");
+
+void waitForFaceService().then((status) => {
+  parentPort.postMessage({ type: "ready", ...status });
+});
 
 parentPort.on("message", async ({ jobId, userId, photo }) => {
   try {

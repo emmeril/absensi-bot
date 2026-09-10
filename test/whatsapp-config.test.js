@@ -1,6 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { getBrowserEnvironment } = require("../lib/whatsapp-config");
+const {
+  findChromiumExecutable,
+  getBrowserEnvironment,
+} = require("../lib/whatsapp-config");
 
 test("Chromium does not inherit a transient SSH desktop session", () => {
   const environment = getBrowserEnvironment({
@@ -15,4 +18,12 @@ test("Chromium does not inherit a transient SSH desktop session", () => {
     PATH: "/usr/bin",
     HOME: "/root",
   });
+});
+
+test("konfigurasi eksplisit Chromium tetap diprioritaskan", () => {
+  assert.equal(
+    findChromiumExecutable("/opt/chrome/chrome", "linux"),
+    "/opt/chrome/chrome"
+  );
+  assert.equal(findChromiumExecutable(undefined, "win32"), undefined);
 });

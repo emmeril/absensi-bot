@@ -38,7 +38,7 @@ test("halaman izin mencatat GPS tanpa pemeriksaan radius sekolah", () => {
 
 test("halaman kamera dan izin menggunakan Bootstrap tanpa Tailwind", () => {
   for (const page of [cameraPage, permissionPage]) {
-    assert.match(page, /bootstrap@5\.3\.3\/dist\/css\/bootstrap\.min\.css/);
+    assert.match(page, /\/vendor\/bootstrap\.min\.css/);
     assert.doesNotMatch(page, /cdn\.tailwindcss\.com|tailwind\.config/);
   }
 });

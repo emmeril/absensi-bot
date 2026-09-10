@@ -45,6 +45,10 @@ class FaceWorkerPool {
       active: this.workers.filter((item) => item.busy).length,
       queued: this.queue.length,
       maxQueue: this.maxQueue,
+      ready:
+        this.workers.length === this.size &&
+        this.workers.every((item) => item.ready === true),
+      errors: this.workers.map((item) => item.error).filter(Boolean),
     };
   }
 
@@ -76,6 +80,8 @@ class FaceWorkerPool {
       busy: false,
       jobId: null,
       stopping: false,
+      ready: false,
+      error: null,
     };
     this.workers.push(state);
 
@@ -106,6 +112,11 @@ class FaceWorkerPool {
   }
 
   #finish(state, message) {
+    if (message.type === "ready") {
+      state.ready = message.ready === true;
+      state.error = message.error || null;
+      return;
+    }
     if (message.jobId !== state.jobId) return;
     const job = this.jobs.get(message.jobId);
     if (!job) return;

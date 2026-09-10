@@ -14,3 +14,19 @@ models/
 face_db/
 face_rec/
 izin_bukti/
+attendance_photos/
+exports/
+core
+core.*
+
+# Runtime state and installation-specific configuration.
+roles.json
+lokasi.json
+jam.json
+kontak.json
+storage.json
+izin.json
+kelas.json
+user_names.json
+pending_requests.json
+pending_selfie.json

@@ -1,18 +1,23 @@
 require("dotenv").config();
 process.env.TZ = process.env.TZ || "Asia/Jakarta";
+process.umask(0o077);
 
 const { MessageMedia } = require("whatsapp-web.js");
 const { WhatsappClient } = require("./lib/whatsapp-client");
 const fs = require("fs");
+const path = require("path");
 const moment = require("moment");
 const haversine = require("haversine-distance");
-const XLSX = require("xlsx");
+const ExcelJS = require("exceljs");
 const express = require("express");
+const helmet = require("helmet");
 const multer = require("multer");
 const crypto = require("crypto");
+const { loadImage } = require("canvas");
 const {
   DB_PATH,
   closeDatabase,
+  compactDatabase,
   initJsonStore,
   saveJsonBatch,
 } = require("./models/database");
@@ -35,6 +40,19 @@ const {
   isRetryableWhatsappError,
 } = require("./lib/whatsapp-send");
 const {
+  createRateLimiter,
+  isQrRequestAllowed,
+  serializeSessionCookie,
+} = require("./lib/web-security");
+const {
+  deleteManagedFile,
+  ensurePrivateDir,
+  hardenPrivateTree,
+  isManagedPath,
+  moveManagedFile,
+  writePrivateFile,
+} = require("./lib/private-files");
+const {
   getDailyStudentStatus,
   getArrivalStatus,
   isWithinAttendanceWindow,
@@ -49,6 +67,8 @@ const LOCATION_REQUEST_TTL_MS = 5 * 60 * 1000;
 const STATE_CLEANUP_INTERVAL_MS = 60 * 1000;
 const LID_CACHE_MAX_ENTRIES = 5000;
 const ATTENDANCE_RADIUS_METERS = 100;
+const MAX_IMAGE_DIMENSION = 4096;
+const MAX_IMAGE_PIXELS = 16_000_000;
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
@@ -58,9 +78,70 @@ const otpCooldowns = new Map();
 const webSessions = new Map();
 const cameraSessions = new Map();
 const permissionSessions = new Map();
+const otpRequestLimiter = createRateLimiter({
+  windowMs: 10 * 60_000,
+  limit: 20,
+  message: "Terlalu banyak permintaan OTP dari koneksi ini. Coba lagi nanti.",
+});
+const otpVerifyLimiter = createRateLimiter({
+  windowMs: 10 * 60_000,
+  limit: 50,
+  message: "Terlalu banyak percobaan OTP dari koneksi ini. Coba lagi nanti.",
+});
+const cameraRequestLimiter = createRateLimiter({
+  windowMs: 5 * 60_000,
+  limit: 40,
+  message: "Terlalu banyak permintaan kamera dari koneksi ini. Coba lagi nanti.",
+});
 
+const trustProxyHops = Number(process.env.TRUST_PROXY_HOPS || 0);
+if (Number.isInteger(trustProxyHops) && trustProxyHops > 0) {
+  app.set("trust proxy", trustProxyHops);
+}
+app.disable("x-powered-by");
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:", "blob:"],
+        mediaSrc: ["'self'", "blob:"],
+        fontSrc: ["'self'", "data:"],
+        connectSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'none'"],
+        frameAncestors: ["'none'"],
+        formAction: ["'self'"],
+        upgradeInsecureRequests:
+          process.env.NODE_ENV === "production" ? [] : null,
+      },
+    },
+    referrerPolicy: { policy: "no-referrer" },
+  })
+);
+app.use("/api", (_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Pragma", "no-cache");
+  next();
+});
+app.use("/api/auth/request-otp", otpRequestLimiter);
+app.use("/api/auth/verify", otpVerifyLimiter);
+app.use("/api/attendance-camera", cameraRequestLimiter);
+app.use("/api/permission-camera", cameraRequestLimiter);
 app.use(express.json({ limit: "10mb" }));
 app.use(express.static("public"));
+app.get("/vendor/alpine.min.js", (_req, res) =>
+  res.sendFile(require.resolve("alpinejs/dist/cdn.min.js"))
+);
+app.get("/vendor/bootstrap.min.css", (_req, res) =>
+  res.sendFile(require.resolve("bootstrap/dist/css/bootstrap.min.css"))
+);
+app.use(
+  "/vendor/fontawesome",
+  express.static(path.resolve(path.dirname(require.resolve("@fortawesome/fontawesome-free/css/all.min.css")), ".."))
+);
 
 const STORAGE_PATH = "./storage.json";
 const KONTAK_PATH = "./kontak.json";
@@ -70,14 +151,19 @@ const JAM_PATH = "./jam.json";
 const FACE_DB = "./face_db";
 const FACE_REC = "./face_rec";
 const IZIN_BUKTI_DIR = "./izin_bukti";
+const ATTENDANCE_PHOTO_DIR = "./attendance_photos";
 const IZIN_PATH = "./izin.json";
 const KELAS_PATH = "./kelas.json";
 const USER_NAMES_PATH = "./user_names.json";
+const initialAdminNumber = String(process.env.INITIAL_ADMIN_NUMBER || "").replace(/\D/g, "");
+const INITIAL_ROLES = /^62\d{8,14}$/.test(initialAdminNumber)
+  ? { [`${initialAdminNumber}@c.us`]: "admin" }
+  : {};
 
 const JSON_STORES = {
   [STORAGE_PATH]: { path: STORAGE_PATH, fallback: {} },
   [KONTAK_PATH]: { path: KONTAK_PATH, fallback: {} },
-  [ROLE_PATH]: { path: ROLE_PATH, fallback: {} },
+  [ROLE_PATH]: { path: ROLE_PATH, fallback: INITIAL_ROLES },
   [LOKASI_PATH]: {
     path: LOKASI_PATH,
     fallback: { latitude: -6.7329, longitude: 108.5522 },
@@ -135,6 +221,9 @@ function cloneData(data) {
 function loadJSON(path, fallback = {}) {
   return jsonState.read(path, fallback);
 }
+function loadJSONSelected(path, select, fallback = {}) {
+  return jsonState.readSelected(path, select, fallback);
+}
 async function saveJSON(path, data) {
   return jsonState.update(path, (draft) => {
     draft[path] = cloneData(data);
@@ -150,15 +239,29 @@ function getWaktu() {
     jam: now.format("HH:mm:ss"),
   };
 }
-function exportExcel(data) {
-  const ws = XLSX.utils.json_to_sheet(data);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Rekap");
-  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+async function exportExcel(data) {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet("Rekap");
+  const headers = data.length ? Object.keys(data[0]) : ["Tanggal"];
+  worksheet.columns = headers.map((header) => ({ header, key: header }));
+  worksheet.addRows(data);
+  worksheet.views = [{ state: "frozen", ySplit: 1 }];
+  worksheet.getRow(1).font = { bold: true };
+  const output = await workbook.xlsx.writeBuffer();
+  return Buffer.from(output);
 }
 
 function ensureDir(dirPath) {
-  if (!fs.existsSync(dirPath)) fs.mkdirSync(dirPath, { recursive: true });
+  ensurePrivateDir(dirPath);
+}
+
+function deletePrivateFileSafely(filePath, rootPath, context = "file privat") {
+  try {
+    return deleteManagedFile(filePath, rootPath);
+  } catch (error) {
+    console.error(`[Cleanup ERROR] ${context}:`, error.message);
+    return false;
+  }
 }
 
 function normalizeJam(jam) {
@@ -184,6 +287,14 @@ function publicBaseUrl() {
     /\/$/,
     ""
   );
+}
+
+function sessionCookieIsSecure(req) {
+  const configured = process.env.SESSION_COOKIE_SECURE;
+  if (configured !== undefined && configured !== "") {
+    return ["1", "true", "yes", "on"].includes(configured.toLowerCase());
+  }
+  return req.secure || publicBaseUrl().startsWith("https://");
 }
 
 function createCameraSession(userId, tipe) {
@@ -243,7 +354,166 @@ function parseImageDataUrl(value) {
     /^data:(image\/(?:jpeg|png));base64,([A-Za-z0-9+/=]+)$/
   );
   if (!match || match[2].length > 8 * 1024 * 1024) return null;
-  return { mimetype: match[1], data: match[2] };
+  const buffer = Buffer.from(match[2], "base64");
+  if (!buffer.length) return null;
+  return { mimetype: match[1], data: match[2], buffer };
+}
+
+function imageMetadata(buffer) {
+  const pngSignature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  if (buffer.length >= 24 && buffer.subarray(0, 8).equals(pngSignature)) {
+    return {
+      mimetype: "image/png",
+      width: buffer.readUInt32BE(16),
+      height: buffer.readUInt32BE(20),
+    };
+  }
+
+  if (buffer.length >= 4 && buffer[0] === 0xff && buffer[1] === 0xd8) {
+    const sizeMarkers = new Set([
+      0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7,
+      0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf,
+    ]);
+    let offset = 2;
+    while (offset + 4 <= buffer.length) {
+      if (buffer[offset] !== 0xff) {
+        offset += 1;
+        continue;
+      }
+      const marker = buffer[offset + 1];
+      offset += 2;
+      if (marker === 0xd8 || marker === 0xd9 || (marker >= 0xd0 && marker <= 0xd7)) {
+        continue;
+      }
+      if (offset + 2 > buffer.length) break;
+      const segmentLength = buffer.readUInt16BE(offset);
+      if (segmentLength < 2 || offset + segmentLength > buffer.length) break;
+      if (sizeMarkers.has(marker) && segmentLength >= 7) {
+        return {
+          mimetype: "image/jpeg",
+          height: buffer.readUInt16BE(offset + 3),
+          width: buffer.readUInt16BE(offset + 5),
+        };
+      }
+      offset += segmentLength;
+    }
+  }
+  return null;
+}
+
+function validateImageMetadata(buffer) {
+  const metadata = imageMetadata(buffer);
+  if (
+    !metadata ||
+    metadata.width < 1 ||
+    metadata.height < 1 ||
+    metadata.width > MAX_IMAGE_DIMENSION ||
+    metadata.height > MAX_IMAGE_DIMENSION ||
+    metadata.width * metadata.height > MAX_IMAGE_PIXELS
+  ) {
+    throw new Error("Format atau dimensi gambar tidak valid.");
+  }
+  return metadata;
+}
+
+async function validateImageBuffer(buffer) {
+  const metadata = validateImageMetadata(buffer);
+  await loadImage(buffer);
+  return metadata;
+}
+
+async function validateImagePayload(image) {
+  const metadata = await validateImageBuffer(image.buffer);
+  image.mimetype = metadata.mimetype;
+  return image;
+}
+
+function imageExtension(mimetype) {
+  return mimetype === "image/png" ? "png" : "jpg";
+}
+
+function attendancePhotoPath(tanggal, userId, tipe, foto) {
+  const safeDate = /^\d{4}-\d{2}-\d{2}$/.test(tanggal) ? tanggal : "legacy";
+  const safeUser = String(userId || "").replace(/\D/g, "") || "unknown";
+  const safeType = tipe === "pulang" ? "pulang" : "masuk";
+  const digest = crypto.createHash("sha256").update(foto.buffer).digest("hex").slice(0, 16);
+  return path.join(
+    ATTENDANCE_PHOTO_DIR,
+    safeDate,
+    `${safeUser}-${safeType}-${digest}.${imageExtension(foto.mimetype)}`
+  );
+}
+
+async function migrateEmbeddedAttendancePhotos() {
+  const storage = loadJSON(STORAGE_PATH);
+  let migrated = 0;
+  for (const [tanggal, students] of Object.entries(storage)) {
+    for (const [userId, attendance] of Object.entries(students || {})) {
+      for (const tipe of ["masuk", "pulang"]) {
+        const record = attendance?.[tipe];
+        const legacyPhoto = record?.foto;
+        if (!legacyPhoto?.data) continue;
+        const parsed = parseImageDataUrl(
+          `data:${legacyPhoto.mimetype || "image/jpeg"};base64,${legacyPhoto.data}`
+        );
+        if (!parsed) {
+          console.warn(`[Migrasi Foto] Foto ${tanggal}/${userId}/${tipe} tidak valid; data lama dipertahankan.`);
+          continue;
+        }
+        try {
+          const metadata = validateImageMetadata(parsed.buffer);
+          parsed.mimetype = metadata.mimetype;
+          const photoPath = attendancePhotoPath(tanggal, userId, tipe, parsed);
+          if (!fs.existsSync(photoPath)) writePrivateFile(photoPath, parsed.buffer);
+          record.fotoPath = photoPath;
+          record.fotoMimeType = parsed.mimetype;
+          record.fotoSize = parsed.buffer.length;
+          delete record.foto;
+          migrated += 1;
+        } catch (error) {
+          console.warn(`[Migrasi Foto] Foto ${tanggal}/${userId}/${tipe} gagal dipindahkan:`, error.message);
+        }
+      }
+    }
+  }
+  if (migrated) {
+    await saveJSON(STORAGE_PATH, storage);
+    console.log(`[Migrasi Foto] ${migrated} foto absensi dipindahkan dari JSON ke penyimpanan privat.`);
+  }
+  return migrated;
+}
+
+function cleanupOrphanedFaceFiles() {
+  const kontak = loadJSON(KONTAK_PATH);
+  let removed = 0;
+  for (const root of [FACE_DB, FACE_REC]) {
+    if (!fs.existsSync(root)) continue;
+    for (const fileName of fs.readdirSync(root)) {
+      const studentId = `${path.parse(fileName).name}@c.us`;
+      if (!kontak[studentId] && deleteManagedFile(path.join(root, fileName), root)) removed += 1;
+    }
+  }
+  if (fs.existsSync(FACE_DB)) {
+    for (const fileName of fs.readdirSync(FACE_DB)) {
+      const legacyPath = path.join(FACE_DB, fileName);
+      const activePath = path.join(FACE_REC, fileName);
+      if (
+        fs.existsSync(activePath) &&
+        fs.statSync(legacyPath).size === fs.statSync(activePath).size &&
+        fs.readFileSync(legacyPath).equals(fs.readFileSync(activePath)) &&
+        deleteManagedFile(legacyPath, FACE_DB)
+      ) {
+        removed += 1;
+      }
+    }
+  }
+  if (removed) console.log(`[Cleanup Privasi] ${removed} foto wajah orphan/duplikat dihapus.`);
+}
+
+function hardenSensitiveStorage() {
+  for (const root of [FACE_DB, FACE_REC, IZIN_BUKTI_DIR, ATTENDANCE_PHOTO_DIR]) {
+    hardenPrivateTree(root);
+  }
 }
 
 function antreVerifikasiWajah(userId, fotoBase64) {
@@ -405,6 +675,22 @@ function loadKelas() {
   return loadJSON(KELAS_PATH, {});
 }
 
+function loadDailyStudentStatus(tanggal, studentId) {
+  const attendance = loadJSONSelected(
+    STORAGE_PATH,
+    (storage) => storage[tanggal]?.[studentId] || {}
+  );
+  const permission = loadJSONSelected(
+    IZIN_PATH,
+    (permissions) => permissions[tanggal]?.[studentId] || null
+  );
+  return {
+    masuk: Boolean(attendance.masuk),
+    pulang: Boolean(attendance.pulang),
+    izin: Boolean(permission),
+  };
+}
+
 function findKelasSiswa(dataKelas, siswaId) {
   for (const [namaKelas, data] of Object.entries(dataKelas)) {
     if (data.siswa?.[siswaId]) return { namaKelas, ...data };
@@ -492,6 +778,7 @@ function getStudentNotificationRecipients(studentId, kelasSiswa) {
 
 async function catatAbsensiKamera(userId, tipe, lokasi, foto) {
   const kontak = loadJSON(KONTAK_PATH);
+  const kelasSiswa = findKelasSiswa(loadKelas(), userId);
   const jamResmi = loadJSON(JAM_PATH, {
     masuk: "09:00:00",
     pulang: "16:00:00",
@@ -511,33 +798,51 @@ async function catatAbsensiKamera(userId, tipe, lokasi, foto) {
   }
 
   const status = getAttendanceStatus(waktu.jam, jamResmi, tipe);
-  await updateJSON([STORAGE_PATH, IZIN_PATH, KONTAK_PATH], (draft) => {
-    if (!draft[KONTAK_PATH][userId]) throw new Error("Siswa sudah tidak terdaftar.");
-    const storage = draft[STORAGE_PATH];
-    const attendanceError = validateAttendance(
-      getDailyStudentStatus(storage, draft[IZIN_PATH], waktu.tanggal, userId),
-      tipe
-    );
-    if (attendanceError) throw new Error(attendanceError);
-
-    const { mulai: mulaiAbsen, selesai: selesaiAbsen } = getAttendanceWindow(
-      jamResmi,
-      tipe
-    );
-    if (!isWithinAttendanceWindow(waktu.jam, mulaiAbsen, selesaiAbsen)) {
-      throw new Error(
-        `Absen ${tipe} hanya dapat dilakukan pukul ${String(
-          mulaiAbsen || "00:00"
-        ).slice(0, 5)}-${String(selesaiAbsen || "23:59").slice(0, 5)}.`
+  const photoPath = attendancePhotoPath(waktu.tanggal, userId, tipe, foto);
+  const photoAlreadyExists = fs.existsSync(photoPath);
+  if (!photoAlreadyExists) writePrivateFile(photoPath, foto.buffer);
+  try {
+    await updateJSON([STORAGE_PATH, IZIN_PATH, KONTAK_PATH], (draft) => {
+      if (!draft[KONTAK_PATH][userId]) throw new Error("Siswa sudah tidak terdaftar.");
+      const storage = draft[STORAGE_PATH];
+      const attendanceError = validateAttendance(
+        getDailyStudentStatus(storage, draft[IZIN_PATH], waktu.tanggal, userId),
+        tipe
       );
-    }
+      if (attendanceError) throw new Error(attendanceError);
 
-    storage[waktu.tanggal] ||= {};
-    storage[waktu.tanggal][userId] ||= {};
-    storage[waktu.tanggal][userId][tipe] = {
-      waktu: waktu.jam, lokasi, status, foto, nama: draft[KONTAK_PATH][userId],
-    };
-  });
+      const { mulai: mulaiAbsen, selesai: selesaiAbsen } = getAttendanceWindow(
+        jamResmi,
+        tipe
+      );
+      if (!isWithinAttendanceWindow(waktu.jam, mulaiAbsen, selesaiAbsen)) {
+        throw new Error(
+          `Absen ${tipe} hanya dapat dilakukan pukul ${String(
+            mulaiAbsen || "00:00"
+          ).slice(0, 5)}-${String(selesaiAbsen || "23:59").slice(0, 5)}.`
+        );
+      }
+
+      storage[waktu.tanggal] ||= {};
+      storage[waktu.tanggal][userId] ||= {};
+      storage[waktu.tanggal][userId][tipe] = {
+        waktu: waktu.jam,
+        lokasi,
+        status,
+        fotoPath: photoPath,
+        fotoMimeType: foto.mimetype,
+        fotoSize: foto.buffer.length,
+        nama: draft[KONTAK_PATH][userId],
+        kelas: kelasSiswa?.namaKelas || "",
+        waliKelas: kelasSiswa?.waliKelas || "",
+      };
+    });
+  } catch (error) {
+    if (!photoAlreadyExists) {
+      deletePrivateFileSafely(photoPath, ATTENDANCE_PHOTO_DIR, `foto absensi ${userId}`);
+    }
+    throw error;
+  }
 
   const mediaMsg = new MessageMedia(
     foto.mimetype,
@@ -548,7 +853,7 @@ async function catatAbsensiKamera(userId, tipe, lokasi, foto) {
     `*${kontak[userId] || userId}* telah absen *${tipe}*\n` +
     `Status: *${status}*\n` +
     `Jam: ${waktu.jam}`;
-  const penerima = getStudentNotificationRecipients(userId, findKelasSiswa(loadKelas(), userId));
+  const penerima = getStudentNotificationRecipients(userId, kelasSiswa);
   for (const id of penerima) {
     antreNotifikasi(
       () => kirimMediaAman(id, mediaMsg, caption),
@@ -606,6 +911,20 @@ client.on("qr", (qr) => {
 });
 
 client.on("ready", () => {
+  const expectedNumber = normalizeNomor(process.env.WA_EXPECTED_NUMBER);
+  const connectedNumber = normalizeNomor(client.info?.wid?._serialized);
+  if (!expectedNumber) {
+    console.warn(
+      `[Keamanan] WA_EXPECTED_NUMBER belum diatur. Akun bot aktif: ${connectedNumber || "tidak diketahui"}.`
+    );
+  }
+  if (expectedNumber && connectedNumber !== expectedNumber) {
+    console.error(
+      `❌ Akun WhatsApp yang terhubung (${connectedNumber || "tidak diketahui"}) bukan WA_EXPECTED_NUMBER.`
+    );
+    void shutdown("WA_ACCOUNT_MISMATCH", 1);
+    return;
+  }
   isReady = true;
   qrCodeData = null;
   console.clear();
@@ -636,7 +955,6 @@ client.on("message", safeAsyncListener(async (msg) => {
     console.log(`[WhatsApp ID] ${rawSender} -> ${sender}`);
   }
   const body = String(msg.body || "").trim().toLowerCase();
-  const storage = loadJSON(STORAGE_PATH);
   const kontak = loadJSON(KONTAK_PATH);
   const roles = loadJSON(ROLE_PATH);
   const jamResmi = loadJSON(JAM_PATH, {
@@ -719,7 +1037,7 @@ client.on("message", safeAsyncListener(async (msg) => {
     const tipe = body.startsWith("!masuk") ? "masuk" : "pulang";
     const nomor = sender.replace("@c.us", "");
     const attendanceError = validateAttendance(
-      getDailyStudentStatus(storage, loadIzin(), waktu.tanggal, sender),
+      loadDailyStudentStatus(waktu.tanggal, sender),
       tipe
     );
     if (attendanceError) return replyCommand(`❌ ${attendanceError}`);
@@ -760,7 +1078,7 @@ client.on("message", safeAsyncListener(async (msg) => {
     const alasan = msg.body.trim().slice(6).trim();
     if (alasan.length < 3) return replyCommand("⚠️ Alasan izin terlalu singkat.");
     const permissionError = validatePermission(
-      getDailyStudentStatus(storage, loadIzin(), waktu.tanggal, sender)
+      loadDailyStudentStatus(waktu.tanggal, sender)
     );
     if (permissionError) return replyCommand(`❌ ${permissionError}`);
 
@@ -785,9 +1103,18 @@ function parseCookies(req) {
   return Object.fromEntries(
     String(req.headers.cookie || "")
       .split(";")
-      .map((cookie) => cookie.trim().split("="))
-      .filter(([key, value]) => key && value)
-      .map(([key, value]) => [key, decodeURIComponent(value)])
+      .map((cookie) => {
+        const separator = cookie.indexOf("=");
+        if (separator < 1) return null;
+        const key = cookie.slice(0, separator).trim();
+        const value = cookie.slice(separator + 1);
+        try {
+          return [key, decodeURIComponent(value)];
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean)
   );
 }
 
@@ -875,6 +1202,11 @@ app.post("/api/permission-camera/:token/verify", async (req, res) => {
   const longitude = Number(req.body.longitude);
   const accuracy = Number(req.body.accuracy);
   if (!foto) return res.status(400).json({ error: "Selfie kamera tidak valid." });
+  try {
+    await validateImagePayload(foto);
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
   if (
     !Number.isFinite(latitude) ||
     !Number.isFinite(longitude) ||
@@ -919,6 +1251,11 @@ app.post("/api/permission-camera/:token/evidence", async (req, res) => {
   }
   const bukti = parseImageDataUrl(req.body.image);
   if (!bukti) return res.status(400).json({ error: "Foto bukti tidak valid." });
+  try {
+    await validateImagePayload(bukti);
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
 
   session.processing = true;
   const writtenFiles = [];
@@ -926,14 +1263,15 @@ app.post("/api/permission-camera/:token/evidence", async (req, res) => {
   try {
     ensureDir(IZIN_BUKTI_DIR);
     const requestId = crypto.randomUUID();
-    const buktiPath = `${IZIN_BUKTI_DIR}/${requestId}-bukti.jpg`;
-    const selfiePath = `${IZIN_BUKTI_DIR}/${requestId}-selfie.jpg`;
-    fs.writeFileSync(buktiPath, Buffer.from(bukti.data, "base64"));
+    const buktiPath = `${IZIN_BUKTI_DIR}/${requestId}-bukti.${imageExtension(bukti.mimetype)}`;
+    const selfiePath = `${IZIN_BUKTI_DIR}/${requestId}-selfie.${imageExtension(session.selfie.mimetype)}`;
+    writePrivateFile(buktiPath, bukti.buffer);
     writtenFiles.push(buktiPath);
-    fs.writeFileSync(selfiePath, Buffer.from(session.selfie.data, "base64"));
+    writePrivateFile(selfiePath, session.selfie.buffer);
     writtenFiles.push(selfiePath);
 
     const kontak = loadJSON(KONTAK_PATH);
+    const kelasSiswa = findKelasSiswa(loadKelas(), session.userId);
     await updateJSON([STORAGE_PATH, IZIN_PATH, KONTAK_PATH], (draft) => {
       if (!draft[KONTAK_PATH][session.userId]) throw new Error("Siswa sudah tidak terdaftar.");
       if (session.tanggal !== getWaktu().tanggal) throw new Error("Tautan sudah melewati tanggal pengajuan.");
@@ -955,12 +1293,13 @@ app.post("/api/permission-camera/:token/evidence", async (req, res) => {
           selfie: selfiePath,
           lokasi: session.lokasi,
           terverifikasiWajah: true,
+          kelas: kelasSiswa?.namaKelas || "",
+          waliKelas: kelasSiswa?.waliKelas || "",
       };
     });
     saved = true;
     permissionSessions.delete(token);
 
-    const kelasSiswa = findKelasSiswa(loadKelas(), session.userId);
     const caption =
       `📩 *Pengajuan Izin Siswa*\n` +
       `👤 Nama: *${kontak[session.userId] || session.userId}*\n` +
@@ -984,7 +1323,11 @@ app.post("/api/permission-camera/:token/evidence", async (req, res) => {
   } catch (error) {
     if (!saved) {
       for (const file of writtenFiles) {
-        try { fs.unlinkSync(file); } catch (cleanupError) { console.error("[Bukti Cleanup ERROR]", cleanupError.message); }
+        try {
+          deletePrivateFileSafely(file, IZIN_BUKTI_DIR, `bukti izin ${session.userId}`);
+        } catch (cleanupError) {
+          console.error("[Bukti Cleanup ERROR]", cleanupError.message);
+        }
       }
     }
     permissionSessions.delete(token);
@@ -1020,6 +1363,11 @@ app.post("/api/attendance-camera/:token", async (req, res) => {
   const foto = parseImageDataUrl(req.body.image);
   if (!foto) {
     return res.status(400).json({ error: "Hasil foto kamera tidak valid." });
+  }
+  try {
+    await validateImagePayload(foto);
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
   }
   if (
     !Number.isFinite(latitude) ||
@@ -1069,17 +1417,24 @@ app.post("/api/auth/request-otp", async (req, res) => {
   const nomor = normalizeNomor(req.body.nomor);
   const id = `${nomor}@c.us`;
   const role = loadRoles()[id];
-  if (!/^(admin|wali_kelas)$/.test(role || "")) {
-    return res.status(403).json({ error: "Nomor tidak memiliki akses dashboard." });
-  }
+  const genericResponse = {
+    ok: true,
+    message: "Jika nomor memiliki akses, OTP akan dikirim melalui WhatsApp.",
+  };
   if (!isReady) {
     return res.status(503).json({ error: "Bot WhatsApp belum terhubung." });
   }
+  if (!/^62\d{8,14}$/.test(nomor)) {
+    return res.json(genericResponse);
+  }
 
   if (otpCooldowns.get(id) > Date.now()) {
-    return res.status(429).json({ error: "Tunggu satu menit sebelum meminta OTP baru." });
+    return res.json(genericResponse);
   }
   otpCooldowns.set(id, Date.now() + 60_000);
+  if (!/^(admin|wali_kelas)$/.test(role || "")) {
+    return res.json(genericResponse);
+  }
   const code = String(crypto.randomInt(100000, 1000000));
   const issuedOtp = {
     hash: crypto.createHash("sha256").update(code).digest("hex"),
@@ -1088,20 +1443,19 @@ app.post("/api/auth/request-otp", async (req, res) => {
     attempts: 0,
   };
   loginOtps.set(id, issuedOtp);
-  try {
-    await sendWhatsappWithRetry(
+  void sendWhatsappWithRetry(
       () =>
         client.sendMessage(
           id,
           `🔐 *Kode Login Ruang Hadir*\n\nKode OTP: *${code}*\nBerlaku selama 5 menit. Jangan berikan kode ini kepada siapa pun.`
         ),
       { recipientId: id, priority: "high" }
-    );
-    res.json({ ok: true });
-  } catch (error) {
-    if (loginOtps.get(id) === issuedOtp) loginOtps.delete(id);
-    res.status(500).json({ error: "Gagal mengirim OTP ke WhatsApp." });
-  }
+    )
+    .catch((error) => {
+      if (loginOtps.get(id) === issuedOtp) loginOtps.delete(id);
+      console.error(`[OTP ERROR] ${id}:`, error.message);
+    });
+  res.json(genericResponse);
 });
 
 app.post("/api/auth/verify", async (req, res) => {
@@ -1114,12 +1468,12 @@ app.post("/api/auth/verify", async (req, res) => {
     .digest("hex");
   if (!otp || otp.expiresAt < Date.now()) {
     loginOtps.delete(id);
-    return res.status(400).json({ error: "Kode OTP sudah kedaluwarsa." });
+    return res.status(400).json({ error: "Kode OTP tidak valid atau kedaluwarsa." });
   }
   otp.attempts++;
   if (otp.attempts > 5 || otp.hash !== codeHash) {
     if (otp.attempts >= 5) loginOtps.delete(id);
-    return res.status(400).json({ error: "Kode OTP tidak sesuai." });
+    return res.status(400).json({ error: "Kode OTP tidak valid atau kedaluwarsa." });
   }
 
   const role = loadRoles()[id];
@@ -1132,7 +1486,7 @@ app.post("/api/auth/verify", async (req, res) => {
   webSessions.set(token, { id, nomor, nama, role, expiresAt: Date.now() + 8 * 60 * 60_000 });
   res.setHeader(
     "Set-Cookie",
-    `absensi_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800`
+    serializeSessionCookie(token, { secure: sessionCookieIsSecure(req) })
   );
   res.json({ ok: true, user: { nomor, nama, role } });
 });
@@ -1146,7 +1500,10 @@ app.get("/api/auth/me", (req, res) => {
 app.post("/api/auth/logout", (req, res) => {
   const token = parseCookies(req).absensi_session;
   if (token) webSessions.delete(token);
-  res.setHeader("Set-Cookie", "absensi_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
+  res.setHeader(
+    "Set-Cookie",
+    serializeSessionCookie("", { secure: sessionCookieIsSecure(req), maxAge: 0 })
+  );
   res.json({ ok: true });
 });
 
@@ -1167,11 +1524,9 @@ function dashboardData(user) {
     mulaiPulang: "00:00:00",
     selesaiPulang: "23:59:59",
   });
-  const izin = loadIzin();
-  const storage = loadJSON(STORAGE_PATH);
   const today = getWaktu().tanggal;
-  const absensiHariIni = storage[today] || {};
-  const izinHariIni = izin[today] || {};
+  const absensiHariIni = loadJSONSelected(STORAGE_PATH, (storage) => storage[today] || {});
+  const izinHariIni = loadJSONSelected(IZIN_PATH, (permissions) => permissions[today] || {});
 
   const siswaIds = new Set(
     Object.values(kelas).flatMap((data) => Object.keys(data.siswa || {}))
@@ -1212,7 +1567,7 @@ function dashboardData(user) {
       nama: dashboardUserName(user.id, user.role),
       role: user.role,
     },
-    faceService: { ready: true, ...facePool.status() },
+    faceService: facePool.status(),
   };
 }
 
@@ -1273,6 +1628,7 @@ app.delete("/api/admins/:number", requireWebAdmin, async (req, res) => {
 
 app.post("/api/classes", requireWebAdmin, async (req, res) => {
   const nama = String(req.body.nama || "").trim().toUpperCase();
+  const originalNama = String(req.body.originalNama || "").trim().toUpperCase();
   const waliKelas = normalizeNomor(req.body.waliKelas);
   const namaWali = toTitleCase(String(req.body.namaWali || "").trim());
   if (!nama || !/^62\d{8,14}$/.test(waliKelas) || !namaWali) {
@@ -1280,17 +1636,44 @@ app.post("/api/classes", requireWebAdmin, async (req, res) => {
   }
 
   const waliId = `${waliKelas}@c.us`;
-  await updateJSON([KELAS_PATH, ROLE_PATH, USER_NAMES_PATH], (draft) => {
-    const kelas = draft[KELAS_PATH];
-    const roles = draft[ROLE_PATH];
-    const waliSebelumnya = kelas[nama]?.waliKelas;
-    kelas[nama] = kelas[nama] || { siswa: {} };
-    kelas[nama].waliKelas = waliId;
-    kelas[nama].namaWali = namaWali;
-    if (roles[waliId] !== "admin") roles[waliId] = "wali_kelas";
-    draft[USER_NAMES_PATH][waliId] = namaWali;
-    removeUnusedWaliRole(waliSebelumnya, kelas, roles);
-  });
+  try {
+    await updateJSON([KELAS_PATH, ROLE_PATH, USER_NAMES_PATH], (draft) => {
+      const kelas = draft[KELAS_PATH];
+      const roles = draft[ROLE_PATH];
+      if (originalNama) {
+        if (!kelas[originalNama]) {
+          const error = new Error("Kelas yang diedit tidak ditemukan.");
+          error.code = "NOT_FOUND";
+          throw error;
+        }
+        if (originalNama !== nama && kelas[nama]) {
+          const error = new Error("Nama kelas baru sudah digunakan.");
+          error.code = "ALREADY_EXISTS";
+          throw error;
+        }
+        if (originalNama !== nama) {
+          kelas[nama] = kelas[originalNama];
+          delete kelas[originalNama];
+        }
+      } else if (kelas[nama]) {
+        const error = new Error("Kelas tersebut sudah tersedia.");
+        error.code = "ALREADY_EXISTS";
+        throw error;
+      }
+
+      const waliSebelumnya = kelas[nama]?.waliKelas;
+      kelas[nama] ||= { siswa: {} };
+      kelas[nama].waliKelas = waliId;
+      kelas[nama].namaWali = namaWali;
+      if (roles[waliId] !== "admin") roles[waliId] = "wali_kelas";
+      draft[USER_NAMES_PATH][waliId] = namaWali;
+      removeUnusedWaliRole(waliSebelumnya, kelas, roles);
+    });
+  } catch (error) {
+    if (error.code === "NOT_FOUND") return res.status(404).json({ error: error.message });
+    if (error.code === "ALREADY_EXISTS") return res.status(409).json({ error: error.message });
+    throw error;
+  }
   res.json({ ok: true });
 });
 
@@ -1323,14 +1706,19 @@ app.delete("/api/classes/:name", requireWebAdmin, async (req, res) => {
 
 app.post("/api/students", requireWebAdmin, async (req, res) => {
   const nomor = normalizeNomor(req.body.nomor);
+  const originalNomor = normalizeNomor(req.body.originalNomor);
   const nama = toTitleCase(String(req.body.nama || "").trim());
   const namaKelas = String(req.body.kelas || "").trim().toUpperCase();
   const orangTua = normalizeNomor(req.body.orangTua);
   if (!/^62\d{8,14}$/.test(nomor) || nama.length < 3) {
     return res.status(400).json({ error: "Nomor atau nama siswa belum valid." });
   }
+  if (originalNomor && !/^62\d{8,14}$/.test(originalNomor)) {
+    return res.status(400).json({ error: "Nomor siswa sebelumnya tidak valid." });
+  }
 
   const siswaId = `${nomor}@c.us`;
+  const originalSiswaId = originalNomor ? `${originalNomor}@c.us` : "";
   if (namaKelas && !loadKelas()[namaKelas]) {
     return res.status(400).json({ error: "Kelas belum tersedia." });
   }
@@ -1338,19 +1726,78 @@ app.post("/api/students", requireWebAdmin, async (req, res) => {
     return res.status(400).json({ error: "Nomor orang tua belum valid." });
   }
 
-  await updateJSON([KONTAK_PATH, KELAS_PATH], (draft) => {
-    const kontak = draft[KONTAK_PATH];
-    const kelas = draft[KELAS_PATH];
-    if (namaKelas && !kelas[namaKelas]) throw new Error("Kelas tidak lagi tersedia.");
-    kontak[siswaId] = nama;
-    for (const data of Object.values(kelas)) {
-      if (data.siswa) delete data.siswa[siswaId];
+  try {
+    await updateJSON([KONTAK_PATH, KELAS_PATH, STORAGE_PATH, IZIN_PATH], (draft) => {
+      const kontak = draft[KONTAK_PATH];
+      const kelas = draft[KELAS_PATH];
+      if (namaKelas && !kelas[namaKelas]) throw new Error("Kelas tidak lagi tersedia.");
+      if (originalSiswaId) {
+        if (!kontak[originalSiswaId]) {
+          const error = new Error("Siswa yang diedit tidak ditemukan.");
+          error.code = "NOT_FOUND";
+          throw error;
+        }
+        if (originalSiswaId !== siswaId && kontak[siswaId]) {
+          const error = new Error("Nomor WhatsApp baru sudah digunakan siswa lain.");
+          error.code = "ALREADY_EXISTS";
+          throw error;
+        }
+      } else if (kontak[siswaId]) {
+        const error = new Error("Nomor WhatsApp tersebut sudah terdaftar.");
+        error.code = "ALREADY_EXISTS";
+        throw error;
+      }
+
+      if (originalSiswaId && originalSiswaId !== siswaId) {
+        delete kontak[originalSiswaId];
+        for (const records of Object.values(draft[STORAGE_PATH])) {
+          if (!records?.[originalSiswaId]) continue;
+          if (records[siswaId]) {
+            const error = new Error("Riwayat nomor baru sudah tersedia.");
+            error.code = "ALREADY_EXISTS";
+            throw error;
+          }
+          records[siswaId] = records[originalSiswaId];
+          delete records[originalSiswaId];
+        }
+        for (const records of Object.values(draft[IZIN_PATH])) {
+          if (!records?.[originalSiswaId]) continue;
+          if (records[siswaId]) {
+            const error = new Error("Riwayat izin nomor baru sudah tersedia.");
+            error.code = "ALREADY_EXISTS";
+            throw error;
+          }
+          records[siswaId] = records[originalSiswaId];
+          delete records[originalSiswaId];
+        }
+      }
+
+      kontak[siswaId] = nama;
+      for (const data of Object.values(kelas)) {
+        if (!data.siswa) continue;
+        delete data.siswa[siswaId];
+        if (originalSiswaId) delete data.siswa[originalSiswaId];
+      }
+      if (namaKelas) {
+        kelas[namaKelas].siswa ||= {};
+        kelas[namaKelas].siswa[siswaId] = { nama, orangTua: `${orangTua}@c.us` };
+      }
+    });
+  } catch (error) {
+    if (error.code === "NOT_FOUND") return res.status(404).json({ error: error.message });
+    if (error.code === "ALREADY_EXISTS") return res.status(409).json({ error: error.message });
+    throw error;
+  }
+
+  if (originalNomor && originalNomor !== nomor) {
+    for (const root of [FACE_DB, FACE_REC]) {
+      moveManagedFile(
+        path.join(root, `${originalNomor}.jpg`),
+        path.join(root, `${nomor}.jpg`),
+        root
+      );
     }
-    if (namaKelas) {
-      kelas[namaKelas].siswa = kelas[namaKelas].siswa || {};
-      kelas[namaKelas].siswa[siswaId] = { nama, orangTua: `${orangTua}@c.us` };
-    }
-  });
+  }
   res.json({ ok: true });
 });
 
@@ -1358,16 +1805,43 @@ app.delete("/api/students/:number", requireWebAdmin, async (req, res) => {
   const nomor = normalizeNomor(req.params.number);
   const siswaId = `${nomor}@c.us`;
   let foundStudent = false;
-  await updateJSON([KONTAK_PATH, KELAS_PATH], (draft) => {
+  await updateJSON([KONTAK_PATH, KELAS_PATH, STORAGE_PATH, IZIN_PATH], (draft) => {
     const kontak = draft[KONTAK_PATH];
     if (!kontak[siswaId]) return;
     foundStudent = true;
+    const classSnapshot = findKelasSiswa(draft[KELAS_PATH], siswaId);
+    for (const records of Object.values(draft[STORAGE_PATH])) {
+      const attendance = records?.[siswaId];
+      if (!attendance) continue;
+      for (const record of [attendance.masuk, attendance.pulang]) {
+        if (!record) continue;
+        record.nama ||= kontak[siswaId];
+        record.kelas ||= classSnapshot?.namaKelas || "";
+        record.waliKelas ||= classSnapshot?.waliKelas || "";
+      }
+    }
+    for (const records of Object.values(draft[IZIN_PATH])) {
+      const permission = records?.[siswaId];
+      if (!permission) continue;
+      permission.nama ||= kontak[siswaId];
+      permission.kelas ||= classSnapshot?.namaKelas || "";
+      permission.waliKelas ||= classSnapshot?.waliKelas || "";
+    }
     delete kontak[siswaId];
     for (const data of Object.values(draft[KELAS_PATH])) {
       if (data.siswa) delete data.siswa[siswaId];
     }
   });
   if (!foundStudent) return res.status(404).json({ error: "Siswa tidak ditemukan." });
+  for (const root of [FACE_DB, FACE_REC]) {
+    deletePrivateFileSafely(path.join(root, `${nomor}.jpg`), root, `foto siswa ${nomor}`);
+  }
+  for (const [token, session] of [...cameraSessions, ...permissionSessions]) {
+    if (session.userId === siswaId) {
+      cameraSessions.delete(token);
+      permissionSessions.delete(token);
+    }
+  }
   res.json({ ok: true });
 });
 
@@ -1375,19 +1849,26 @@ app.post(
   "/api/students/:number/photo",
   requireWebPhotoManager,
   upload.single("photo"),
-  (req, res) => {
-  const nomor = normalizeNomor(req.params.number);
-  const siswaId = `${nomor}@c.us`;
-  if (!loadJSON(KONTAK_PATH)[siswaId]) {
-    return res.status(404).json({ error: "Siswa tidak ditemukan." });
-  }
-  if (!req.file || !req.file.mimetype.startsWith("image/")) {
-    return res.status(400).json({ error: "Pilih file foto yang valid." });
-  }
-  ensureDir(FACE_DB);
-  ensureDir(FACE_REC);
-  fs.writeFileSync(`${FACE_DB}/${nomor}.jpg`, req.file.buffer);
-  fs.writeFileSync(`${FACE_REC}/${nomor}.jpg`, req.file.buffer);
+  async (req, res) => {
+    const nomor = normalizeNomor(req.params.number);
+    const siswaId = `${nomor}@c.us`;
+    if (!loadJSON(KONTAK_PATH)[siswaId]) {
+      return res.status(404).json({ error: "Siswa tidak ditemukan." });
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: "Pilih file foto yang valid." });
+    }
+    try {
+      await validateImageBuffer(req.file.buffer);
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
+    }
+    writePrivateFile(path.join(FACE_REC, `${nomor}.jpg`), req.file.buffer);
+    deletePrivateFileSafely(
+      path.join(FACE_DB, `${nomor}.jpg`),
+      FACE_DB,
+      `foto duplikat ${nomor}`
+    );
     res.json({ ok: true });
   }
 );
@@ -1435,6 +1916,7 @@ app.post("/api/permissions", requireWebAdmin, async (req, res) => {
   const alasan = String(req.body.alasan || "").trim();
   const siswaId = `${nomor}@c.us`;
   const kontak = loadJSON(KONTAK_PATH);
+  const kelasSiswa = findKelasSiswa(loadKelas(), siswaId);
   if (!kontak[siswaId] || !isValidDate(tanggal) || alasan.length < 3) {
     return res.status(400).json({ error: "Data izin belum lengkap atau tidak valid." });
   }
@@ -1455,7 +1937,12 @@ app.post("/api/permissions", requireWebAdmin, async (req, res) => {
       }
       const izin = draft[IZIN_PATH];
       izin[tanggal] = izin[tanggal] || {};
-      izin[tanggal][siswaId] = { nama: kontak[siswaId], alasan };
+      izin[tanggal][siswaId] = {
+        nama: kontak[siswaId],
+        alasan,
+        kelas: kelasSiswa?.namaKelas || "",
+        waliKelas: kelasSiswa?.waliKelas || "",
+      };
     });
   } catch (error) {
     if (error.code === "ATTENDANCE_CONFLICT") {
@@ -1464,7 +1951,6 @@ app.post("/api/permissions", requireWebAdmin, async (req, res) => {
     throw error;
   }
 
-  const kelasSiswa = findKelasSiswa(loadKelas(), siswaId);
   if (kelasSiswa) {
     const pesan =
       `📩 *Izin Siswa*\n` +
@@ -1479,86 +1965,112 @@ app.post("/api/permissions", requireWebAdmin, async (req, res) => {
 });
 
 app.delete("/api/permissions/:date/:number", requireWebAdmin, async (req, res) => {
+  if (!isValidDate(req.params.date)) {
+    return res.status(400).json({ error: "Tanggal izin tidak valid." });
+  }
   const siswaId = `${normalizeNomor(req.params.number)}@c.us`;
+  const filesToDelete = [];
+  let found = false;
   await updateJSON(IZIN_PATH, (draft) => {
     const izin = draft[IZIN_PATH];
-    if (izin[req.params.date]) delete izin[req.params.date][siswaId];
+    const record = izin[req.params.date]?.[siswaId];
+    if (!record) return;
+    found = true;
+    if (record.bukti) filesToDelete.push(record.bukti);
+    if (record.selfie) filesToDelete.push(record.selfie);
+    delete izin[req.params.date][siswaId];
+    if (!Object.keys(izin[req.params.date]).length) delete izin[req.params.date];
   });
+  if (!found) return res.status(404).json({ error: "Izin tidak ditemukan." });
+  for (const file of filesToDelete) {
+    deletePrivateFileSafely(file, IZIN_BUKTI_DIR, `bukti izin ${siswaId}`);
+  }
   res.json({ ok: true });
 });
 
 app.get("/api/permissions/:date/:number/evidence", (req, res) => {
   const siswaId = `${normalizeNomor(req.params.number)}@c.us`;
+  const permission = loadIzin()[req.params.date]?.[siswaId];
   if (
     req.webUser.role === "wali_kelas" &&
+    permission?.waliKelas !== req.webUser.id &&
     !findKelasSiswa(kelasUntukWali(loadKelas(), req.webUser.id), siswaId)
   ) {
     return res.status(403).json({ error: "Siswa bukan anggota kelas kamu." });
   }
-  const bukti = loadIzin()[req.params.date]?.[siswaId]?.bukti;
-  if (!bukti || !fs.existsSync(bukti)) {
+  const bukti = permission?.bukti;
+  if (!isManagedPath(bukti, IZIN_BUKTI_DIR) || !fs.existsSync(bukti)) {
     return res.status(404).json({ error: "Foto bukti tidak ditemukan." });
   }
-  res.sendFile(require("path").resolve(bukti));
+  res.sendFile(path.resolve(bukti));
 });
 
-app.get("/api/report", (req, res) => {
-  const tanggal = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || "")
-    ? req.query.date
-    : getWaktu().tanggal;
+function buildReportRows(user, tanggal) {
   const kontak = loadJSON(KONTAK_PATH);
-  const storage = loadJSON(STORAGE_PATH)[tanggal] || {};
-  const izin = loadIzin()[tanggal] || {};
+  const storage = loadJSONSelected(STORAGE_PATH, (records) => records[tanggal] || {});
+  const izin = loadJSONSelected(IZIN_PATH, (records) => records[tanggal] || {});
   const kelas = loadKelas();
-  const kelasWali = kelasUntukWali(kelas, req.webUser.id);
-  const rows = Object.entries(kontak)
-    .filter(
-      ([id]) =>
-        req.webUser.role === "admin" || Boolean(findKelasSiswa(kelasWali, id))
-    )
-    .map(([id, nama]) => ({
-    nomor: id.replace("@c.us", ""),
-    nama,
-    kelas: findKelasSiswa(kelas, id)?.namaKelas || "-",
-    masuk: storage[id]?.masuk?.waktu || "-",
-    statusMasuk: storage[id]?.masuk?.status || "-",
-    pulang: storage[id]?.pulang?.waktu || "-",
-    statusPulang: storage[id]?.pulang?.status || "-",
-    izin: izin[id]?.alasan || "",
-    buktiIzin: Boolean(izin[id]?.bukti),
-  }));
+  const kelasWali = kelasUntukWali(kelas, user.id);
+  const studentIds = new Set([
+    ...Object.keys(kontak),
+    ...Object.keys(storage),
+    ...Object.keys(izin),
+  ]);
+  return [...studentIds]
+    .filter((id) => {
+      if (user.role === "admin") return true;
+      if (findKelasSiswa(kelasWali, id)) return true;
+      const snapshot = storage[id]?.masuk || storage[id]?.pulang || izin[id];
+      return snapshot?.waliKelas === user.id;
+    })
+    .map((id) => {
+      const attendance = storage[id] || {};
+      const permission = izin[id];
+      const snapshot = attendance.masuk || attendance.pulang || permission || {};
+      return {
+        nomor: id.replace("@c.us", ""),
+        nama: kontak[id] || snapshot.nama || "Siswa tidak aktif",
+        kelas: findKelasSiswa(kelas, id)?.namaKelas || snapshot.kelas || "-",
+        masuk: attendance.masuk?.waktu || "-",
+        statusMasuk: attendance.masuk?.status || "-",
+        pulang: attendance.pulang?.waktu || "-",
+        statusPulang: attendance.pulang?.status || "-",
+        izin: permission?.alasan || "",
+        buktiIzin: Boolean(permission?.bukti),
+        aktif: Boolean(kontak[id]),
+      };
+    });
+}
+
+app.get("/api/report", (req, res) => {
+  const tanggal = isValidDate(req.query.date) ? req.query.date : getWaktu().tanggal;
+  const rows = buildReportRows(req.webUser, tanggal);
   res.json({ tanggal, rows });
 });
 
-app.get("/api/export", (req, res) => {
-  const tanggal = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || "")
-    ? req.query.date
-    : getWaktu().tanggal;
-  const kontak = loadJSON(KONTAK_PATH);
-  const storage = loadJSON(STORAGE_PATH)[tanggal] || {};
-  const izin = loadIzin()[tanggal] || {};
-  const kelas = loadKelas();
-  const kelasWali = kelasUntukWali(kelas, req.webUser.id);
-  const rows = Object.entries(kontak)
-    .filter(
-      ([id]) =>
-        req.webUser.role === "admin" || Boolean(findKelasSiswa(kelasWali, id))
-    )
-    .map(([id, nama]) => ({
+app.get("/api/export", async (req, res) => {
+  const tanggal = isValidDate(req.query.date) ? req.query.date : getWaktu().tanggal;
+  const rows = buildReportRows(req.webUser, tanggal).map((row) => ({
     Tanggal: tanggal,
-    Nama: nama,
-    Kelas: findKelasSiswa(kelas, id)?.namaKelas || "",
-    Masuk: storage[id]?.masuk?.waktu || (izin[id] ? "IZIN" : ""),
-    StatusMasuk: storage[id]?.masuk?.status || izin[id]?.alasan || "",
-    Pulang: storage[id]?.pulang?.waktu || "",
-    StatusPulang: storage[id]?.pulang?.status || "",
+    Nama: row.nama,
+    Kelas: row.kelas === "-" ? "" : row.kelas,
+    Masuk: row.masuk === "-" ? (row.izin ? "IZIN" : "") : row.masuk,
+    StatusMasuk: row.statusMasuk === "-" ? row.izin : row.statusMasuk,
+    Pulang: row.pulang === "-" ? "" : row.pulang,
+    StatusPulang: row.statusPulang === "-" ? "" : row.statusPulang,
   }));
-  const buffer = exportExcel(rows);
+  const buffer = await exportExcel(rows);
   res.attachment(`Rekap-${tanggal}.xlsx`);
   res.send(buffer);
 });
 
-app.get("/qr", (req, res) => {
+function requireQrAccess(req, res, next) {
+  if (isQrRequestAllowed(req)) return next();
+  res.setHeader("WWW-Authenticate", 'Basic realm="Ruang Hadir QR", charset="UTF-8"');
+  return res.status(401).send("Akses QR hanya tersedia secara lokal atau dengan QR_ACCESS_TOKEN.");
+}
+
+app.get("/qr", requireQrAccess, (req, res) => {
   if (isReady) {
     return res.send(`
       <html>
@@ -1619,28 +2131,53 @@ app.get("/qr", (req, res) => {
 `);
 });
 
-app.listen(PORT, () => {
-  console.log(`🌐 Akses QR di: http://localhost:${PORT}/qr`);
-  if (!process.env.PUBLIC_BASE_URL) {
-    console.warn(
-      "⚠️ PUBLIC_BASE_URL belum diatur. Tautan kamera hanya akan memakai localhost dan tidak dapat dibuka dari ponsel lain."
-    );
-  } else if (!publicBaseUrl().startsWith("https://")) {
-    console.warn(
-      "⚠️ PUBLIC_BASE_URL sebaiknya memakai HTTPS agar kamera dan GPS diizinkan browser ponsel."
-    );
+app.use((error, req, res, next) => {
+  if (res.headersSent) return next(error);
+  if (error instanceof multer.MulterError) {
+    const status = error.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+    return res.status(status).json({ error: "Unggahan tidak valid atau terlalu besar." });
   }
+  if (error?.type === "entity.too.large") {
+    return res.status(413).json({ error: "Ukuran permintaan terlalu besar." });
+  }
+  if (error instanceof SyntaxError && error.status === 400) {
+    return res.status(400).json({ error: "Format JSON tidak valid." });
+  }
+  console.error(`[HTTP ERROR] ${req.method} ${req.path}:`, error);
+  return res.status(500).json({ error: "Terjadi kesalahan pada server." });
 });
+
+let httpServer = null;
+
+function startHttpServer() {
+  httpServer = app.listen(PORT, () => {
+    console.log(`🌐 Akses QR lokal di: http://localhost:${PORT}/qr`);
+    if (!process.env.PUBLIC_BASE_URL) {
+      console.warn(
+        "⚠️ PUBLIC_BASE_URL belum diatur. Tautan kamera hanya akan memakai localhost dan tidak dapat dibuka dari ponsel lain."
+      );
+    } else if (!publicBaseUrl().startsWith("https://")) {
+      console.warn(
+        "⚠️ PUBLIC_BASE_URL sebaiknya memakai HTTPS agar kamera dan GPS diizinkan browser ponsel."
+      );
+    }
+  });
+}
 
 async function startBot() {
   try {
     jsonState.replace(await initJsonStore(JSON_STORES));
     console.log(`Database Sequelize siap: ${DB_PATH}`);
+    hardenSensitiveStorage();
+    cleanupOrphanedFaceFiles();
+    const migratedPhotos = await migrateEmbeddedAttendancePhotos();
+    if (migratedPhotos) await compactDatabase();
   } catch (error) {
     console.error("Gagal inisialisasi database:", error);
     await shutdown("DATABASE_INIT_FAILED", 1);
     return;
   }
+  startHttpServer();
   try {
     await client.initialize();
   } catch (error) {
@@ -1655,6 +2192,11 @@ async function shutdown(signal, exitCode = 0) {
   isShuttingDown = true;
   console.log(`Menutup aplikasi (${signal})...`);
   try {
+    if (httpServer) {
+      httpServer.closeAllConnections?.();
+      await new Promise((resolve) => httpServer.close(resolve));
+      httpServer = null;
+    }
     await facePool.close();
     await client.destroy();
   } catch (error) {
