@@ -2,10 +2,31 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   adaptIncomingMessage,
+  RecentMessageStore,
   sessionDefinitions,
   toAppUserId,
   toBaileysJid,
 } = require("../lib/baileys-manager");
+
+test("keeps recent messages available for WhatsApp decryption retries", () => {
+  let now = 1_000;
+  const store = new RecentMessageStore({ maxEntries: 2, ttlMs: 100, now: () => now });
+  const first = { conversation: "pertama" };
+  const second = { conversation: "kedua" };
+  const third = { conversation: "ketiga" };
+
+  store.set({ id: "one" }, first);
+  store.set({ id: "two" }, second);
+  assert.equal(store.get({ id: "one", remoteJid: "different-format@lid" }), first);
+
+  store.set({ id: "three" }, third);
+  assert.equal(store.get({ id: "one" }), undefined);
+  assert.equal(store.get({ id: "two" }), second);
+
+  now += 101;
+  assert.equal(store.get({ id: "two" }), undefined);
+  assert.equal(store.get({ id: "three" }), undefined);
+});
 
 test("converts IDs between application and Baileys formats", () => {
   assert.equal(toAppUserId("628123456789:4@s.whatsapp.net"), "628123456789@c.us");
