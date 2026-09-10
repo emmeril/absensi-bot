@@ -13,7 +13,8 @@ Ruang Hadir adalah aplikasi absensi sekolah berbasis WhatsApp dengan verifikasi 
 - Ekspor laporan ke Excel.
 - Login dashboard menggunakan OTP yang dikirim melalui WhatsApp.
 - Multi-bot Baileys: satu bot utama dan satu sesi bot untuk setiap nomor wali kelas.
-- Penyimpanan lokal menggunakan SQLite dengan transaksi atomik untuk pembaruan terkait.
+- Absensi disimpan sebagai baris SQLite terindeks; data JSON lama dimigrasikan otomatis saat startup.
+- Notifikasi memakai outbox SQLite persisten, sehingga antrean dilanjutkan setelah restart.
 - Ekspor Excel dibuat dalam buffer terpisah untuk setiap permintaan.
 
 ## Perintah WhatsApp aktif
@@ -91,7 +92,8 @@ Variabel lingkungan opsional:
 | `WA_LOG_LEVEL` | `silent` | Level log internal Baileys |
 | `FACE_WORKER_COUNT` | `1` | Jumlah worker verifikasi wajah; tambah hanya jika RAM dan CPU mencukupi |
 | `FACE_QUEUE_LIMIT` | `100` | Batas antrean verifikasi wajah |
-| `FACE_TIMEOUT_MS` | `60000` | Batas waktu verifikasi wajah dalam milidetik |
+| `FACE_ESTIMATED_JOB_MS` | `2500` | Estimasi awal durasi verifikasi untuk admission control; disesuaikan otomatis saat runtime |
+| `FACE_TIMEOUT_MS` | `60000` | Deadline total verifikasi sejak request masuk, termasuk waktu antre |
 | `FACE_SLOW_LOG_MS` | `10000` | Catat verifikasi yang melampaui durasi ini sebagai log performa |
 | `FACE_REFERENCE_CACHE_LIMIT` | `500` | Jumlah descriptor foto referensi yang disimpan per worker |
 | `FACE_TINY_INPUT_SIZE` | `320` | Resolusi detektor wajah cepat; kelipatan 32 antara 128–608 |
@@ -100,8 +102,12 @@ Variabel lingkungan opsional:
 | `WA_SEND_RETRY_BASE_DELAY_MS` | `5000` | Jeda awal retry pengiriman WhatsApp dalam milidetik |
 | `WA_SEND_RETRY_MAX_DELAY_MS` | `60000` | Batas maksimum jeda retry pengiriman WhatsApp dalam milidetik |
 | `WA_SEND_RETRY_JITTER_RATIO` | `0.35` | Variasi acak jeda retry (`0` sampai `1`) untuk menghindari burst |
-| `NOTIFICATION_CONCURRENCY` | `2` | Jumlah notifikasi yang dikirim bersamaan |
-| `NOTIFICATION_QUEUE_LIMIT` | `200` | Batas antrean notifikasi |
+| `NOTIFICATION_OUTBOX_CONCURRENCY` | `4` | Jumlah pekerjaan outbox yang dapat berjalan paralel; ritme tiap akun bot tetap dibatasi |
+| `NOTIFICATION_OUTBOX_POLL_MS` | `2000` | Interval pemeriksaan pekerjaan notifikasi di SQLite |
+| `NOTIFICATION_RETRY_BASE_DELAY_MS` | `15000` | Jeda awal retry outbox setelah seluruh retry pengiriman gagal |
+| `NOTIFICATION_RETRY_MAX_DELAY_MS` | `900000` | Jeda maksimum retry outbox |
+| `NOTIFICATION_MAX_ATTEMPTS` | `12` | Batas percobaan outbox sebelum ditandai gagal |
+| `NOTIFICATION_SENT_RETENTION_MS` | `604800000` | Lama riwayat notifikasi berhasil dipertahankan |
 | `WA_SEND_SAFETY_MODE` | `automatic` | Proteksi ritme kirim otomatis: `automatic`, `conservative`, atau `off`; mode otomatis direkomendasikan |
 | `WA_SEND_MIN_INTERVAL_MS` | `1000` | Jeda minimum antar pengiriman |
 | `WA_SEND_MAX_INTERVAL_MS` | `2200` | Jeda maksimum antar pengiriman; jeda acak membantu mencegah burst |
@@ -171,7 +177,7 @@ Pengujian mencakup aturan absensi, validasi lokasi, QR SVG, antrean tugas, dan n
 ```text
 index.js                 Server, bot WhatsApp, dan API dashboard
 public/index.html        Antarmuka dashboard web
-models/database.js       Penyimpanan SQLite melalui Sequelize
+models/database.js       Tabel absensi, outbox notifikasi, dan konfigurasi SQLite
 lib/                     Aturan dan utilitas aplikasi
 services/                Pool worker dan layanan verifikasi wajah
 workers/face-worker.js   Worker pemrosesan wajah

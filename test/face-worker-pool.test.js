@@ -80,3 +80,48 @@ test("FaceWorkerPool tidak membuat pengganti ketika sedang ditutup", async () =>
 
   assert.equal(workers.length, 1);
 });
+
+test("FaceWorkerPool menolak antrean yang diperkirakan melewati deadline", async () => {
+  const workers = [];
+  const pool = new FaceWorkerPool({
+    size: 1,
+    timeoutMs: 150,
+    estimatedJobMs: 100,
+    workerFactory: () => {
+      const worker = new FakeWorker();
+      workers.push(worker);
+      return worker;
+    },
+  });
+
+  const active = pool.verify("6281", Buffer.from("photo")).promise;
+  assert.throws(
+    () => pool.verify("6282", Buffer.from("photo")),
+    (error) => error.code === "FACE_QUEUE_DEADLINE"
+  );
+  workers[0].emit("message", { jobId: 1, result: { match: true } });
+  await active;
+  await pool.close();
+});
+
+test("FaceWorkerPool menghitung deadline sejak pekerjaan masuk", async () => {
+  const workers = [];
+  const pool = new FaceWorkerPool({
+    size: 1,
+    timeoutMs: 50,
+    estimatedJobMs: 20,
+    workerFactory: () => {
+      const worker = new FakeWorker();
+      workers.push(worker);
+      return worker;
+    },
+  });
+
+  const keepAlive = setTimeout(() => {}, 100);
+  const job = pool.verify("6281", Buffer.from("photo")).promise;
+  await assert.rejects(job, (error) => error.code === "FACE_DEADLINE_EXCEEDED");
+  clearTimeout(keepAlive);
+  assert.equal(workers[0].terminateCalls, 1);
+  await new Promise((resolve) => setImmediate(resolve));
+  await pool.close();
+});

@@ -105,7 +105,10 @@ async function verifyFace(id, photo) {
     throw error;
   }
 
-  const selfieBuffer = Buffer.from(String(photo).split(",").pop(), "base64");
+  const selfieBuffer =
+    Buffer.isBuffer(photo) || ArrayBuffer.isView(photo)
+      ? Buffer.from(photo.buffer, photo.byteOffset, photo.byteLength)
+      : Buffer.from(String(photo).split(",").pop(), "base64");
   const selfieCanvas = await imageToCanvas(selfieBuffer);
   const referenceFaceDescriptor = await referenceDescriptor(referenceFile);
   const selfieDescriptor = await detectFaceDescriptor(selfieCanvas, "foto selfie");

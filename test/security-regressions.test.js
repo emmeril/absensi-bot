@@ -56,22 +56,23 @@ test("simultaneous exports retain each user's filtered report", async (t) => {
     next();
   });
   const context = {
-    app, ExcelJS, Buffer, KONTAK_PATH: "contacts", STORAGE_PATH: "attendance", IZIN_PATH: "permissions",
+    app, ExcelJS, Buffer, KONTAK_PATH: "contacts", IZIN_PATH: "permissions",
     loadJSON: (key) => key === "contacts" ? { [ids.a]: "Student A", [ids.b]: "Student B" } : {},
-    loadJSONSelected: (key, select) => select(
-      key === "attendance"
-        ? { "2026-09-09": { [ids.deleted]: { masuk: { waktu: "07:01:00", status: "Tepat Waktu", nama: "Former Student", kelas: "A", waliKelas: "teacher" } } } }
-        : {}
-    ),
+    loadJSONSelected: (_key, select) => select({}),
+    attendanceForDate: async () => ({
+      [ids.deleted]: {
+        masuk: { waktu: "07:01:00", status: "Tepat Waktu", nama: "Former Student", kelas: "A", waliKelas: "teacher" },
+      },
+    }),
     loadIzin: () => ({}), getWaktu: () => ({ tanggal: "2026-09-09" }),
     isValidDate: (value) => /^\d{4}-\d{2}-\d{2}$/.test(value || ""),
     loadKelas: () => ({ A: { waliKelas: "teacher", siswa: { [ids.a]: {} } }, B: { waliKelas: "other", siswa: { [ids.b]: {} } } }),
   };
   for (const [start, end] of [
     ["async function exportExcel(", "function ensureDir"],
-    ["function findKelasSiswa(", "async function kirimPesanAman"],
+    ["function findKelasSiswa(", "function textNotification"],
     ["function kelasUntukWali(", "function removeUnusedWaliRole"],
-    ["function buildReportRows(", 'function requireQrAccess'],
+    ["async function buildReportRows(", 'function requireQrAccess'],
   ]) vm.runInNewContext(source.slice(source.indexOf(start), source.indexOf(end)), context);
   const server = app.listen(0, "127.0.0.1");
   t.after(() => { server.closeAllConnections(); server.close(); });
@@ -112,19 +113,46 @@ function automaticFlowFixture() {
     writeBatch: async () => {},
   });
   const routes = {}, files = new Map(), sessions = new Map();
+  const attendanceRecords = new Map();
+  const outbox = [];
+  const attendanceKey = (record) => `${record.tanggal}:${record.siswaId}:${record.tipe}`;
   const context = {
     ...require("../lib/attendance-rules"), crypto, Buffer,
     STORAGE_PATH: "storage", IZIN_PATH: "permissions", KONTAK_PATH: "contacts",
     JAM_PATH: "time", LOKASI_PATH: "location", IZIN_BUKTI_DIR: "evidence",
+    ATTENDANCE_PHOTO_DIR: "attendance",
     loadJSON: (key, fallback) => state.read(key, fallback),
+    loadJSONSelected: (key, select, fallback) => state.readSelected(key, select, fallback),
+    jsonState: state,
     updateJSON: (keys, mutate) => state.update(keys, mutate),
+    updateJSONAtomic: (keys, mutate, databaseMutate) =>
+      state.transact(keys, mutate, (_draft, result) =>
+        databaseMutate({ result, transaction: {} })
+      ),
+    attendanceStatus: async (tanggal, siswaId) => ({
+      masuk: attendanceRecords.has(`${tanggal}:${siswaId}:masuk`),
+      pulang: attendanceRecords.has(`${tanggal}:${siswaId}:pulang`),
+    }),
+    createAttendance: async (record) => {
+      const key = attendanceKey(record);
+      if (attendanceRecords.has(key)) {
+        const error = new Error("duplicate");
+        error.name = "SequelizeUniqueConstraintError";
+        throw error;
+      }
+      attendanceRecords.set(key, structuredClone(record));
+    },
+    withDatabaseTransaction: async (work) => work({}),
+    enqueueNotifications: async (jobs) => outbox.push(...jobs),
+    textNotification: (botKey, recipientId, text, options = {}) => ({ botKey, recipientId, kind: "text", text, ...options }),
+    imageNotification: (botKey, recipientId, mediaPath, text, options = {}) => ({ botKey, recipientId, kind: "image", mediaPath, text, ...options }),
+    notificationOutboxProcessor: { wake() {} },
     getWaktu: () => ({ tanggal: "2026-09-09", jam: "07:00:00" }),
     getAttendanceStatus: () => "Tepat Waktu",
     getAttendanceWindow: () => ({ mulai: "00:00", selesai: "23:59" }),
     haversine: () => 0, ATTENDANCE_RADIUS_METERS: 100,
     findKelasSiswa: () => null, loadKelas: () => ({}),
     getStudentNotificationRecipients: () => [],
-    antreNotifikasi: () => {}, kirimPesanAman: async () => {},
     app: { post: (route, handler) => { routes[route] = handler; } },
     permissionSessions: sessions, getPermissionSession: (token) => sessions.get(token),
     parseImageDataUrl: (image) => image ? { mimetype: "image/jpeg", data: "dGVzdA==", buffer: Buffer.from("test") } : null,
@@ -139,7 +167,7 @@ function automaticFlowFixture() {
   };
   vm.runInNewContext(source.slice(source.indexOf("async function catatAbsensiKamera"), source.indexOf("const whatsapp = new BaileysManager")), context);
   vm.runInNewContext(source.slice(source.indexOf('app.post("/api/permission-camera/:token/evidence"'), source.indexOf('app.get("/api/attendance-camera/:token"')), context);
-  return { context, state, routes, files, sessions };
+  return { context, state, routes, files, sessions, attendanceRecords, outbox };
 }
 
 function fakeResponse() {
@@ -147,18 +175,22 @@ function fakeResponse() {
 }
 
 test("masuk and pulang record automatically; concurrent duplicates commit once", async () => {
-  const { context, state } = automaticFlowFixture();
+  const { context, attendanceRecords } = automaticFlowFixture();
   const foto = { mimetype: "image/jpeg", data: "dGVzdA==", buffer: Buffer.from("test") };
   for (const tipe of ["masuk", "pulang"]) {
     const results = await Promise.allSettled([
       context.catatAbsensiKamera("student", tipe, {}, foto),
       context.catatAbsensiKamera("student", tipe, {}, foto),
     ]);
-    assert.equal(results.filter((item) => item.status === "fulfilled").length, 1);
+    assert.equal(
+      results.filter((item) => item.status === "fulfilled").length,
+      1,
+      results.map((item) => item.reason?.stack || item.status).join("\n")
+    );
     const result = results.find((item) => item.status === "fulfilled").value;
     assert.equal(result.status, "Tepat Waktu");
     assert.equal(result.pending, undefined);
-    const record = state.read("storage")["2026-09-09"].student[tipe];
+    const record = attendanceRecords.get(`2026-09-09:student:${tipe}`);
     assert.equal(record.waktu, "07:00:00");
     assert.equal(record.foto, undefined);
     assert.equal(record.fotoPath, "attendance/photo.jpg");
@@ -167,13 +199,13 @@ test("masuk and pulang record automatically; concurrent duplicates commit once",
 
 test("automatic attendance still rejects permission conflicts, outside location, and closed schedule", async () => {
   for (const mode of ["permission", "location", "schedule", "removed"]) {
-    const { context, state } = automaticFlowFixture();
+    const { context, state, attendanceRecords } = automaticFlowFixture();
     if (mode === "permission") await state.update("permissions", (draft) => { draft.permissions["2026-09-09"] = { student: { alasan: "sakit" } }; });
     if (mode === "location") context.haversine = () => 101;
     if (mode === "schedule") context.getAttendanceWindow = () => ({ mulai: "08:00", selesai: "09:00" });
     if (mode === "removed") await state.update("contacts", (draft) => { delete draft.contacts.student; });
     await assert.rejects(context.catatAbsensiKamera("student", "masuk", {}, {}));
-    assert.deepEqual(state.read("storage"), {});
+    assert.equal(attendanceRecords.size, 0);
   }
 });
 

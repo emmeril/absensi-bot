@@ -14,10 +14,26 @@ const crypto = require("crypto");
 const { loadImage } = require("canvas");
 const {
   DB_PATH,
+  attendanceForDate,
+  attendanceStatus,
+  cancelNotificationsForMediaPaths,
+  claimNextNotification,
   closeDatabase,
   compactDatabase,
+  createAttendance,
+  enqueueNotifications,
+  fillAttendanceSnapshot,
   initJsonStore,
+  markNotificationSent,
+  migrateLegacyAttendance,
+  notificationOutboxStats,
+  purgeSentNotifications,
+  recoverNotificationOutbox,
+  renameAttendanceStudent,
+  renamePendingNotificationRecipient,
+  rescheduleNotification,
   saveJsonBatch,
+  withDatabaseTransaction,
 } = require("./models/database");
 const { BaileysManager } = require("./lib/baileys-manager");
 const { qrToSvg } = require("./lib/qr-svg");
@@ -26,7 +42,10 @@ const {
   locationRejectionMessage,
 } = require("./lib/location-message");
 const { FaceWorkerPool } = require("./services/face-worker-pool");
-const { TaskQueue } = require("./lib/task-queue");
+const {
+  NotificationOutboxProcessor,
+  mediaForOutboxJob,
+} = require("./services/notification-outbox");
 const { JsonState } = require("./lib/json-state");
 const { safeAsyncListener } = require("./lib/safe-async-listener");
 const {
@@ -47,7 +66,6 @@ const {
   writePrivateFile,
 } = require("./lib/private-files");
 const {
-  getDailyStudentStatus,
   getArrivalStatus,
   isWithinAttendanceWindow,
   validateAttendance,
@@ -185,28 +203,34 @@ const facePool = new FaceWorkerPool({
   size: Number(process.env.FACE_WORKER_COUNT) || 1,
   maxQueue: Number(process.env.FACE_QUEUE_LIMIT) || 100,
   timeoutMs: Number(process.env.FACE_TIMEOUT_MS) || 60000,
+  estimatedJobMs: Number(process.env.FACE_ESTIMATED_JOB_MS) || 2500,
 });
-const notificationQueue = new TaskQueue({
-  concurrency: Number(process.env.NOTIFICATION_CONCURRENCY) || 2,
-  maxQueue: Number(process.env.NOTIFICATION_QUEUE_LIMIT) || 200,
-});
-const sendWhatsappWithRetry = createWhatsappSender({
-  shouldRetry: isRetryableWhatsappError,
-  onRetry: ({ attempt, delayMs, error }) => {
-    console.warn(
-      `[WhatsApp Retry] Percobaan ulang ${attempt} dalam ${delayMs} ms:`,
-      error.message
-    );
-  },
-  onThrottle: ({ delayMs, queueSize }) => {
-    if (delayMs >= 10_000) {
-      console.log(
-        `[WhatsApp Safety] Menunggu ${delayMs} ms (antrean: ${queueSize}).`
-      );
-    }
-  },
-});
+const whatsappSenders = new Map();
+
+function sendWhatsappWithRetry(send, metadata = {}) {
+  const senderKey = metadata.senderKey || "main";
+  if (!whatsappSenders.has(senderKey)) {
+    whatsappSenders.set(senderKey, createWhatsappSender({
+      shouldRetry: isRetryableWhatsappError,
+      onRetry: ({ attempt, delayMs, error }) => {
+        console.warn(
+          `[WhatsApp Retry ${senderKey}] Percobaan ulang ${attempt} dalam ${delayMs} ms:`,
+          error.message
+        );
+      },
+      onThrottle: ({ delayMs, queueSize }) => {
+        if (delayMs >= 10_000) {
+          console.log(
+            `[WhatsApp Safety ${senderKey}] Menunggu ${delayMs} ms (antrean: ${queueSize}).`
+          );
+        }
+      },
+    }));
+  }
+  return whatsappSenders.get(senderKey)(send, metadata);
+}
 const activeFaceJobs = new Set();
+let notificationOutboxProcessor = null;
 
 function cloneData(data) {
   return JSON.parse(JSON.stringify(data));
@@ -225,6 +249,14 @@ async function saveJSON(path, data) {
 }
 async function updateJSON(paths, mutate) {
   return jsonState.update(paths, mutate);
+}
+async function updateJSONAtomic(paths, mutate, databaseMutate) {
+  return jsonState.transact(paths, mutate, (draft, result) =>
+    withDatabaseTransaction(async (transaction) => {
+      await saveJsonBatch(draft, { transaction });
+      await databaseMutate({ draft, result, transaction });
+    })
+  );
 }
 function getWaktu() {
   const now = moment();
@@ -418,8 +450,10 @@ async function validateImageBuffer(buffer) {
   return metadata;
 }
 
-async function validateImagePayload(image) {
-  const metadata = await validateImageBuffer(image.buffer);
+async function validateImagePayload(image, { decode = true } = {}) {
+  const metadata = decode
+    ? await validateImageBuffer(image.buffer)
+    : validateImageMetadata(image.buffer);
   image.mimetype = metadata.mimetype;
   return image;
 }
@@ -512,7 +546,7 @@ function hardenSensitiveStorage() {
   }
 }
 
-function antreVerifikasiWajah(userId, fotoBase64) {
+function antreVerifikasiWajah(userId, fotoBuffer) {
   if (activeFaceJobs.has(userId)) {
     const error = new Error("Verifikasi wajah untuk pengguna ini masih berjalan");
     error.code = "FACE_JOB_ACTIVE";
@@ -522,7 +556,7 @@ function antreVerifikasiWajah(userId, fotoBase64) {
   activeFaceJobs.add(userId);
   try {
     const startedAt = Date.now();
-    const queued = facePool.verify(userId.replace("@c.us", ""), fotoBase64);
+    const queued = facePool.verify(userId.replace("@c.us", ""), fotoBuffer);
     queued.promise = queued.promise
       .then((result) => {
         const durationMs = Date.now() - startedAt;
@@ -543,12 +577,6 @@ function antreVerifikasiWajah(userId, fotoBase64) {
   }
 }
 
-function antreNotifikasi(task, context) {
-  notificationQueue.add(task).catch((error) => {
-    console.error(`[Antrean Notifikasi ERROR] ${context}:`, error.message);
-  });
-}
-
 function logVerificationFailure(context, userId, error) {
   const expected =
     error.code === "FACE_JOB_ACTIVE" ||
@@ -559,6 +587,22 @@ function logVerificationFailure(context, userId, error) {
   const label = expected ? "DITOLAK" : "ERROR";
   if (expected) console.log(`[${context} ${label}] ${userId}:`, error.message);
   else console.error(`[${context} ${label}] ${userId}:`, error.message);
+}
+
+function faceFailureResponse(error, fallback) {
+  if (["QUEUE_FULL", "FACE_QUEUE_DEADLINE"].includes(error?.code)) {
+    return {
+      status: 503,
+      message: "Antrean verifikasi wajah sedang penuh. Tunggu sebentar lalu kirim perintah lagi.",
+    };
+  }
+  if (error?.code === "FACE_DEADLINE_EXCEEDED") {
+    return {
+      status: 504,
+      message: "Verifikasi wajah melewati batas waktu. Kirim perintah lagi untuk mencoba ulang.",
+    };
+  }
+  return { status: 400, message: fallback };
 }
 
 function loadRoles() {
@@ -651,11 +695,8 @@ function loadKelas() {
   return loadJSON(KELAS_PATH, {});
 }
 
-function loadDailyStudentStatus(tanggal, studentId) {
-  const attendance = loadJSONSelected(
-    STORAGE_PATH,
-    (storage) => storage[tanggal]?.[studentId] || {}
-  );
+async function loadDailyStudentStatus(tanggal, studentId) {
+  const attendance = await attendanceStatus(tanggal, studentId);
   const permission = loadJSONSelected(
     IZIN_PATH,
     (permissions) => permissions[tanggal]?.[studentId] || null
@@ -674,36 +715,29 @@ function findKelasSiswa(dataKelas, siswaId) {
   return null;
 }
 
-function botKeyUntukSiswa(studentId) {
-  const kelas = findKelasSiswa(loadKelas(), studentId);
-  const nomorWali = normalizeNomor(kelas?.waliKelas);
-  return nomorWali ? `wali:${nomorWali}` : null;
+function textNotification(botKey, recipientId, text, options = {}) {
+  return {
+    botKey,
+    recipientId,
+    kind: "text",
+    text,
+    priority: options.priority || 0,
+    dedupeKey: options.dedupeKey || null,
+  };
 }
 
-async function kirimPesanAman(id, pesan, botKey) {
-  if (!id) return;
-  try {
-    if (!botKey) throw new Error("Bot wali kelas untuk siswa tidak ditemukan.");
-    await sendWhatsappWithRetry(
-      () => whatsapp.sendText(botKey, id, pesan),
-      { recipientId: `${botKey}:${id}` }
-    );
-  } catch (error) {
-    console.error(`[Notifikasi ERROR] ${id}:`, error.message);
-  }
-}
-
-async function kirimMediaAman(id, media, caption, botKey) {
-  if (!id) return;
-  try {
-    if (!botKey) throw new Error("Bot wali kelas untuk siswa tidak ditemukan.");
-    await sendWhatsappWithRetry(
-      () => whatsapp.sendImage(botKey, id, media, caption),
-      { recipientId: `${botKey}:${id}` }
-    );
-  } catch (error) {
-    console.error(`[Notifikasi Media ERROR] ${id}:`, error.message);
-  }
+function imageNotification(botKey, recipientId, mediaPath, text, options = {}) {
+  return {
+    botKey,
+    recipientId,
+    kind: "image",
+    text,
+    mediaPath,
+    mimetype: options.mimetype || "image/jpeg",
+    filename: options.filename || "image.jpg",
+    priority: options.priority || 0,
+    dedupeKey: options.dedupeKey || null,
+  };
 }
 
 function getAttendanceWindow(jamResmi, tipe) {
@@ -741,36 +775,40 @@ function getStudentNotificationRecipients(studentId, kelasSiswa) {
 }
 
 async function catatAbsensiKamera(userId, tipe, lokasi, foto, botKey) {
-  const kontak = loadJSON(KONTAK_PATH);
-  const kelasSiswa = findKelasSiswa(loadKelas(), userId);
-  const jamResmi = loadJSON(JAM_PATH, {
-    masuk: "09:00:00",
-    pulang: "16:00:00",
-    toleransi: 0,
-    mulaiMasuk: "00:00:00",
-    selesaiMasuk: "23:59:59",
-    mulaiPulang: "00:00:00",
-    selesaiPulang: "23:59:59",
-  });
   const waktu = getWaktu();
-  const lokasiKantor = loadJSON(LOKASI_PATH, {
-    latitude: -6.7329,
-    longitude: 108.5522,
-  });
-  if (haversine(lokasi, lokasiKantor) > ATTENDANCE_RADIUS_METERS) {
-    throw new Error("Kamu berada di luar area sekolah.");
-  }
-
-  const status = getAttendanceStatus(waktu.jam, jamResmi, tipe);
   const photoPath = attendancePhotoPath(waktu.tanggal, userId, tipe, foto);
   const photoAlreadyExists = fs.existsSync(photoPath);
   if (!photoAlreadyExists) writePrivateFile(photoPath, foto.buffer);
+  let status;
   try {
-    await updateJSON([STORAGE_PATH, IZIN_PATH, KONTAK_PATH], (draft) => {
-      if (!draft[KONTAK_PATH][userId]) throw new Error("Siswa sudah tidak terdaftar.");
-      const storage = draft[STORAGE_PATH];
+    await jsonState.exclusive(async () => {
+      const kontak = loadJSON(KONTAK_PATH);
+      const kelasSiswa = findKelasSiswa(loadKelas(), userId);
+      const jamResmi = loadJSON(JAM_PATH, {
+        masuk: "09:00:00",
+        pulang: "16:00:00",
+        toleransi: 0,
+        mulaiMasuk: "00:00:00",
+        selesaiMasuk: "23:59:59",
+        mulaiPulang: "00:00:00",
+        selesaiPulang: "23:59:59",
+      });
+      const lokasiKantor = loadJSON(LOKASI_PATH, {
+        latitude: -6.7329,
+        longitude: 108.5522,
+      });
+      if (haversine(lokasi, lokasiKantor) > ATTENDANCE_RADIUS_METERS) {
+        throw new Error("Kamu berada di luar area sekolah.");
+      }
+      if (!kontak[userId]) throw new Error("Siswa sudah tidak terdaftar.");
+
+      const normalizedStatus = await attendanceStatus(waktu.tanggal, userId);
+      const permission = loadJSONSelected(
+        IZIN_PATH,
+        (izin) => izin[waktu.tanggal]?.[userId] || null
+      );
       const attendanceError = validateAttendance(
-        getDailyStudentStatus(storage, draft[IZIN_PATH], waktu.tanggal, userId),
+        { ...normalizedStatus, izin: Boolean(permission) },
         tipe
       );
       if (attendanceError) throw new Error(attendanceError);
@@ -787,43 +825,64 @@ async function catatAbsensiKamera(userId, tipe, lokasi, foto, botKey) {
         );
       }
 
-      storage[waktu.tanggal] ||= {};
-      storage[waktu.tanggal][userId] ||= {};
-      storage[waktu.tanggal][userId][tipe] = {
-        waktu: waktu.jam,
-        lokasi,
-        status,
-        fotoPath: photoPath,
-        fotoMimeType: foto.mimetype,
-        fotoSize: foto.buffer.length,
-        nama: draft[KONTAK_PATH][userId],
-        kelas: kelasSiswa?.namaKelas || "",
-        waliKelas: kelasSiswa?.waliKelas || "",
-      };
+      status = getAttendanceStatus(waktu.jam, jamResmi, tipe);
+      const caption =
+        `*${kontak[userId]}* telah absen *${tipe}*\n` +
+        `Status: *${status}*\n` +
+        `Jam: ${waktu.jam}`;
+      const jobs = [
+        ...getStudentNotificationRecipients(userId, kelasSiswa),
+      ].map((id) =>
+          imageNotification(botKey, id, photoPath, caption, {
+            mimetype: foto.mimetype,
+            filename: `${userId.replace("@c.us", "")}.jpg`,
+            dedupeKey: `attendance:${waktu.tanggal}:${userId}:${tipe}:media:${id}`,
+          })
+        );
+      jobs.push(
+        textNotification(
+          botKey,
+          userId,
+          `✅ Absen ${tipe} dicatat (${status}) pada ${waktu.jam}.`,
+          {
+            priority: 10,
+            dedupeKey: `attendance:${waktu.tanggal}:${userId}:${tipe}:confirmation`,
+          }
+        )
+      );
+
+      await withDatabaseTransaction(async (transaction) => {
+        await createAttendance(
+          {
+            tanggal: waktu.tanggal,
+            siswaId: userId,
+            tipe,
+            waktu: waktu.jam,
+            lokasi,
+            status,
+            fotoPath: photoPath,
+            fotoMimeType: foto.mimetype,
+            fotoSize: foto.buffer.length,
+            nama: kontak[userId],
+            kelas: kelasSiswa?.namaKelas || "",
+            waliKelas: kelasSiswa?.waliKelas || "",
+          },
+          { transaction }
+        );
+        await enqueueNotifications(jobs, { transaction });
+      });
     });
   } catch (error) {
     if (!photoAlreadyExists) {
       deletePrivateFileSafely(photoPath, ATTENDANCE_PHOTO_DIR, `foto absensi ${userId}`);
     }
+    if (error.name === "SequelizeUniqueConstraintError") {
+      throw new Error(`Absen ${tipe} hanya dapat dilakukan satu kali per hari.`);
+    }
     throw error;
   }
 
-  const mediaMsg = {
-    mimetype: foto.mimetype,
-    buffer: foto.buffer,
-    filename: `${userId.replace("@c.us", "")}.jpg`,
-  };
-  const caption =
-    `*${kontak[userId] || userId}* telah absen *${tipe}*\n` +
-    `Status: *${status}*\n` +
-    `Jam: ${waktu.jam}`;
-  const penerima = getStudentNotificationRecipients(userId, kelasSiswa);
-  for (const id of penerima) {
-    antreNotifikasi(
-      () => kirimMediaAman(id, mediaMsg, caption, botKey),
-      `absen kamera ${userId} -> ${id}`
-    );
-  }
+  notificationOutboxProcessor?.wake();
 
   return { status, waktu: waktu.jam, tanggal: waktu.tanggal };
 }
@@ -831,6 +890,46 @@ async function catatAbsensiKamera(userId, tipe, lokasi, foto, botKey) {
 const whatsapp = new BaileysManager({
   authRoot: process.env.BAILEYS_AUTH_DATA_PATH || "./.baileys_auth",
   mainExpectedNumber: process.env.WA_MAIN_NUMBER || process.env.WA_EXPECTED_NUMBER,
+});
+
+notificationOutboxProcessor = new NotificationOutboxProcessor({
+  store: {
+    recover: recoverNotificationOutbox,
+    claim: claimNextNotification,
+    markSent: markNotificationSent,
+    reschedule: rescheduleNotification,
+    purgeSent: purgeSentNotifications,
+  },
+  deliver: async (job) => {
+    const media = await mediaForOutboxJob(job);
+    return sendWhatsappWithRetry(
+      () =>
+        media
+          ? whatsapp.sendImage(job.botKey, job.recipientId, media, job.text)
+          : whatsapp.sendText(job.botKey, job.recipientId, job.text),
+      {
+        recipientId: `${job.botKey}:${job.recipientId}`,
+        priority: job.priority > 0 ? "high" : "normal",
+        senderKey: job.botKey,
+      }
+    );
+  },
+  isRetryable: (error) =>
+    error?.code === "WA_SESSION_NOT_READY" ||
+    (error?.code !== "OUTBOX_MEDIA_MISSING" && isRetryableWhatsappError(error)),
+  concurrency: Number(process.env.NOTIFICATION_OUTBOX_CONCURRENCY) || 4,
+  pollIntervalMs: Number(process.env.NOTIFICATION_OUTBOX_POLL_MS) || 2000,
+  retryBaseDelayMs: Number(process.env.NOTIFICATION_RETRY_BASE_DELAY_MS) || 15000,
+  retryMaxDelayMs: Number(process.env.NOTIFICATION_RETRY_MAX_DELAY_MS) || 15 * 60_000,
+  maxAttempts: Number(process.env.NOTIFICATION_MAX_ATTEMPTS) || 12,
+  retentionMs: Number(process.env.NOTIFICATION_SENT_RETENTION_MS) || 7 * 24 * 60 * 60_000,
+  onError: ({ job, error, failed, delayMs }) => {
+    const action = failed ? "dihentikan" : `diulang dalam ${delayMs} ms`;
+    console.error(
+      `[Notification Outbox] ${job?.id || "processor"} ke ${job?.recipientId || "-"} ${action}:`,
+      error.message
+    );
+  },
 });
 
 const pendingLokasi = new Map();
@@ -901,6 +1000,7 @@ whatsapp.on("message", safeAsyncListener(async ({
       return await sendWhatsappWithRetry(() => msg.reply(message), {
         recipientId: `${botKey}:${sender}`,
         priority: "high",
+        senderKey: botKey,
       });
     } finally {
       if (body.startsWith("!")) {
@@ -978,7 +1078,7 @@ whatsapp.on("message", safeAsyncListener(async ({
     const tipe = body.startsWith("!masuk") ? "masuk" : "pulang";
     const nomor = sender.replace("@c.us", "");
     const attendanceError = validateAttendance(
-      loadDailyStudentStatus(waktu.tanggal, sender),
+      await loadDailyStudentStatus(waktu.tanggal, sender),
       tipe
     );
     if (attendanceError) return replyCommand(`❌ ${attendanceError}`);
@@ -1019,7 +1119,7 @@ whatsapp.on("message", safeAsyncListener(async ({
     const alasan = msg.body.trim().slice(6).trim();
     if (alasan.length < 3) return replyCommand("⚠️ Alasan izin terlalu singkat.");
     const permissionError = validatePermission(
-      loadDailyStudentStatus(waktu.tanggal, sender)
+      await loadDailyStudentStatus(waktu.tanggal, sender)
     );
     if (permissionError) return replyCommand(`❌ ${permissionError}`);
 
@@ -1141,7 +1241,7 @@ app.post("/api/permission-camera/:token/verify", async (req, res) => {
   const accuracy = Number(req.body.accuracy);
   if (!foto) return res.status(400).json({ error: "Selfie kamera tidak valid." });
   try {
-    await validateImagePayload(foto);
+    await validateImagePayload(foto, { decode: false });
   } catch (error) {
     return res.status(400).json({ error: error.message });
   }
@@ -1160,7 +1260,7 @@ app.post("/api/permission-camera/:token/verify", async (req, res) => {
 
   session.processing = true;
   try {
-    const queued = antreVerifikasiWajah(session.userId, foto.data);
+    const queued = antreVerifikasiWajah(session.userId, foto.buffer);
     const cocok = await queued.promise;
     if (!cocok) {
       permissionSessions.delete(req.params.token);
@@ -1177,7 +1277,11 @@ app.post("/api/permission-camera/:token/verify", async (req, res) => {
   } catch (error) {
     permissionSessions.delete(req.params.token);
     logVerificationFailure("Verifikasi Izin", session.userId, error);
-    res.status(400).json({ error: "Selfie gagal diverifikasi. Kirim perintah izin lagi." });
+    const failure = faceFailureResponse(
+      error,
+      "Selfie gagal diverifikasi. Kirim perintah izin lagi."
+    );
+    res.status(failure.status).json({ error: failure.message });
   }
 });
 
@@ -1208,23 +1312,26 @@ app.post("/api/permission-camera/:token/evidence", async (req, res) => {
     writePrivateFile(selfiePath, session.selfie.buffer);
     writtenFiles.push(selfiePath);
 
-    const kontak = loadJSON(KONTAK_PATH);
-    const kelasSiswa = findKelasSiswa(loadKelas(), session.userId);
-    await updateJSON([STORAGE_PATH, IZIN_PATH, KONTAK_PATH], (draft) => {
-      if (!draft[KONTAK_PATH][session.userId]) throw new Error("Siswa sudah tidak terdaftar.");
-      if (session.tanggal !== getWaktu().tanggal) throw new Error("Tautan sudah melewati tanggal pengajuan.");
-      const permissionError = validatePermission(
-        getDailyStudentStatus(
-          draft[STORAGE_PATH],
-          draft[IZIN_PATH],
-          session.tanggal,
-          session.userId
-        )
-      );
-      if (permissionError) throw new Error(permissionError);
+    const jobs = await updateJSONAtomic(
+      [IZIN_PATH, KONTAK_PATH],
+      async (draft) => {
+        if (!draft[KONTAK_PATH][session.userId]) {
+          throw new Error("Siswa sudah tidak terdaftar.");
+        }
+        if (session.tanggal !== getWaktu().tanggal) {
+          throw new Error("Tautan sudah melewati tanggal pengajuan.");
+        }
+        const attendance = await attendanceStatus(session.tanggal, session.userId);
+        const permissionError = validatePermission({
+          ...attendance,
+          izin: Boolean(draft[IZIN_PATH][session.tanggal]?.[session.userId]),
+        });
+        if (permissionError) throw new Error(permissionError);
 
-      draft[IZIN_PATH][session.tanggal] ||= {};
-      draft[IZIN_PATH][session.tanggal][session.userId] = {
+        const kontak = draft[KONTAK_PATH];
+        const kelasSiswa = findKelasSiswa(loadKelas(), session.userId);
+        draft[IZIN_PATH][session.tanggal] ||= {};
+        draft[IZIN_PATH][session.tanggal][session.userId] = {
           alasan: session.alasan,
           nama: kontak[session.userId] || session.userId,
           bukti: buktiPath,
@@ -1233,35 +1340,41 @@ app.post("/api/permission-camera/:token/evidence", async (req, res) => {
           terverifikasiWajah: true,
           kelas: kelasSiswa?.namaKelas || "",
           waliKelas: kelasSiswa?.waliKelas || "",
-      };
-    });
+        };
+        const caption =
+          `📩 *Pengajuan Izin Siswa*\n` +
+          `👤 Nama: *${kontak[session.userId] || session.userId}*\n` +
+          `🏫 Kelas: ${kelasSiswa?.namaKelas || "-"}\n` +
+          `📅 Tanggal: ${session.tanggal}\n` +
+          `📌 Alasan: ${session.alasan}\n` +
+          `✅ Wajah terverifikasi dan lokasi tercatat`;
+        const pending = [
+          ...getStudentNotificationRecipients(session.userId, kelasSiswa),
+        ].map((id) =>
+          imageNotification(session.botKey, id, buktiPath, caption, {
+            mimetype: bukti.mimetype,
+            filename: "bukti-izin.jpg",
+            dedupeKey: `permission:${session.tanggal}:${session.userId}:media:${id}`,
+          })
+        );
+        pending.push(
+          textNotification(
+            session.botKey,
+            session.userId,
+            `✅ Izin hari ini berhasil dicatat.\nAlasan: ${session.alasan}`,
+            {
+              priority: 10,
+              dedupeKey: `permission:${session.tanggal}:${session.userId}:confirmation`,
+            }
+          )
+        );
+        return pending;
+      },
+      ({ result, transaction }) => enqueueNotifications(result, { transaction })
+    );
     saved = true;
     permissionSessions.delete(token);
-
-    const caption =
-      `📩 *Pengajuan Izin Siswa*\n` +
-      `👤 Nama: *${kontak[session.userId] || session.userId}*\n` +
-      `🏫 Kelas: ${kelasSiswa?.namaKelas || "-"}\n` +
-      `📅 Tanggal: ${session.tanggal}\n` +
-      `📌 Alasan: ${session.alasan}\n` +
-      `✅ Wajah terverifikasi dan lokasi tercatat`;
-    const mediaMsg = {
-      mimetype: bukti.mimetype,
-      buffer: bukti.buffer,
-      filename: "bukti-izin.jpg",
-    };
-    const penerima = getStudentNotificationRecipients(session.userId, kelasSiswa);
-    for (const id of penerima) {
-      antreNotifikasi(
-        () => kirimMediaAman(id, mediaMsg, caption, session.botKey),
-        `izin web ${session.userId} -> ${id}`
-      );
-    }
-    await kirimPesanAman(
-      session.userId,
-      `✅ Izin hari ini berhasil dicatat.\nAlasan: ${session.alasan}`,
-      session.botKey
-    );
+    if (jobs.length) notificationOutboxProcessor?.wake();
     res.json({ ok: true, tanggal: session.tanggal });
   } catch (error) {
     if (!saved) {
@@ -1308,7 +1421,7 @@ app.post("/api/attendance-camera/:token", async (req, res) => {
     return res.status(400).json({ error: "Hasil foto kamera tidak valid." });
   }
   try {
-    await validateImagePayload(foto);
+    await validateImagePayload(foto, { decode: false });
   } catch (error) {
     return res.status(400).json({ error: error.message });
   }
@@ -1331,7 +1444,7 @@ app.post("/api/attendance-camera/:token", async (req, res) => {
   session.processing = true;
   cameraSessions.delete(token);
   try {
-    const queued = antreVerifikasiWajah(session.userId, foto.data);
+    const queued = antreVerifikasiWajah(session.userId, foto.buffer);
     const cocok = await queued.promise;
     if (!cocok) {
       throw new Error(
@@ -1346,15 +1459,14 @@ app.post("/api/attendance-camera/:token", async (req, res) => {
       foto,
       session.botKey
     );
-    await kirimPesanAman(
-      session.userId,
-      `✅ Absen ${session.tipe} dicatat (${result.status}) pada ${result.waktu}.`,
-      session.botKey
-    );
     res.json({ ok: true, tipe: session.tipe, ...result });
   } catch (error) {
     logVerificationFailure("Kamera Absensi", session.userId, error);
-    res.status(400).json({ error: error.message || "Absensi gagal diproses." });
+    const failure = faceFailureResponse(
+      error,
+      error.message || "Absensi gagal diproses."
+    );
+    res.status(failure.status).json({ error: failure.message });
   }
 });
 
@@ -1395,7 +1507,7 @@ app.post("/api/auth/request-otp", async (req, res) => {
           id,
           `🔐 *Kode Login Ruang Hadir*\n\nKode OTP: *${code}*\nBerlaku selama 5 menit. Jangan berikan kode ini kepada siapa pun.`
         ),
-      { recipientId: id, priority: "high" }
+      { recipientId: id, priority: "high", senderKey: "main" }
     )
     .catch((error) => {
       if (loginOtps.get(id) === issuedOtp) loginOtps.delete(id);
@@ -1455,7 +1567,7 @@ app.post("/api/auth/logout", (req, res) => {
 
 app.use("/api", requireWebAuth);
 
-function dashboardData(user) {
+async function dashboardData(user) {
   const kontak = loadJSON(KONTAK_PATH);
   const semuaKelas = loadKelas();
   const kelas =
@@ -1471,8 +1583,9 @@ function dashboardData(user) {
     selesaiPulang: "23:59:59",
   });
   const today = getWaktu().tanggal;
-  const absensiHariIni = loadJSONSelected(STORAGE_PATH, (storage) => storage[today] || {});
+  const absensiHariIni = await attendanceForDate(today);
   const izinHariIni = loadJSONSelected(IZIN_PATH, (permissions) => permissions[today] || {});
+  const outbox = await notificationOutboxStats();
 
   const siswaIds = new Set(
     Object.values(kelas).flatMap((data) => Object.keys(data.siswa || {}))
@@ -1515,11 +1628,12 @@ function dashboardData(user) {
       role: user.role,
     },
     faceService: facePool.status(),
+    notificationOutbox: outbox,
   };
 }
 
-app.get("/api/dashboard", (req, res) => {
-  res.json(dashboardData(req.webUser));
+app.get("/api/dashboard", async (req, res) => {
+  res.json(await dashboardData(req.webUser));
 });
 
 app.post("/api/admins", requireWebAdmin, async (req, res) => {
@@ -1688,65 +1802,74 @@ app.post("/api/students", requireWebAdmin, async (req, res) => {
   }
 
   try {
-    await updateJSON([KONTAK_PATH, KELAS_PATH, STORAGE_PATH, IZIN_PATH], (draft) => {
-      const kontak = draft[KONTAK_PATH];
-      const kelas = draft[KELAS_PATH];
-      if (namaKelas && !kelas[namaKelas]) throw new Error("Kelas tidak lagi tersedia.");
-      if (originalSiswaId) {
-        if (!kontak[originalSiswaId]) {
-          const error = new Error("Siswa yang diedit tidak ditemukan.");
-          error.code = "NOT_FOUND";
-          throw error;
+    await updateJSONAtomic(
+      [KONTAK_PATH, KELAS_PATH, IZIN_PATH],
+      (draft) => {
+        const kontak = draft[KONTAK_PATH];
+        const kelas = draft[KELAS_PATH];
+        if (namaKelas && !kelas[namaKelas]) {
+          throw new Error("Kelas tidak lagi tersedia.");
         }
-        if (originalSiswaId !== siswaId && kontak[siswaId]) {
-          const error = new Error("Nomor WhatsApp baru sudah digunakan siswa lain.");
+        if (originalSiswaId) {
+          if (!kontak[originalSiswaId]) {
+            const error = new Error("Siswa yang diedit tidak ditemukan.");
+            error.code = "NOT_FOUND";
+            throw error;
+          }
+          if (originalSiswaId !== siswaId && kontak[siswaId]) {
+            const error = new Error("Nomor WhatsApp baru sudah digunakan siswa lain.");
+            error.code = "ALREADY_EXISTS";
+            throw error;
+          }
+        } else if (kontak[siswaId]) {
+          const error = new Error("Nomor WhatsApp tersebut sudah terdaftar.");
           error.code = "ALREADY_EXISTS";
           throw error;
         }
-      } else if (kontak[siswaId]) {
-        const error = new Error("Nomor WhatsApp tersebut sudah terdaftar.");
-        error.code = "ALREADY_EXISTS";
-        throw error;
-      }
 
-      if (originalSiswaId && originalSiswaId !== siswaId) {
-        delete kontak[originalSiswaId];
-        for (const records of Object.values(draft[STORAGE_PATH])) {
-          if (!records?.[originalSiswaId]) continue;
-          if (records[siswaId]) {
-            const error = new Error("Riwayat nomor baru sudah tersedia.");
-            error.code = "ALREADY_EXISTS";
-            throw error;
+        if (originalSiswaId && originalSiswaId !== siswaId) {
+          delete kontak[originalSiswaId];
+          for (const records of Object.values(draft[IZIN_PATH])) {
+            if (!records?.[originalSiswaId]) continue;
+            if (records[siswaId]) {
+              const error = new Error("Riwayat izin nomor baru sudah tersedia.");
+              error.code = "ALREADY_EXISTS";
+              throw error;
+            }
+            records[siswaId] = records[originalSiswaId];
+            delete records[originalSiswaId];
           }
-          records[siswaId] = records[originalSiswaId];
-          delete records[originalSiswaId];
         }
-        for (const records of Object.values(draft[IZIN_PATH])) {
-          if (!records?.[originalSiswaId]) continue;
-          if (records[siswaId]) {
-            const error = new Error("Riwayat izin nomor baru sudah tersedia.");
-            error.code = "ALREADY_EXISTS";
-            throw error;
-          }
-          records[siswaId] = records[originalSiswaId];
-          delete records[originalSiswaId];
-        }
-      }
 
-      kontak[siswaId] = nama;
-      for (const data of Object.values(kelas)) {
-        if (!data.siswa) continue;
-        delete data.siswa[siswaId];
-        if (originalSiswaId) delete data.siswa[originalSiswaId];
+        kontak[siswaId] = nama;
+        for (const data of Object.values(kelas)) {
+          if (!data.siswa) continue;
+          delete data.siswa[siswaId];
+          if (originalSiswaId) delete data.siswa[originalSiswaId];
+        }
+        if (namaKelas) {
+          kelas[namaKelas].siswa ||= {};
+          kelas[namaKelas].siswa[siswaId] = {
+            nama,
+            orangTua: `${orangTua}@c.us`,
+          };
+        }
+      },
+      async ({ transaction }) => {
+        if (originalSiswaId && originalSiswaId !== siswaId) {
+          await renameAttendanceStudent(originalSiswaId, siswaId, { transaction });
+          await renamePendingNotificationRecipient(originalSiswaId, siswaId, {
+            transaction,
+          });
+        }
       }
-      if (namaKelas) {
-        kelas[namaKelas].siswa ||= {};
-        kelas[namaKelas].siswa[siswaId] = { nama, orangTua: `${orangTua}@c.us` };
-      }
-    });
+    );
   } catch (error) {
     if (error.code === "NOT_FOUND") return res.status(404).json({ error: error.message });
     if (error.code === "ALREADY_EXISTS") return res.status(409).json({ error: error.message });
+    if (error.name === "SequelizeUniqueConstraintError") {
+      return res.status(409).json({ error: "Riwayat nomor baru sudah tersedia." });
+    }
     throw error;
   }
 
@@ -1769,25 +1892,16 @@ app.delete("/api/students/:number", requireWebAdmin, async (req, res) => {
   const nomor = normalizeNomor(req.params.number);
   const siswaId = `${nomor}@c.us`;
   let foundStudent = false;
-  await updateJSON([KONTAK_PATH, KELAS_PATH, STORAGE_PATH, IZIN_PATH], (draft) => {
+  await updateJSONAtomic([KONTAK_PATH, KELAS_PATH, IZIN_PATH], (draft) => {
     const kontak = draft[KONTAK_PATH];
     if (!kontak[siswaId]) return;
     foundStudent = true;
+    const studentName = kontak[siswaId];
     const classSnapshot = findKelasSiswa(draft[KELAS_PATH], siswaId);
-    for (const records of Object.values(draft[STORAGE_PATH])) {
-      const attendance = records?.[siswaId];
-      if (!attendance) continue;
-      for (const record of [attendance.masuk, attendance.pulang]) {
-        if (!record) continue;
-        record.nama ||= kontak[siswaId];
-        record.kelas ||= classSnapshot?.namaKelas || "";
-        record.waliKelas ||= classSnapshot?.waliKelas || "";
-      }
-    }
     for (const records of Object.values(draft[IZIN_PATH])) {
       const permission = records?.[siswaId];
       if (!permission) continue;
-      permission.nama ||= kontak[siswaId];
+      permission.nama ||= studentName;
       permission.kelas ||= classSnapshot?.namaKelas || "";
       permission.waliKelas ||= classSnapshot?.waliKelas || "";
     }
@@ -1795,6 +1909,13 @@ app.delete("/api/students/:number", requireWebAdmin, async (req, res) => {
     for (const data of Object.values(draft[KELAS_PATH])) {
       if (data.siswa) delete data.siswa[siswaId];
     }
+    return {
+      nama: studentName,
+      kelas: classSnapshot?.namaKelas || "",
+      waliKelas: classSnapshot?.waliKelas || "",
+    };
+  }, async ({ result, transaction }) => {
+    if (result) await fillAttendanceSnapshot(siswaId, result, { transaction });
   });
   if (!foundStudent) return res.status(404).json({ error: "Siswa tidak ditemukan." });
   for (const root of [FACE_DB, FACE_REC]) {
@@ -1882,35 +2003,51 @@ app.post("/api/permissions", requireWebAdmin, async (req, res) => {
   const tanggal = String(req.body.tanggal || "");
   const alasan = String(req.body.alasan || "").trim();
   const siswaId = `${nomor}@c.us`;
-  const kontak = loadJSON(KONTAK_PATH);
-  const kelasSiswa = findKelasSiswa(loadKelas(), siswaId);
-  if (!kontak[siswaId] || !isValidDate(tanggal) || alasan.length < 3) {
+  if (!loadJSON(KONTAK_PATH)[siswaId] || !isValidDate(tanggal) || alasan.length < 3) {
     return res.status(400).json({ error: "Data izin belum lengkap atau tidak valid." });
   }
   try {
-    await updateJSON([STORAGE_PATH, IZIN_PATH], (draft) => {
-      const permissionError = validatePermission(
-        getDailyStudentStatus(
-          draft[STORAGE_PATH],
-          draft[IZIN_PATH],
-          tanggal,
-          siswaId
-        )
-      );
-      if (permissionError) {
-        const error = new Error(permissionError);
-        error.code = "ATTENDANCE_CONFLICT";
-        throw error;
-      }
-      const izin = draft[IZIN_PATH];
-      izin[tanggal] = izin[tanggal] || {};
-      izin[tanggal][siswaId] = {
-        nama: kontak[siswaId],
-        alasan,
-        kelas: kelasSiswa?.namaKelas || "",
-        waliKelas: kelasSiswa?.waliKelas || "",
-      };
-    });
+    const jobs = await updateJSONAtomic(
+      [IZIN_PATH, KONTAK_PATH, KELAS_PATH],
+      async (draft) => {
+        const kontak = draft[KONTAK_PATH];
+        const kelasSiswa = findKelasSiswa(draft[KELAS_PATH], siswaId);
+        if (!kontak[siswaId]) throw new Error("Siswa sudah tidak terdaftar.");
+        const attendance = await attendanceStatus(tanggal, siswaId);
+        const permissionError = validatePermission({
+          ...attendance,
+          izin: Boolean(draft[IZIN_PATH][tanggal]?.[siswaId]),
+        });
+        if (permissionError) {
+          const error = new Error(permissionError);
+          error.code = "ATTENDANCE_CONFLICT";
+          throw error;
+        }
+        const izin = draft[IZIN_PATH];
+        izin[tanggal] ||= {};
+        izin[tanggal][siswaId] = {
+          nama: kontak[siswaId],
+          alasan,
+          kelas: kelasSiswa?.namaKelas || "",
+          waliKelas: kelasSiswa?.waliKelas || "",
+        };
+        if (!kelasSiswa) return [];
+        const pesan =
+          `📩 *Izin Siswa*\n` +
+          `👤 Nama: *${kontak[siswaId]}*\n` +
+          `🏫 Kelas: ${kelasSiswa.namaKelas}\n` +
+          `📅 Tanggal: ${tanggal}\n` +
+          `📌 Alasan: ${alasan}`;
+        const botKey = `wali:${normalizeNomor(kelasSiswa.waliKelas)}`;
+        return [kelasSiswa.siswa[siswaId].orangTua, kelasSiswa.waliKelas]
+          .filter(Boolean)
+          .map((id) => textNotification(botKey, id, pesan, {
+            dedupeKey: `permission-admin:${tanggal}:${siswaId}:${id}`,
+          }));
+      },
+      ({ result, transaction }) => enqueueNotifications(result, { transaction })
+    );
+    if (jobs.length) notificationOutboxProcessor?.wake();
   } catch (error) {
     if (error.code === "ATTENDANCE_CONFLICT") {
       return res.status(409).json({ error: error.message });
@@ -1918,17 +2055,6 @@ app.post("/api/permissions", requireWebAdmin, async (req, res) => {
     throw error;
   }
 
-  if (kelasSiswa) {
-    const pesan =
-      `📩 *Izin Siswa*\n` +
-      `👤 Nama: *${kontak[siswaId]}*\n` +
-      `🏫 Kelas: ${kelasSiswa.namaKelas}\n` +
-      `📅 Tanggal: ${tanggal}\n` +
-      `📌 Alasan: ${alasan}`;
-    const botKey = botKeyUntukSiswa(siswaId);
-    await kirimPesanAman(kelasSiswa.siswa[siswaId].orangTua, pesan, botKey);
-    await kirimPesanAman(kelasSiswa.waliKelas, pesan, botKey);
-  }
   res.json({ ok: true });
 });
 
@@ -1939,7 +2065,7 @@ app.delete("/api/permissions/:date/:number", requireWebAdmin, async (req, res) =
   const siswaId = `${normalizeNomor(req.params.number)}@c.us`;
   const filesToDelete = [];
   let found = false;
-  await updateJSON(IZIN_PATH, (draft) => {
+  await updateJSONAtomic(IZIN_PATH, (draft) => {
     const izin = draft[IZIN_PATH];
     const record = izin[req.params.date]?.[siswaId];
     if (!record) return;
@@ -1948,7 +2074,7 @@ app.delete("/api/permissions/:date/:number", requireWebAdmin, async (req, res) =
     if (record.selfie) filesToDelete.push(record.selfie);
     delete izin[req.params.date][siswaId];
     if (!Object.keys(izin[req.params.date]).length) delete izin[req.params.date];
-  });
+  }, ({ transaction }) => cancelNotificationsForMediaPaths(filesToDelete, { transaction }));
   if (!found) return res.status(404).json({ error: "Izin tidak ditemukan." });
   for (const file of filesToDelete) {
     deletePrivateFileSafely(file, IZIN_BUKTI_DIR, `bukti izin ${siswaId}`);
@@ -1973,9 +2099,9 @@ app.get("/api/permissions/:date/:number/evidence", (req, res) => {
   res.sendFile(path.resolve(bukti));
 });
 
-function buildReportRows(user, tanggal) {
+async function buildReportRows(user, tanggal) {
   const kontak = loadJSON(KONTAK_PATH);
-  const storage = loadJSONSelected(STORAGE_PATH, (records) => records[tanggal] || {});
+  const storage = await attendanceForDate(tanggal);
   const izin = loadJSONSelected(IZIN_PATH, (records) => records[tanggal] || {});
   const kelas = loadKelas();
   const kelasWali = kelasUntukWali(kelas, user.id);
@@ -2010,15 +2136,15 @@ function buildReportRows(user, tanggal) {
     });
 }
 
-app.get("/api/report", (req, res) => {
+app.get("/api/report", async (req, res) => {
   const tanggal = isValidDate(req.query.date) ? req.query.date : getWaktu().tanggal;
-  const rows = buildReportRows(req.webUser, tanggal);
+  const rows = await buildReportRows(req.webUser, tanggal);
   res.json({ tanggal, rows });
 });
 
 app.get("/api/export", async (req, res) => {
   const tanggal = isValidDate(req.query.date) ? req.query.date : getWaktu().tanggal;
-  const rows = buildReportRows(req.webUser, tanggal).map((row) => ({
+  const rows = (await buildReportRows(req.webUser, tanggal)).map((row) => ({
     Tanggal: tanggal,
     Nama: row.nama,
     Kelas: row.kelas === "-" ? "" : row.kelas,
@@ -2153,7 +2279,28 @@ async function startBot() {
     hardenSensitiveStorage();
     cleanupOrphanedFaceFiles();
     const migratedPhotos = await migrateEmbeddedAttendancePhotos();
-    if (migratedPhotos) await compactDatabase();
+    const legacyAttendance = loadJSON(STORAGE_PATH);
+    let legacyAttendanceRecords = 0;
+    for (const students of Object.values(legacyAttendance)) {
+      for (const attendance of Object.values(students || {})) {
+        for (const tipe of ["masuk", "pulang"]) {
+          if (attendance?.[tipe]) legacyAttendanceRecords += 1;
+        }
+      }
+    }
+    const migratedAttendance = await migrateLegacyAttendance(legacyAttendance);
+    if (migratedAttendance !== legacyAttendanceRecords) {
+      throw new Error(
+        `Migrasi absensi tidak lengkap: ${migratedAttendance}/${legacyAttendanceRecords} catatan.`
+      );
+    }
+    if (Object.keys(legacyAttendance).length) await saveJSON(STORAGE_PATH, {});
+    if (migratedAttendance) {
+      console.log(
+        `[Migrasi Absensi] ${migratedAttendance} catatan dipindahkan ke tabel terstruktur.`
+      );
+    }
+    if (migratedPhotos || migratedAttendance) await compactDatabase();
   } catch (error) {
     console.error("Gagal inisialisasi database:", error);
     await shutdown("DATABASE_INIT_FAILED", 1);
@@ -2162,6 +2309,7 @@ async function startBot() {
   startHttpServer();
   try {
     await whatsapp.start(loadKelas());
+    await notificationOutboxProcessor.start();
   } catch (error) {
     console.error("Gagal inisialisasi WhatsApp:", error);
     await shutdown("WA_INIT_FAILED", 1);
@@ -2179,6 +2327,7 @@ async function shutdown(signal, exitCode = 0) {
       await new Promise((resolve) => httpServer.close(resolve));
       httpServer = null;
     }
+    await notificationOutboxProcessor?.stop();
     await facePool.close();
     await whatsapp.close();
   } catch (error) {
