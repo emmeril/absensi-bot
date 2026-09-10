@@ -12,6 +12,7 @@ Ruang Hadir adalah aplikasi absensi sekolah berbasis WhatsApp dengan verifikasi 
 - Dashboard web untuk mengelola siswa, kelas, wali kelas, admin, jadwal, izin, dan laporan.
 - Ekspor laporan ke Excel.
 - Login dashboard menggunakan OTP yang dikirim melalui WhatsApp.
+- Multi-bot Baileys: satu bot utama dan satu sesi bot untuk setiap nomor wali kelas.
 - Penyimpanan lokal menggunakan SQLite dengan transaksi atomik untuk pembaruan terkait.
 - Ekspor Excel dibuat dalam buffer terpisah untuk setiap permintaan.
 
@@ -19,11 +20,13 @@ Ruang Hadir adalah aplikasi absensi sekolah berbasis WhatsApp dengan verifikasi 
 
 | Perintah | Fungsi | Akses |
 | --- | --- | --- |
-| `!masuk` | Memulai absensi masuk | Siswa terdaftar |
-| `!pulang` | Memulai absensi pulang | Siswa terdaftar |
-| `!izin alasan` | Membuka proses izin dua tahap melalui tautan sekali pakai | Siswa terdaftar |
-| `!setlokasi` | Meminta pengiriman lokasi sekolah baru | Admin |
+| `!masuk` | Memulai absensi masuk | Siswa, melalui bot wali kelasnya |
+| `!pulang` | Memulai absensi pulang | Siswa, melalui bot wali kelasnya |
+| `!izin alasan` | Membuka proses izin dua tahap melalui tautan sekali pakai | Siswa, melalui bot wali kelasnya |
+| `!lokasi` | Meminta pengiriman lokasi sekolah baru | Admin, melalui bot utama |
 | `!bantuan` | Menampilkan perintah yang tersedia sesuai role pengirim | Semua pengguna |
+
+Bot utama hanya menerima `!lokasi` dari admin dan mengirim OTP login dashboard. Siswa mengirim `!masuk`, `!pulang`, atau `!izin alasan` ke nomor wali kelasnya. Sistem menolak siswa yang mengirim command ke bot wali kelas lain.
 
 Setelah mengirim `!masuk` atau `!pulang`, siswa menerima tautan sekali pakai yang berlaku selama 2 menit. Tautan membuka kamera depan dan GPS tanpa menyediakan pilihan unggah dari galeri. Setelah mengirim `!izin alasan`, siswa menerima tautan izin selama 5 menit untuk mengambil selfie langsung, mencatat GPS, lalu mengunggah surat atau bukti secara terpisah. Lokasi izin tidak dibatasi radius sekolah. Absensi masuk/pulang langsung masuk laporan setelah lolos verifikasi. Izin langsung dicatat setelah selfie terverifikasi dan bukti diunggah, tanpa konfirmasi admin/wali kelas.
 
@@ -31,10 +34,8 @@ Setelah mengirim `!masuk` atau `!pulang`, siswa menerima tautan sekali pakai yan
 
 - Node.js 22.12 atau lebih baru.
 - npm.
-- Chromium atau Google Chrome untuk `whatsapp-web.js`.
-- Nomor WhatsApp aktif untuk akun bot.
-
-Pada Linux, beberapa lokasi Chromium umum (termasuk `/usr/bin/chromium`) dideteksi otomatis. Lokasi lain dan instalasi Windows harus diatur melalui `PUPPETEER_EXECUTABLE_PATH`. Aplikasi memakai `puppeteer-core`, jadi browser tidak diunduh otomatis oleh npm.
+- Satu nomor WhatsApp aktif untuk bot utama.
+- Nomor WhatsApp setiap wali kelas yang akan dijadikan bot kelas.
 
 ## Instalasi
 
@@ -80,23 +81,14 @@ Variabel lingkungan opsional:
 | --- | ---: | --- |
 | `TZ` | `Asia/Jakarta` | Zona waktu untuk tanggal, jam absensi, dan proses aplikasi |
 | `DB_PATH` | `data/absensi.sqlite` | Lokasi database SQLite |
-| `PUPPETEER_EXECUTABLE_PATH` | `/usr/bin/chromium` | Lokasi executable Chromium/Chrome |
 | `PUBLIC_BASE_URL` | `http://localhost:3200` | Alamat publik HTTPS yang dibuka siswa untuk kamera absensi |
 | `INITIAL_ADMIN_NUMBER` | kosong | Nomor admin pertama untuk database baru |
-| `WA_EXPECTED_NUMBER` | kosong | Nomor akun WhatsApp bot yang diizinkan terhubung |
+| `WA_MAIN_NUMBER` | kosong | Nomor akun WhatsApp bot utama yang wajib terhubung |
 | `QR_ACCESS_TOKEN` | kosong | Password HTTP Basic minimal 16 karakter untuk membuka `/qr` dari jaringan |
 | `TRUST_PROXY_HOPS` | `0` | Jumlah reverse proxy tepercaya di depan aplikasi |
 | `SESSION_COOKIE_SECURE` | otomatis | Paksa cookie sesi hanya melalui HTTPS |
-| `WA_CLIENT_ID` | `absensi-bot` | ID sesi `LocalAuth`; hanya huruf, angka, `_`, dan `-` |
-| `WA_AUTH_DATA_PATH` | `.wwebjs_auth` | Direktori penyimpanan sesi WhatsApp |
-| `WA_AUTH_TIMEOUT_MS` | `60000` | Batas waktu autentikasi WhatsApp Web |
-| `WA_QR_MAX_RETRIES` | `0` | Batas pembaruan QR; `0` berarti tanpa batas |
-| `WA_TAKEOVER_ON_CONFLICT` | `false` | Ambil alih jika sesi browser lain terdeteksi |
-| `WA_TAKEOVER_TIMEOUT_MS` | `0` | Waktu tunggu sebelum mengambil alih sesi |
-| `WA_DEVICE_NAME` | `Ruang Hadir` | Nama perangkat tertaut yang tampil di WhatsApp |
-| `WA_BROWSER_NAME` | `Chrome` | Nama browser perangkat tertaut yang didukung library |
-| `WA_HEADLESS` | `true` | Jalankan Chromium tanpa jendela grafis |
-| `WA_WEB_VERSION` | kosong | Versi WhatsApp Web tertentu; sebaiknya biarkan kosong |
+| `BAILEYS_AUTH_DATA_PATH` | `.baileys_auth` | Direktori seluruh sesi Baileys |
+| `WA_LOG_LEVEL` | `silent` | Level log internal Baileys |
 | `FACE_WORKER_COUNT` | `1` | Jumlah worker verifikasi wajah; tambah hanya jika RAM dan CPU mencukupi |
 | `FACE_QUEUE_LIMIT` | `100` | Batas antrean verifikasi wajah |
 | `FACE_TIMEOUT_MS` | `60000` | Batas waktu verifikasi wajah dalam milidetik |
@@ -118,13 +110,10 @@ Variabel lingkungan opsional:
 | `WA_SEND_QUEUE_LIMIT` | `500` | Batas antrean pengiriman WhatsApp |
 | `WA_SEND_FAILURE_THRESHOLD` | `5` | Kegagalan berulang sebelum jeda pemulihan otomatis |
 | `WA_SEND_FAILURE_COOLDOWN_MS` | `120000` | Durasi jeda pemulihan setelah kegagalan berulang |
-| `LID_LOOKUP_TIMEOUT_MS` | `4000` | Batas pencarian nomor telepon dari ID LID pesan masuk |
-| `WA_RECIPIENT_LOOKUP_TIMEOUT_MS` | `5000` | Batas pencarian ID aktual untuk penerima pesan keluar |
 
 Nilai tersebut dapat disimpan di `.env`. Alternatifnya, atur langsung melalui PowerShell:
 
 ```powershell
-$env:PUPPETEER_EXECUTABLE_PATH = "C:\Program Files\Google\Chrome\Application\chrome.exe"
 $env:PUBLIC_BASE_URL = "https://absensi.sekolah.example"
 node index.js
 ```
@@ -140,7 +129,7 @@ Pada proses pertama, pindai QR WhatsApp yang tampil di terminal atau buka:
 - Dashboard: `http://localhost:3200`
 - Status/QR WhatsApp: `http://localhost:3200/qr`
 
-Sesi WhatsApp disimpan di `.wwebjs_auth`, sehingga pemindaian QR biasanya hanya diperlukan sekali. Putusnya koneksi biasa tidak menghapus direktori sesi; hapus direktori tersebut secara manual hanya jika memang ingin logout dan menautkan ulang akun.
+Halaman `/qr` menampilkan satu kartu untuk bot utama dan satu kartu untuk setiap nomor wali kelas yang tersimpan di dashboard. Pindai masing-masing QR memakai nomor yang tertulis pada kartu. Satu wali yang menangani beberapa kelas tetap memakai satu sesi. Sesi disimpan di `.baileys_auth`, sehingga pemindaian biasanya hanya diperlukan sekali. Jika akun salah atau sudah logout, tombol pada kartu dapat menghapus sesi tersebut dan menampilkan QR baru.
 
 Untuk produksi menggunakan PM2:
 
@@ -152,13 +141,13 @@ pm2 save
 
 ## Alur penggunaan
 
-1. Admin menjalankan bot dan menghubungkan akun WhatsApp.
+1. Admin menjalankan aplikasi lalu menghubungkan bot utama dan semua bot wali melalui `/qr`.
 2. Admin masuk ke dashboard dengan nomor yang tercatat sebagai admin.
 3. OTP enam digit dikirim ke WhatsApp dan berlaku selama 5 menit.
 4. Admin membuat kelas, menetapkan wali kelas, dan menambahkan siswa serta nomor orang tua.
 5. Admin atau wali kelas mengunggah foto referensi wajah siswa melalui dashboard.
-6. Siswa mengirim `!masuk` atau `!pulang`, membuka tautan sekali pakai, lalu mengambil selfie langsung dan mengizinkan GPS.
-7. Untuk izin, siswa mengirim `!izin alasan`, memverifikasi selfie dan GPS melalui tautan, lalu mengunggah surat atau bukti pada tahap kedua.
+6. Siswa mengirim `!masuk` atau `!pulang` ke nomor wali kelasnya, membuka tautan sekali pakai, lalu mengambil selfie langsung dan mengizinkan GPS.
+7. Untuk izin, siswa mengirim `!izin alasan` ke nomor wali kelasnya, memverifikasi selfie dan GPS melalui tautan, lalu mengunggah surat atau bukti pada tahap kedua.
 8. Absensi masuk/pulang dan izin yang memenuhi persyaratan langsung dicatat dan dikirimkan sebagai notifikasi kepada pihak terkait. Tidak ada tahap persetujuan admin/wali kelas.
 
 Wali kelas hanya dapat mengakses dan mengunggah foto siswa pada kelas yang menjadi tanggung jawabnya.
@@ -192,12 +181,12 @@ attendance_photos/       Foto absensi privat di luar blob SQLite
 exports/                 Arsip ekspor lokal; diabaikan Git
 ```
 
-Direktori seperti `.wwebjs_auth`, `data`, `face_db`, `face_rec`, `attendance_photos`, `izin_bukti`, dan `exports` berisi data lokal atau sensitif dan telah diabaikan Git.
+Direktori seperti `.baileys_auth`, `data`, `face_db`, `face_rec`, `attendance_photos`, `izin_bukti`, dan `exports` berisi data lokal atau sensitif dan telah diabaikan Git.
 
 ## Catatan keamanan
 
-- Jangan membagikan direktori sesi `.wwebjs_auth`.
-- Isi `WA_EXPECTED_NUMBER` dan `QR_ACCESS_TOKEN` pada produksi. `/qr` tanpa token hanya dapat dibuka langsung melalui localhost; akses jaringan akan meminta HTTP Basic dengan token sebagai password.
+- Jangan membagikan direktori sesi `.baileys_auth`.
+- Isi `WA_MAIN_NUMBER` dan `QR_ACCESS_TOKEN` pada produksi. `/qr` tanpa token hanya dapat dibuka langsung melalui localhost; akses jaringan akan meminta HTTP Basic dengan token sebagai password.
 - Batasi akses jaringan ke dashboard karena aplikasi saat ini berjalan melalui HTTP.
 - Gunakan HTTPS pada `PUBLIC_BASE_URL`; browser ponsel memblokir kamera pada alamat HTTP biasa.
 - Ganti nomor admin bawaan sebelum digunakan di lingkungan lain.

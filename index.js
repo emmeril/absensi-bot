@@ -2,8 +2,6 @@ require("dotenv").config();
 process.env.TZ = process.env.TZ || "Asia/Jakarta";
 process.umask(0o077);
 
-const { MessageMedia } = require("whatsapp-web.js");
-const { WhatsappClient } = require("./lib/whatsapp-client");
 const fs = require("fs");
 const path = require("path");
 const moment = require("moment");
@@ -21,11 +19,7 @@ const {
   initJsonStore,
   saveJsonBatch,
 } = require("./models/database");
-const {
-  resolveWhatsappRecipientId,
-  resolveWhatsappUserId,
-} = require("./lib/whatsapp-id");
-const { getWhatsappConfig } = require("./lib/whatsapp-config");
+const { BaileysManager } = require("./lib/baileys-manager");
 const { qrToSvg } = require("./lib/qr-svg");
 const {
   validateLocationMessage,
@@ -65,7 +59,6 @@ const CAMERA_SESSION_TTL_MS = 2 * 60 * 1000;
 const PERMISSION_SESSION_TTL_MS = 5 * 60 * 1000;
 const LOCATION_REQUEST_TTL_MS = 5 * 60 * 1000;
 const STATE_CLEANUP_INTERVAL_MS = 60 * 1000;
-const LID_CACHE_MAX_ENTRIES = 5000;
 const ATTENDANCE_RADIUS_METERS = 100;
 const MAX_IMAGE_DIMENSION = 4096;
 const MAX_IMAGE_PIXELS = 16_000_000;
@@ -78,6 +71,7 @@ const otpCooldowns = new Map();
 const webSessions = new Map();
 const cameraSessions = new Map();
 const permissionSessions = new Map();
+const QR_RESET_TOKEN = crypto.randomBytes(32).toString("hex");
 const otpRequestLimiter = createRateLimiter({
   windowMs: 10 * 60_000,
   limit: 20,
@@ -297,7 +291,7 @@ function sessionCookieIsSecure(req) {
   return req.secure || publicBaseUrl().startsWith("https://");
 }
 
-function createCameraSession(userId, tipe) {
+function createCameraSession(userId, tipe, botKey) {
   for (const [token, session] of cameraSessions) {
     if (session.userId === userId) cameraSessions.delete(token);
   }
@@ -306,6 +300,7 @@ function createCameraSession(userId, tipe) {
   cameraSessions.set(token, {
     userId,
     tipe,
+    botKey,
     expiresAt: Date.now() + CAMERA_SESSION_TTL_MS,
     processing: false,
   });
@@ -322,7 +317,7 @@ function getCameraSession(token) {
   return session;
 }
 
-function createPermissionSession(userId, alasan, tanggal) {
+function createPermissionSession(userId, alasan, tanggal, botKey) {
   for (const [token, session] of permissionSessions) {
     if (session.userId === userId) permissionSessions.delete(token);
   }
@@ -332,6 +327,7 @@ function createPermissionSession(userId, alasan, tanggal) {
     userId,
     alasan,
     tanggal,
+    botKey,
     expiresAt: Date.now() + PERMISSION_SESSION_TTL_MS,
     verified: false,
     processing: false,
@@ -588,7 +584,7 @@ function teksBantuan(role, terdaftar) {
     lines.push(
       "",
       "Akses: Administrator",
-      "• *!setlokasi* - Mengatur titik lokasi sekolah. Setelah perintah ini, bagikan lokasi sekolah melalui fitur Lokasi WhatsApp.",
+      "• *!lokasi* - Mengatur titik lokasi sekolah melalui bot utama. Setelah perintah ini, bagikan lokasi sekolah melalui fitur Lokasi WhatsApp.",
       "• *!bantuan* - Menampilkan daftar perintah yang tersedia untuk role kamu.",
       "",
       `Pengelolaan siswa, kelas, jadwal, izin, admin, dan laporan tersedia di dashboard: ${publicBaseUrl()}`
@@ -629,28 +625,8 @@ function teksBantuan(role, terdaftar) {
   return lines.join("\n");
 }
 
-async function saveDashboardUserName(id, name) {
-  await updateJSON(USER_NAMES_PATH, (draft) => {
-    draft[USER_NAMES_PATH][id] = toTitleCase(String(name || "").trim());
-  });
-}
-
 async function resolveDashboardUserName(id, role) {
-  const knownName = dashboardUserName(id, role);
-  if (knownName !== "Administrator" && knownName !== "Wali Kelas") return knownName;
-
-  try {
-    const contact = await client.getContactById(id);
-    const whatsappName = contact.pushname || contact.name || contact.shortName;
-    if (whatsappName) {
-      await saveDashboardUserName(id, whatsappName);
-      return dashboardUserName(id, role);
-    }
-  } catch (error) {
-    console.warn(`[Dashboard] Nama WhatsApp ${id} tidak dapat dibaca:`, error.message);
-  }
-
-  return knownName;
+  return dashboardUserName(id, role);
 }
 
 function toTitleCase(str) {
@@ -698,44 +674,32 @@ function findKelasSiswa(dataKelas, siswaId) {
   return null;
 }
 
-async function kirimPesanAman(id, pesan) {
+function botKeyUntukSiswa(studentId) {
+  const kelas = findKelasSiswa(loadKelas(), studentId);
+  const nomorWali = normalizeNomor(kelas?.waliKelas);
+  return nomorWali ? `wali:${nomorWali}` : null;
+}
+
+async function kirimPesanAman(id, pesan, botKey) {
   if (!id) return;
   try {
-    const recipientId = await resolveWhatsappRecipientId(
-      client,
-      id,
-      lidToPhoneCache,
-      {
-        pending: pendingLidLookups,
-        failures: failedLidLookups,
-        timeoutMs: Number(process.env.WA_RECIPIENT_LOOKUP_TIMEOUT_MS) || 5000,
-      }
-    );
+    if (!botKey) throw new Error("Bot wali kelas untuk siswa tidak ditemukan.");
     await sendWhatsappWithRetry(
-      () => client.sendMessage(recipientId, pesan),
-      { recipientId }
+      () => whatsapp.sendText(botKey, id, pesan),
+      { recipientId: `${botKey}:${id}` }
     );
   } catch (error) {
     console.error(`[Notifikasi ERROR] ${id}:`, error.message);
   }
 }
 
-async function kirimMediaAman(id, media, caption) {
+async function kirimMediaAman(id, media, caption, botKey) {
   if (!id) return;
   try {
-    const recipientId = await resolveWhatsappRecipientId(
-      client,
-      id,
-      lidToPhoneCache,
-      {
-        pending: pendingLidLookups,
-        failures: failedLidLookups,
-        timeoutMs: Number(process.env.WA_RECIPIENT_LOOKUP_TIMEOUT_MS) || 5000,
-      }
-    );
+    if (!botKey) throw new Error("Bot wali kelas untuk siswa tidak ditemukan.");
     await sendWhatsappWithRetry(
-      () => client.sendMessage(recipientId, media, { caption }),
-      { recipientId }
+      () => whatsapp.sendImage(botKey, id, media, caption),
+      { recipientId: `${botKey}:${id}` }
     );
   } catch (error) {
     console.error(`[Notifikasi Media ERROR] ${id}:`, error.message);
@@ -776,7 +740,7 @@ function getStudentNotificationRecipients(studentId, kelasSiswa) {
   return recipients;
 }
 
-async function catatAbsensiKamera(userId, tipe, lokasi, foto) {
+async function catatAbsensiKamera(userId, tipe, lokasi, foto, botKey) {
   const kontak = loadJSON(KONTAK_PATH);
   const kelasSiswa = findKelasSiswa(loadKelas(), userId);
   const jamResmi = loadJSON(JAM_PATH, {
@@ -844,11 +808,11 @@ async function catatAbsensiKamera(userId, tipe, lokasi, foto) {
     throw error;
   }
 
-  const mediaMsg = new MessageMedia(
-    foto.mimetype,
-    foto.data,
-    `${userId.replace("@c.us", "")}.jpg`
-  );
+  const mediaMsg = {
+    mimetype: foto.mimetype,
+    buffer: foto.buffer,
+    filename: `${userId.replace("@c.us", "")}.jpg`,
+  };
   const caption =
     `*${kontak[userId] || userId}* telah absen *${tipe}*\n` +
     `Status: *${status}*\n` +
@@ -856,7 +820,7 @@ async function catatAbsensiKamera(userId, tipe, lokasi, foto) {
   const penerima = getStudentNotificationRecipients(userId, kelasSiswa);
   for (const id of penerima) {
     antreNotifikasi(
-      () => kirimMediaAman(id, mediaMsg, caption),
+      () => kirimMediaAman(id, mediaMsg, caption, botKey),
       `absen kamera ${userId} -> ${id}`
     );
   }
@@ -864,12 +828,12 @@ async function catatAbsensiKamera(userId, tipe, lokasi, foto) {
   return { status, waktu: waktu.jam, tanggal: waktu.tanggal };
 }
 
-const client = new WhatsappClient(getWhatsappConfig());
+const whatsapp = new BaileysManager({
+  authRoot: process.env.BAILEYS_AUTH_DATA_PATH || "./.baileys_auth",
+  mainExpectedNumber: process.env.WA_MAIN_NUMBER || process.env.WA_EXPECTED_NUMBER,
+});
 
 const pendingLokasi = new Map();
-const lidToPhoneCache = new Map();
-const pendingLidLookups = new Map();
-const failedLidLookups = new Map();
 
 function cleanupRuntimeState() {
   const now = Date.now();
@@ -888,72 +852,33 @@ function cleanupRuntimeState() {
   for (const [token, session] of permissionSessions) {
     if (session.expiresAt <= now) permissionSessions.delete(token);
   }
-  for (const [id, failure] of failedLidLookups) {
-    const expiresAt =
-      typeof failure === "number" ? failure : Number(failure?.expiresAt);
-    if (expiresAt && expiresAt <= now) failedLidLookups.delete(id);
-  }
   for (const [id, expiresAt] of pendingLokasi) {
     if (expiresAt <= now) pendingLokasi.delete(id);
-  }
-  while (lidToPhoneCache.size > LID_CACHE_MAX_ENTRIES) {
-    lidToPhoneCache.delete(lidToPhoneCache.keys().next().value);
   }
 }
 
 const runtimeStateCleanup = setInterval(cleanupRuntimeState, STATE_CLEANUP_INTERVAL_MS);
 runtimeStateCleanup.unref();
 
-client.on("qr", (qr) => {
-  qrCodeData = qr;
-  isReady = false;
-  console.log("📲 QR tersedia: buka http://localhost:3200/qr");
-});
-
-client.on("ready", () => {
-  const expectedNumber = normalizeNomor(process.env.WA_EXPECTED_NUMBER);
-  const connectedNumber = normalizeNomor(client.info?.wid?._serialized);
-  if (!expectedNumber) {
-    console.warn(
-      `[Keamanan] WA_EXPECTED_NUMBER belum diatur. Akun bot aktif: ${connectedNumber || "tidak diketahui"}.`
-    );
+whatsapp.on("status", (status) => {
+  if (status.state === "qr") {
+    console.log(`[Baileys ${status.key}] QR tersedia di http://localhost:${PORT}/qr`);
+  } else if (status.ready) {
+    console.log(`[Baileys ${status.key}] Terhubung sebagai ${status.connectedNumber}.`);
+  } else if (status.state === "mismatch") {
+    console.error(`[Baileys ${status.key}] ${status.error}`);
   }
-  if (expectedNumber && connectedNumber !== expectedNumber) {
-    console.error(
-      `❌ Akun WhatsApp yang terhubung (${connectedNumber || "tidak diketahui"}) bukan WA_EXPECTED_NUMBER.`
-    );
-    void shutdown("WA_ACCOUNT_MISMATCH", 1);
-    return;
-  }
-  isReady = true;
-  qrCodeData = null;
-  console.clear();
-  console.log("✅ Bot sudah terhubung ke WhatsApp.");
 });
 
-client.on("disconnected", (reason) => {
-  console.log("❌ WhatsApp disconnected:", reason);
-  isReady = false;
-  qrCodeData = null;
-  void shutdown("WA_DISCONNECTED", 1);
-});
-
-client.on("auth_failure", (message) => {
-  isReady = false;
-  console.error("❌ Autentikasi WhatsApp gagal:", message);
-});
-
-client.on("message", safeAsyncListener(async (msg) => {
+whatsapp.on("message", safeAsyncListener(async ({
+  botKey,
+  botRole,
+  expectedNumber,
+  classNames,
+  message: msg,
+}) => {
   const commandStartedAt = Date.now();
-  const rawSender = msg.author || msg.from;
-  const sender = await resolveWhatsappUserId(client, rawSender, lidToPhoneCache, {
-    pending: pendingLidLookups,
-    failures: failedLidLookups,
-    timeoutMs: Number(process.env.LID_LOOKUP_TIMEOUT_MS) || 4000,
-  });
-  if (rawSender !== sender) {
-    console.log(`[WhatsApp ID] ${rawSender} -> ${sender}`);
-  }
+  const sender = msg.author || msg.from;
   const body = String(msg.body || "").trim().toLowerCase();
   const kontak = loadJSON(KONTAK_PATH);
   const roles = loadJSON(ROLE_PATH);
@@ -971,65 +896,81 @@ client.on("message", safeAsyncListener(async (msg) => {
   const terdaftar = Boolean(kontak[sender]);
 
   async function replyCommand(message) {
-    const lookupDuration = Date.now() - commandStartedAt;
     const replyStartedAt = Date.now();
     try {
       return await sendWhatsappWithRetry(() => msg.reply(message), {
-        recipientId: sender,
+        recipientId: `${botKey}:${sender}`,
         priority: "high",
       });
     } finally {
       if (body.startsWith("!")) {
         console.log(
           `[Command Performance] ${body.split(/\s+/)[0]} ${sender}: ` +
-            `lookup+handler=${lookupDuration}ms reply=${Date.now() - replyStartedAt}ms ` +
+            `handler=${replyStartedAt - commandStartedAt}ms reply=${Date.now() - replyStartedAt}ms ` +
             `total=${Date.now() - commandStartedAt}ms`
         );
       }
     }
   }
 
-  if (body === "!bantuan") {
-    return replyCommand(teksBantuan(role, terdaftar));
+  if (botRole === "main") {
+    if (msg.type === "location" && pendingLokasi.get(sender) > Date.now()) {
+      const validation = validateLocationMessage(msg);
+      if (!validation.valid) {
+        return replyCommand(locationRejectionMessage(validation.reason));
+      }
+      await saveJSON(LOKASI_PATH, validation.location);
+      pendingLokasi.delete(sender);
+      return replyCommand("✅ Lokasi sekolah disimpan.");
+    }
+    if (body === "!lokasi" || body === "!setlokasi") {
+      if (role !== "admin") return replyCommand("❌ Hanya admin.");
+      pendingLokasi.set(sender, Date.now() + LOCATION_REQUEST_TTL_MS);
+      return replyCommand("📍 Bagikan lokasi sekolah sekarang melalui fitur Lokasi WhatsApp.");
+    }
+    if (body === "!bantuan") {
+      return replyCommand(
+        role === "admin"
+          ? "*Bot Utama Ruang Hadir*\n\n• *!lokasi* - Mengatur lokasi sekolah.\n• Kode login dashboard dikirim otomatis oleh bot ini."
+          : "Bot utama hanya melayani pengaturan lokasi oleh admin dan pengiriman kode login dashboard."
+      );
+    }
+    if (body.startsWith("!")) {
+      return replyCommand(
+        "Perintah absensi dikirim ke nomor WhatsApp wali kelas kamu. Bot utama hanya melayani *!lokasi* dan kode login."
+      );
+    }
+    return;
   }
 
-  if (!terdaftar && !["admin", "wali_kelas"].includes(role) && body.startsWith("!")) {
+  const kelasSiswa = findKelasSiswa(loadKelas(), sender);
+  const beradaDiBotWali =
+    terdaftar &&
+    kelasSiswa?.waliKelas === `${expectedNumber}@c.us` &&
+    classNames.includes(kelasSiswa.namaKelas);
+
+  if (body === "!bantuan") {
     return replyCommand(
-      "❌ Nomor kamu belum terdaftar di absensi. Hubungi admin untuk didaftarkan."
+      beradaDiBotWali
+        ? teksBantuan("user", true)
+        : "Nomor ini adalah bot absensi wali kelas. Kamu belum terdaftar pada kelas yang dilayani bot ini."
     );
   }
-
-  const commandDiizinkan =
-    body === "!masuk" ||
-    body === "!pulang" ||
-    body === "!setlokasi" ||
-    body === "!bantuan" ||
-    body === "!izin" ||
-    body.startsWith("!izin ");
+  if (!beradaDiBotWali && body.startsWith("!")) {
+    return replyCommand(
+      "❌ Kamu tidak terdaftar di kelas yang dilayani nomor wali ini. Hubungi admin sekolah."
+    );
+  }
+  if (!body.startsWith("!")) return;
   if (
-    body.startsWith("!") &&
-    !commandDiizinkan
+    body !== "!masuk" &&
+    body !== "!pulang" &&
+    body !== "!izin" &&
+    !body.startsWith("!izin ")
   ) {
     return replyCommand(
-      "❌ Perintah tidak dikenali. Ketik *!bantuan* untuk melihat perintah yang tersedia."
+      "❌ Perintah tidak dikenali. Gunakan *!masuk*, *!pulang*, *!izin alasan*, atau *!bantuan*."
     );
-  }
-
-  // Set lokasi
-  if (body === "!setlokasi") {
-    if (role !== "admin") return replyCommand("❌ Hanya admin.");
-    pendingLokasi.set(sender, Date.now() + LOCATION_REQUEST_TTL_MS);
-    return replyCommand("📍 Bagikan lokasi sekolah sekarang melalui fitur Lokasi WhatsApp.");
-  }
-  if (msg.type === "location" && pendingLokasi.get(sender) > Date.now()) {
-    const validation = validateLocationMessage(msg);
-    if (!validation.valid) {
-      return replyCommand(locationRejectionMessage(validation.reason));
-    }
-
-    await saveJSON(LOKASI_PATH, validation.location);
-    pendingLokasi.delete(sender);
-    return replyCommand("✅ Lokasi sekolah disimpan.");
   }
 
   // Absen masuk/pulang
@@ -1059,7 +1000,7 @@ client.on("message", safeAsyncListener(async (msg) => {
       );
     }
 
-    const token = createCameraSession(sender, tipe);
+    const token = createCameraSession(sender, tipe, botKey);
     const cameraUrl = `${publicBaseUrl()}/camera.html?token=${token}`;
 
     return replyCommand(
@@ -1082,7 +1023,7 @@ client.on("message", safeAsyncListener(async (msg) => {
     );
     if (permissionError) return replyCommand(`❌ ${permissionError}`);
 
-    const token = createPermissionSession(sender, alasan, waktu.tanggal);
+    const token = createPermissionSession(sender, alasan, waktu.tanggal, botKey);
     const permissionUrl = `${publicBaseUrl()}/permission.html?token=${token}`;
     return replyCommand(
       `Buka tautan berikut untuk mengajukan izin:\n${permissionUrl}\n\n` +
@@ -1095,9 +1036,6 @@ client.on("message", safeAsyncListener(async (msg) => {
 }, (error) => {
   console.error("[WhatsApp Message ERROR]", error.message);
 }));
-
-let qrCodeData = null;
-let isReady = false;
 
 function parseCookies(req) {
   return Object.fromEntries(
@@ -1307,17 +1245,22 @@ app.post("/api/permission-camera/:token/evidence", async (req, res) => {
       `📅 Tanggal: ${session.tanggal}\n` +
       `📌 Alasan: ${session.alasan}\n` +
       `✅ Wajah terverifikasi dan lokasi tercatat`;
-    const mediaMsg = new MessageMedia(bukti.mimetype, bukti.data, "bukti-izin.jpg");
+    const mediaMsg = {
+      mimetype: bukti.mimetype,
+      buffer: bukti.buffer,
+      filename: "bukti-izin.jpg",
+    };
     const penerima = getStudentNotificationRecipients(session.userId, kelasSiswa);
     for (const id of penerima) {
       antreNotifikasi(
-        () => kirimMediaAman(id, mediaMsg, caption),
+        () => kirimMediaAman(id, mediaMsg, caption, session.botKey),
         `izin web ${session.userId} -> ${id}`
       );
     }
     await kirimPesanAman(
       session.userId,
-      `✅ Izin hari ini berhasil dicatat.\nAlasan: ${session.alasan}`
+      `✅ Izin hari ini berhasil dicatat.\nAlasan: ${session.alasan}`,
+      session.botKey
     );
     res.json({ ok: true, tanggal: session.tanggal });
   } catch (error) {
@@ -1400,11 +1343,13 @@ app.post("/api/attendance-camera/:token", async (req, res) => {
       session.userId,
       session.tipe,
       { latitude, longitude, accuracy },
-      foto
+      foto,
+      session.botKey
     );
     await kirimPesanAman(
       session.userId,
-      `✅ Absen ${session.tipe} dicatat (${result.status}) pada ${result.waktu}.`
+      `✅ Absen ${session.tipe} dicatat (${result.status}) pada ${result.waktu}.`,
+      session.botKey
     );
     res.json({ ok: true, tipe: session.tipe, ...result });
   } catch (error) {
@@ -1421,7 +1366,7 @@ app.post("/api/auth/request-otp", async (req, res) => {
     ok: true,
     message: "Jika nomor memiliki akses, OTP akan dikirim melalui WhatsApp.",
   };
-  if (!isReady) {
+  if (!whatsapp.isReady("main")) {
     return res.status(503).json({ error: "Bot WhatsApp belum terhubung." });
   }
   if (!/^62\d{8,14}$/.test(nomor)) {
@@ -1445,7 +1390,8 @@ app.post("/api/auth/request-otp", async (req, res) => {
   loginOtps.set(id, issuedOtp);
   void sendWhatsappWithRetry(
       () =>
-        client.sendMessage(
+        whatsapp.sendText(
+          "main",
           id,
           `🔐 *Kode Login Ruang Hadir*\n\nKode OTP: *${code}*\nBerlaku selama 5 menit. Jangan berikan kode ini kepada siapa pun.`
         ),
@@ -1550,7 +1496,8 @@ function dashboardData(user) {
 
   return {
     tanggal: today,
-    botReady: isReady,
+    botReady: whatsapp.isReady("main"),
+    whatsappBots: whatsapp.statuses().map(({ qr, ...status }) => status),
     jam,
     siswa,
     kelas: Object.entries(kelas).map(([nama, data]) => ({
@@ -1634,6 +1581,14 @@ app.post("/api/classes", requireWebAdmin, async (req, res) => {
   if (!nama || !/^62\d{8,14}$/.test(waliKelas) || !namaWali) {
     return res.status(400).json({ error: "Data kelas dan wali kelas belum valid." });
   }
+  if (
+    waliKelas ===
+    normalizeNomor(process.env.WA_MAIN_NUMBER || process.env.WA_EXPECTED_NUMBER)
+  ) {
+    return res.status(400).json({
+      error: "Nomor bot utama tidak dapat dipakai sebagai bot wali kelas.",
+    });
+  }
 
   const waliId = `${waliKelas}@c.us`;
   try {
@@ -1674,6 +1629,9 @@ app.post("/api/classes", requireWebAdmin, async (req, res) => {
     if (error.code === "ALREADY_EXISTS") return res.status(409).json({ error: error.message });
     throw error;
   }
+  void whatsapp.sync(loadKelas()).catch((error) => {
+    console.error("[Baileys] Gagal menyelaraskan bot wali:", error.message);
+  });
   res.json({ ok: true });
 });
 
@@ -1701,6 +1659,9 @@ app.delete("/api/classes/:name", requireWebAdmin, async (req, res) => {
     if (error.code === "NOT_EMPTY") return res.status(400).json({ error: error.message });
     throw error;
   }
+  void whatsapp.sync(loadKelas()).catch((error) => {
+    console.error("[Baileys] Gagal menyelaraskan bot wali:", error.message);
+  });
   res.json({ ok: true });
 });
 
@@ -1798,6 +1759,9 @@ app.post("/api/students", requireWebAdmin, async (req, res) => {
       );
     }
   }
+  void whatsapp.sync(loadKelas()).catch((error) => {
+    console.error("[Baileys] Gagal memperbarui daftar siswa bot wali:", error.message);
+  });
   res.json({ ok: true });
 });
 
@@ -1842,6 +1806,9 @@ app.delete("/api/students/:number", requireWebAdmin, async (req, res) => {
       permissionSessions.delete(token);
     }
   }
+  void whatsapp.sync(loadKelas()).catch((error) => {
+    console.error("[Baileys] Gagal memperbarui daftar siswa bot wali:", error.message);
+  });
   res.json({ ok: true });
 });
 
@@ -1958,8 +1925,9 @@ app.post("/api/permissions", requireWebAdmin, async (req, res) => {
       `🏫 Kelas: ${kelasSiswa.namaKelas}\n` +
       `📅 Tanggal: ${tanggal}\n` +
       `📌 Alasan: ${alasan}`;
-    await kirimPesanAman(kelasSiswa.siswa[siswaId].orangTua, pesan);
-    await kirimPesanAman(kelasSiswa.waliKelas, pesan);
+    const botKey = botKeyUntukSiswa(siswaId);
+    await kirimPesanAman(kelasSiswa.siswa[siswaId].orangTua, pesan, botKey);
+    await kirimPesanAman(kelasSiswa.waliKelas, pesan, botKey);
   }
   res.json({ ok: true });
 });
@@ -2071,64 +2039,78 @@ function requireQrAccess(req, res, next) {
 }
 
 app.get("/qr", requireQrAccess, (req, res) => {
-  if (isReady) {
-    return res.send(`
-      <html>
-        <body style="display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;text-align:center;">
-          <div>
-            <h2>✅ Bot sudah terhubung ke WhatsApp.</h2>
-          </div>
-        </body>
-      </html>
-    `);
-  }
-
-  if (!qrCodeData) {
-    return res.send(`
-      <html>
-        <body style="display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;text-align:center;">
-          <div>
-            <h2>⏳ Menunggu QR Code...</h2>
-          </div>
-        </body>
-      </html>
-    `);
-  }
-
-  const qrSvg = qrToSvg(qrCodeData);
+  const escapeHtml = (value) =>
+    String(value || "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;");
+  const statusLabels = {
+    starting: "Menyiapkan sesi",
+    connecting: "Menghubungkan",
+    qr: "Pindai QR",
+    open: "Terhubung",
+    closed: "Terputus, mencoba kembali",
+    logged_out: "Sesi sudah logout",
+    mismatch: "Nomor tidak sesuai",
+    error: "Gagal memulai sesi",
+  };
+  const bots = whatsapp.statuses();
+  const cards = bots.map((bot) => {
+    const classes = bot.classes.length ? `Kelas: ${bot.classes.map(escapeHtml).join(", ")}` : "Layanan lokasi dan OTP dashboard";
+    const expected = bot.expectedNumber || "belum dibatasi melalui WA_MAIN_NUMBER";
+    const qr = bot.qr ? `<div class="qr">${qrToSvg(bot.qr)}</div>` : "";
+    const reset = ["mismatch", "logged_out", "error"].includes(bot.state)
+      ? `<form method="post" action="/qr/reset/${encodeURIComponent(bot.key)}?token=${QR_RESET_TOKEN}"><button type="submit">Hapus sesi dan tampilkan QR baru</button></form>`
+      : "";
+    return `<article class="card ${bot.ready ? "ready" : "pending"}">
+      <h2>${bot.ready ? "✅" : "⏳"} ${escapeHtml(bot.label)}</h2>
+      <p>${escapeHtml(classes)}</p>
+      <p>Nomor yang harus dipindai: <strong>${escapeHtml(expected)}</strong></p>
+      <p>Status: <strong>${escapeHtml(statusLabels[bot.state] || bot.state)}</strong></p>
+      ${bot.connectedNumber ? `<p>Terhubung sebagai: ${escapeHtml(bot.connectedNumber)}</p>` : ""}
+      ${bot.error ? `<p class="error">${escapeHtml(bot.error)}</p>` : ""}
+      ${qr}${reset}
+    </article>`;
+  }).join("");
   res.send(`
   <html>
     <head>
       <meta name="viewport" content="width=device-width, initial-scale=1" />
-      <title>QR Login Bot</title>
+      <meta http-equiv="refresh" content="5" />
+      <title>Koneksi Bot WhatsApp</title>
       <style>
-        body {
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          height: 100vh;
-          font-family: sans-serif;
-          text-align: center;
-          margin: 0;
-        }
-        img {
-          max-width: 90vw;
-          height: auto;
-        }
-        h2, p {
-          margin: 10px 0;
-        }
+        body { margin:0; padding:24px; background:#f1f5f9; color:#0f172a; font-family:system-ui,sans-serif; }
+        main { max-width:1100px; margin:auto; }
+        header { margin-bottom:20px; }
+        .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:16px; }
+        .card { background:white; border-radius:16px; padding:20px; box-shadow:0 3px 15px #0f172a12; text-align:center; }
+        .ready { border-top:5px solid #10b981; } .pending { border-top:5px solid #f59e0b; }
+        h1,h2,p { margin:8px 0; } h2 { font-size:1.2rem; }
+        .qr svg { width:min(100%,320px); height:auto; margin:16px auto; }
+        .error { color:#b91c1c; } button { border:0; border-radius:8px; padding:10px 14px; background:#dc2626; color:white; cursor:pointer; }
       </style>
     </head>
     <body>
-      <div>
-        <h2>🔐 Scan QR WhatsApp:</h2>
-        ${qrSvg}
-        <p>QR akan otomatis hilang setelah login.</p>
-      </div>
+      <main>
+        <header><h1>Koneksi Bot WhatsApp</h1><p>Pindai setiap QR memakai nomor yang tertulis pada kartu. Halaman diperbarui otomatis.</p></header>
+        <section class="grid">${cards || "<p>Menyiapkan daftar bot...</p>"}</section>
+      </main>
     </body>
   </html>
 `);
+});
+
+app.post("/qr/reset/:key", requireQrAccess, async (req, res) => {
+  if (req.query.token !== QR_RESET_TOKEN) {
+    return res.status(403).send("Token pengaturan ulang sesi tidak valid.");
+  }
+  try {
+    await whatsapp.reset(req.params.key);
+    res.redirect("/qr");
+  } catch (error) {
+    res.status(400).send(`Sesi tidak dapat diatur ulang: ${String(error.message || error)}`);
+  }
 });
 
 app.use((error, req, res, next) => {
@@ -2179,7 +2161,7 @@ async function startBot() {
   }
   startHttpServer();
   try {
-    await client.initialize();
+    await whatsapp.start(loadKelas());
   } catch (error) {
     console.error("Gagal inisialisasi WhatsApp:", error);
     await shutdown("WA_INIT_FAILED", 1);
@@ -2198,7 +2180,7 @@ async function shutdown(signal, exitCode = 0) {
       httpServer = null;
     }
     await facePool.close();
-    await client.destroy();
+    await whatsapp.close();
   } catch (error) {
     console.error("Gagal menutup layanan:", error);
   } finally {

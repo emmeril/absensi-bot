@@ -19,9 +19,12 @@ test("OTP cooldown survives invalid guesses and failed delivery", async () => {
     Date: { now: () => now }, crypto,
     normalizeNomor: (value) => value,
     loadRoles: () => ({ "621234567890@c.us": "admin" }),
-    isReady: true, loginOtps: new Map(), otpCooldowns: new Map(),
+    loginOtps: new Map(), otpCooldowns: new Map(),
     sendWhatsappWithRetry: async (send) => send(),
-    client: { sendMessage: async () => { sends++; if (failSend) throw Error("offline"); } },
+    whatsapp: {
+      isReady: () => true,
+      sendText: async () => { sends++; if (failSend) throw Error("offline"); },
+    },
     webSessions: new Map(), resolveDashboardUserName: async () => "Admin",
   };
   vm.runInNewContext(source.slice(source.indexOf('app.post("/api/auth/request-otp"'), source.indexOf('app.get("/api/auth/me"')), context);
@@ -119,7 +122,7 @@ function automaticFlowFixture() {
     getAttendanceStatus: () => "Tepat Waktu",
     getAttendanceWindow: () => ({ mulai: "00:00", selesai: "23:59" }),
     haversine: () => 0, ATTENDANCE_RADIUS_METERS: 100,
-    MessageMedia: class {}, findKelasSiswa: () => null, loadKelas: () => ({}),
+    findKelasSiswa: () => null, loadKelas: () => ({}),
     getStudentNotificationRecipients: () => [],
     antreNotifikasi: () => {}, kirimPesanAman: async () => {},
     app: { post: (route, handler) => { routes[route] = handler; } },
@@ -134,7 +137,7 @@ function automaticFlowFixture() {
     ensureDir: () => {}, console: { error() {} },
     fs: { existsSync: (name) => files.has(name) },
   };
-  vm.runInNewContext(source.slice(source.indexOf("async function catatAbsensiKamera"), source.indexOf("const client = new WhatsappClient")), context);
+  vm.runInNewContext(source.slice(source.indexOf("async function catatAbsensiKamera"), source.indexOf("const whatsapp = new BaileysManager")), context);
   vm.runInNewContext(source.slice(source.indexOf('app.post("/api/permission-camera/:token/evidence"'), source.indexOf('app.get("/api/attendance-camera/:token"')), context);
   return { context, state, routes, files, sessions };
 }

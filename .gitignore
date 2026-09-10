@@ -1,6 +1,7 @@
 .wwebjs_auth
 .wwebjs_cache
 .wwebjs_cache.backup
+.baileys_auth
 node_modules
 .env
 .env.*
