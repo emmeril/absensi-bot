@@ -32,3 +32,13 @@ test("form admin dan wali kelas mengelola akun dashboard", () => {
   assert.match(dashboardPage, /adminForm\.username/);
   assert.match(dashboardPage, /adminForm\.password/);
 });
+
+test("semua input password memiliki placeholder dan tombol tampilkan password", () => {
+  assert.match(dashboardPage, /placeholder="Masukkan password"/);
+  assert.match(dashboardPage, /Minimal 10 karakter/);
+  assert.match(dashboardPage, /showLoginPassword \? 'text' : 'password'/);
+  assert.match(dashboardPage, /showClassPassword \? 'text' : 'password'/);
+  assert.match(dashboardPage, /showAdminPassword \? 'text' : 'password'/);
+  assert.match(dashboardPage, /fa-eye-slash/);
+  assert.match(dashboardPage, /aria-label/);
+});
