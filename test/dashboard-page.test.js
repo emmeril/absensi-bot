@@ -196,6 +196,11 @@ test("filter tabel dapat dikombinasikan dan direset", () => {
   assert.equal(state.tables.students.page, 1);
 });
 
+test("header ringkasan membedakan status masuk dan status pulang", () => {
+  assert.match(dashboardPage, />Status Masuk<i/);
+  assert.match(dashboardPage, />Status Pulang<i/);
+});
+
 test("header tabel mengurutkan data naik dan turun sebelum pagination", () => {
   const script = dashboardPage.match(
     /<script>\s*(function dashboard\(\)[\s\S]*?)\s*<\/script>/
