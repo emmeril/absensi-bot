@@ -80,7 +80,7 @@ test("simultaneous exports retain each user's filtered report", async (t) => {
     ["async function exportExcel(", "function ensureDir"],
     ["function findKelasSiswa(", "function textNotification"],
     ["function kelasUntukWali(", "function removeUnusedWaliRole"],
-    ["async function buildReportRows(", 'function requireQrAccess'],
+    ["async function buildReportRows(", 'app.get("/api/whatsapp'],
   ]) vm.runInNewContext(source.slice(source.indexOf(start), source.indexOf(end)), context);
   const server = app.listen(0, "127.0.0.1");
   t.after(() => { server.closeAllConnections(); server.close(); });
@@ -99,6 +99,38 @@ test("simultaneous exports retain each user's filtered report", async (t) => {
   }));
   assert.deepEqual(results[0].map((row) => row.Nama), ["Student A", "Former Student"]);
   assert.deepEqual(results[1].map((row) => row.Nama), ["Student A", "Student B", "Former Student"]);
+});
+
+test("QR dan reset WhatsApp memakai autentikasi admin dashboard", () => {
+  const context = {};
+  vm.runInNewContext(
+    source.slice(
+      source.indexOf("function requireWebAdmin"),
+      source.indexOf("function requireWebPhotoManager")
+    ),
+    context
+  );
+  const response = {
+    statusCode: 200,
+    status(code) { this.statusCode = code; return this; },
+    json(body) { this.body = body; return this; },
+  };
+  let nextCalls = 0;
+  context.requireWebAdmin({ webUser: { role: "wali_kelas" } }, response, () => { nextCalls += 1; });
+  assert.equal(response.statusCode, 403);
+  context.requireWebAdmin({ webUser: { role: "admin" } }, response, () => { nextCalls += 1; });
+  assert.equal(nextCalls, 1);
+  assert.match(
+    source,
+    /app\.get\("\/api\/whatsapp\/:key\/qr\.svg", requireWebAdmin/
+  );
+  assert.match(
+    source,
+    /app\.post\("\/api\/whatsapp\/:key\/reset", requireWebAdmin/
+  );
+  assert.match(source, /whatsappBots: user\.role === "admin"/);
+  assert.match(source, /\{ \.\.\.status, hasQr: Boolean\(qr\) \}/);
+  assert.doesNotMatch(source, /QR_ACCESS_TOKEN|requireQrAccess|QR_RESET_TOKEN/);
 });
 
 test("message listener catches both synchronous and asynchronous failures and keeps running", async () => {

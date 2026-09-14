@@ -3,7 +3,6 @@ const assert = require("node:assert/strict");
 
 const {
   createRateLimiter,
-  isQrRequestAllowed,
   serializeSessionCookie,
 } = require("../lib/web-security");
 
@@ -14,24 +13,6 @@ function request({ address = "203.0.113.10", host = "attendance.example", author
     headers: { host, ...(authorization ? { authorization } : {}) },
   };
 }
-
-test("QR hanya terbuka secara lokal atau dengan bootstrap secret", () => {
-  const secret = "rahasia-yang-panjang";
-  assert.equal(
-    isQrRequestAllowed(request({ address: "127.0.0.1", host: "localhost:3200" }), ""),
-    true
-  );
-  const proxiedLocal = request({ address: "127.0.0.1", host: "localhost:3200" });
-  proxiedLocal.headers["x-forwarded-for"] = "203.0.113.10";
-  assert.equal(isQrRequestAllowed(proxiedLocal, ""), false);
-  assert.equal(isQrRequestAllowed(request(), secret), false);
-  const basic = `Basic ${Buffer.from(`operator:${secret}`).toString("base64")}`;
-  assert.equal(isQrRequestAllowed(request({ authorization: basic }), secret), true);
-  assert.equal(
-    isQrRequestAllowed(request({ authorization: "Bearer salah" }), secret),
-    false
-  );
-});
 
 test("rate limiter membatasi jumlah request per sumber", () => {
   let currentTime = 1_000;

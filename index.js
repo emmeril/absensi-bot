@@ -62,7 +62,6 @@ const {
 } = require("./lib/dashboard-auth");
 const {
   createRateLimiter,
-  isQrRequestAllowed,
   serializeSessionCookie,
 } = require("./lib/web-security");
 const {
@@ -95,7 +94,6 @@ const upload = multer({
 const webSessions = new Map();
 const cameraSessions = new Map();
 const permissionSessions = new Map();
-const QR_RESET_TOKEN = crypto.randomBytes(32).toString("hex");
 const loginLimiter = createRateLimiter({
   windowMs: 10 * 60_000,
   limit: 10,
@@ -1005,7 +1003,7 @@ runtimeStateCleanup.unref();
 
 whatsapp.on("status", (status) => {
   if (status.state === "qr") {
-    console.log(`[Baileys ${status.key}] QR tersedia di http://localhost:${PORT}/qr`);
+    console.log(`[Baileys ${status.key}] QR tersedia di menu WhatsApp dashboard.`);
   } else if (status.ready) {
     console.log(`[Baileys ${status.key}] Terhubung sebagai ${status.connectedNumber}.`);
   } else if (status.state === "mismatch") {
@@ -1603,7 +1601,9 @@ async function dashboardData(user) {
   return {
     tanggal: today,
     botReady: whatsapp.statuses().length > 0 && whatsapp.statuses().every((bot) => bot.ready),
-    whatsappBots: whatsapp.statuses().map(({ qr, ...status }) => status),
+    whatsappBots: user.role === "admin"
+      ? whatsapp.statuses().map(({ qr, ...status }) => ({ ...status, hasQr: Boolean(qr) }))
+      : [],
     jam,
     siswa,
     kelas: Object.entries(kelas).map(([nama, data]) => ({
@@ -2221,86 +2221,24 @@ app.get("/api/export", async (req, res) => {
   res.send(buffer);
 });
 
-function requireQrAccess(req, res, next) {
-  if (isQrRequestAllowed(req)) return next();
-  res.setHeader("WWW-Authenticate", 'Basic realm="Ruang Hadir QR", charset="UTF-8"');
-  return res.status(401).send("Akses QR hanya tersedia secara lokal atau dengan QR_ACCESS_TOKEN.");
-}
-
-app.get("/qr", requireQrAccess, (req, res) => {
-  const escapeHtml = (value) =>
-    String(value || "")
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;");
-  const statusLabels = {
-    starting: "Menyiapkan sesi",
-    connecting: "Menghubungkan",
-    qr: "Pindai QR",
-    open: "Terhubung",
-    closed: "Terputus, mencoba kembali",
-    logged_out: "Sesi sudah logout",
-    mismatch: "Nomor tidak sesuai",
-    error: "Gagal memulai sesi",
-  };
-  const bots = whatsapp.statuses();
-  const cards = bots.map((bot) => {
-    const classes = bot.classes.length ? `Kelas: ${bot.classes.map(escapeHtml).join(", ")}` : "Bot wali kelas";
-    const expected = bot.expectedNumber || "nomor wali belum diatur";
-    const qr = bot.qr ? `<div class="qr">${qrToSvg(bot.qr)}</div>` : "";
-    const reset = ["mismatch", "logged_out", "error"].includes(bot.state)
-      ? `<form method="post" action="/qr/reset/${encodeURIComponent(bot.key)}?token=${QR_RESET_TOKEN}"><button type="submit">Hapus sesi dan tampilkan QR baru</button></form>`
-      : "";
-    return `<article class="card ${bot.ready ? "ready" : "pending"}">
-      <h2>${bot.ready ? "✅" : "⏳"} ${escapeHtml(bot.label)}</h2>
-      <p>${escapeHtml(classes)}</p>
-      <p>Nomor yang harus dipindai: <strong>${escapeHtml(expected)}</strong></p>
-      <p>Status: <strong>${escapeHtml(statusLabels[bot.state] || bot.state)}</strong></p>
-      ${bot.connectedNumber ? `<p>Terhubung sebagai: ${escapeHtml(bot.connectedNumber)}</p>` : ""}
-      ${bot.error ? `<p class="error">${escapeHtml(bot.error)}</p>` : ""}
-      ${qr}${reset}
-    </article>`;
-  }).join("");
-  res.send(`
-  <html>
-    <head>
-      <meta name="viewport" content="width=device-width, initial-scale=1" />
-      <meta http-equiv="refresh" content="5" />
-      <title>Koneksi Bot WhatsApp</title>
-      <style>
-        body { margin:0; padding:24px; background:#f1f5f9; color:#0f172a; font-family:system-ui,sans-serif; }
-        main { max-width:1100px; margin:auto; }
-        header { margin-bottom:20px; }
-        .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:16px; }
-        .card { background:white; border-radius:16px; padding:20px; box-shadow:0 3px 15px #0f172a12; text-align:center; }
-        .ready { border-top:5px solid #10b981; } .pending { border-top:5px solid #f59e0b; }
-        h1,h2,p { margin:8px 0; } h2 { font-size:1.2rem; }
-        .qr svg { width:min(100%,320px); height:auto; margin:16px auto; }
-        .error { color:#b91c1c; } button { border:0; border-radius:8px; padding:10px 14px; background:#dc2626; color:white; cursor:pointer; }
-      </style>
-    </head>
-    <body>
-      <main>
-        <header><h1>Koneksi Bot WhatsApp</h1><p>Pindai setiap QR memakai nomor yang tertulis pada kartu. Halaman diperbarui otomatis.</p></header>
-        <section class="grid">${cards || "<p>Menyiapkan daftar bot...</p>"}</section>
-      </main>
-    </body>
-  </html>
-`);
+app.get("/api/whatsapp/:key/qr.svg", requireWebAdmin, (req, res) => {
+  const bot = whatsapp.statuses().find((status) => status.key === req.params.key);
+  if (!bot?.qr) return res.status(404).json({ error: "QR bot belum tersedia." });
+  res.type("image/svg+xml").send(qrToSvg(bot.qr));
 });
 
-app.post("/qr/reset/:key", requireQrAccess, async (req, res) => {
-  if (req.query.token !== QR_RESET_TOKEN) {
-    return res.status(403).send("Token pengaturan ulang sesi tidak valid.");
-  }
+app.post("/api/whatsapp/:key/reset", requireWebAdmin, async (req, res) => {
   try {
     await whatsapp.reset(req.params.key);
-    res.redirect("/qr");
+    res.json({ ok: true });
   } catch (error) {
-    res.status(400).send(`Sesi tidak dapat diatur ulang: ${String(error.message || error)}`);
+    res.status(400).json({
+      error: `Sesi tidak dapat diatur ulang: ${String(error.message || error)}`,
+    });
   }
 });
+
+app.get("/qr", (_req, res) => res.redirect("/#whatsapp"));
 
 app.use((error, req, res, next) => {
   if (res.headersSent) return next(error);
@@ -2323,7 +2261,6 @@ let httpServer = null;
 function startHttpServer() {
   httpServer = app.listen(PORT, () => {
     console.log(`🌐 Dashboard: ${publicBaseUrl()}`);
-    console.log(`🌐 Akses QR lokal di: http://localhost:${PORT}/qr`);
     if (!process.env.PUBLIC_BASE_URL) {
       console.warn(
         "⚠️ PUBLIC_BASE_URL belum diatur. Tautan kamera hanya akan memakai localhost dan tidak dapat dibuka dari ponsel lain."

@@ -85,7 +85,6 @@ Variabel lingkungan opsional:
 | `INITIAL_ADMIN_NUMBER` | kosong | Nomor admin pertama untuk database baru |
 | `INITIAL_ADMIN_USERNAME` | kosong | Username admin pertama, 3–32 karakter |
 | `INITIAL_ADMIN_PASSWORD` | kosong | Password admin pertama, minimal 10 karakter |
-| `QR_ACCESS_TOKEN` | kosong | Password HTTP Basic minimal 16 karakter untuk membuka `/qr` dari jaringan |
 | `TRUST_PROXY_HOPS` | `0` | Jumlah reverse proxy tepercaya di depan aplikasi |
 | `SESSION_COOKIE_SECURE` | otomatis | Paksa cookie sesi hanya melalui HTTPS |
 | `BAILEYS_AUTH_DATA_PATH` | `.baileys_auth` | Direktori seluruh sesi Baileys |
@@ -130,12 +129,11 @@ node index.js
 node index.js
 ```
 
-Pada proses pertama, pindai QR WhatsApp yang tampil di terminal atau buka:
+Pada proses pertama, masuk ke dashboard lalu buka menu **WhatsApp**:
 
 - Dashboard: `http://localhost:3200`
-- Status/QR WhatsApp: `http://localhost:3200/qr`
 
-Halaman `/qr` menampilkan satu kartu untuk setiap nomor wali kelas yang tersimpan di dashboard. Pindai masing-masing QR memakai nomor yang tertulis pada kartu. Satu wali yang menangani beberapa kelas tetap memakai satu sesi. Sesi disimpan di `.baileys_auth`, sehingga pemindaian biasanya hanya diperlukan sekali. Jika akun salah atau sudah logout, tombol pada kartu dapat menghapus sesi tersebut dan menampilkan QR baru.
+Menu WhatsApp hanya tersedia untuk administrator yang sudah login ke dashboard; tidak ada password koneksi terpisah. Menu ini menampilkan satu kartu untuk setiap nomor wali kelas yang tersimpan. Pindai masing-masing QR memakai nomor yang tertulis pada kartu. Satu wali yang menangani beberapa kelas tetap memakai satu sesi. Sesi disimpan di `.baileys_auth`, sehingga pemindaian biasanya hanya diperlukan sekali. Jika akun salah atau sudah logout, tombol pada kartu dapat menghapus sesi tersebut dan menampilkan QR baru.
 
 Untuk produksi menggunakan PM2:
 
@@ -149,7 +147,7 @@ pm2 save
 
 1. Admin menjalankan aplikasi lalu masuk ke dashboard memakai username dan password.
 2. Admin membuat kelas, menetapkan wali kelas beserta akun dashboard-nya, dan menambahkan siswa serta nomor orang tua.
-3. Admin menghubungkan semua bot wali melalui `/qr`.
+3. Admin menghubungkan semua bot wali melalui menu **WhatsApp** di dashboard.
 4. Admin atau wali kelas mengunggah foto referensi wajah siswa melalui dashboard.
 5. Siswa mengirim `!masuk` atau `!pulang` ke nomor wali kelasnya, membuka tautan sekali pakai, lalu mengambil selfie langsung dan mengizinkan GPS.
 6. Untuk izin, siswa mengirim `!izin alasan` ke nomor wali kelasnya, memverifikasi selfie dan GPS melalui tautan, lalu mengunggah surat atau bukti pada tahap kedua.
@@ -191,7 +189,7 @@ Direktori seperti `.baileys_auth`, `data`, `face_db`, `face_rec`, `attendance_ph
 ## Catatan keamanan
 
 - Jangan membagikan direktori sesi `.baileys_auth`.
-- Isi `QR_ACCESS_TOKEN` pada produksi. `/qr` tanpa token hanya dapat dibuka langsung melalui localhost; akses jaringan akan meminta HTTP Basic dengan token sebagai password.
+- Menu WhatsApp dan QR hanya dapat diakses oleh administrator yang sudah login ke dashboard.
 - Batasi akses jaringan ke dashboard karena aplikasi saat ini berjalan melalui HTTP.
 - Gunakan HTTPS pada `PUBLIC_BASE_URL`; browser ponsel memblokir kamera pada alamat HTTP biasa.
 - Ganti username dan password admin awal sebelum digunakan di lingkungan lain.
