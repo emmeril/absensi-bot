@@ -159,3 +159,16 @@ test("header tabel mengurutkan data naik dan turun sebelum pagination", () => {
   state.toggleSort("classes", "studentCount");
   assert.deepEqual(Array.from(state.pagedClasses, (row) => row.jumlahSiswa), [2, 10]);
 });
+
+test("header aksi tidak menampilkan ikon dan tidak dapat diurutkan", () => {
+  const actionHeaders = dashboardPage.match(
+    /<th class="text-center">Aksi<\/th>/g
+  ) || [];
+
+  assert.equal(actionHeaders.length, 4);
+  assert.doesNotMatch(dashboardPage, /toggleSort\([^)]*['"]action['"]/);
+  assert.match(
+    dashboardPage,
+    /th\.text-center::before, \.data-table thead th\.text-center::after \{ display: none !important; content: none !important; \}/
+  );
+});
