@@ -51,6 +51,41 @@ test("koneksi WhatsApp tersedia untuk admin dan wali kelas", () => {
   assert.match(dashboardPage, /\/api\/whatsapp\/\$\{encodeURIComponent\(bot\.key\)\}\/qr\.svg/);
   assert.match(dashboardPage, /resetWhatsapp\(bot\)/);
   assert.doesNotMatch(dashboardPage, /href="\/qr"/);
+  assert.doesNotMatch(dashboardPage, /title="Status WhatsApp"/);
+});
+
+test("menu admin, WhatsApp, dan jadwal berada di submenu pengaturan", () => {
+  assert.match(dashboardPage, /item in mainTabs/);
+  assert.match(dashboardPage, /item in settingsTabs/);
+  assert.match(dashboardPage, /toggleSettingsMenu\(\)/);
+  assert.match(dashboardPage, /label:"Pengaturan Jadwal",icon:"fa-solid fa-calendar-days"/);
+
+  const script = dashboardPage.match(
+    /<script>\s*(function dashboard\(\)[\s\S]*?)\s*<\/script>/
+  );
+  assert.ok(script, "fungsi dashboard ditemukan");
+  const createDashboard = vm.runInNewContext(`${script[1]}; dashboard;`);
+  const state = createDashboard();
+
+  state.user = { role: "admin" };
+  assert.deepEqual(Array.from(state.mainTabs, (item) => item.id), [
+    "ringkasan",
+    "siswa",
+    "kelas",
+    "izin",
+  ]);
+  assert.deepEqual(Array.from(state.settingsTabs, (item) => item.id), [
+    "pengaturan",
+    "whatsapp",
+    "admin",
+  ]);
+
+  state.user = { role: "teacher" };
+  assert.deepEqual(Array.from(state.mainTabs, (item) => item.id), [
+    "ringkasan",
+    "siswa",
+  ]);
+  assert.deepEqual(Array.from(state.settingsTabs, (item) => item.id), ["whatsapp"]);
 });
 
 test("ikon user navbar membuka informasi akun dan tombol logout", () => {
