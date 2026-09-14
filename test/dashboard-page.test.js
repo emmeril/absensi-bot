@@ -18,3 +18,17 @@ test("form edit mengirim identitas asli siswa dan kelas", () => {
   assert.match(dashboardPage, /originalNomor:s\.nomor/);
   assert.match(dashboardPage, /originalNama:k\.nama/);
 });
+
+test("dashboard login memakai username dan password tanpa OTP", () => {
+  assert.match(dashboardPage, /loginDashboard/);
+  assert.match(dashboardPage, /login\.username/);
+  assert.match(dashboardPage, /login\.password/);
+  assert.doesNotMatch(dashboardPage, /request-otp|Kode OTP|verifyOtp/);
+});
+
+test("form admin dan wali kelas mengelola akun dashboard", () => {
+  assert.match(dashboardPage, /classForm\.username/);
+  assert.match(dashboardPage, /classForm\.password/);
+  assert.match(dashboardPage, /adminForm\.username/);
+  assert.match(dashboardPage, /adminForm\.password/);
+});

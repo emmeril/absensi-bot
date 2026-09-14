@@ -53,6 +53,14 @@ const {
   isRetryableWhatsappError,
 } = require("./lib/whatsapp-send");
 const {
+  hashPassword,
+  hashPasswordSync,
+  isValidPassword,
+  isValidUsername,
+  normalizeUsername,
+  verifyPassword,
+} = require("./lib/dashboard-auth");
+const {
   createRateLimiter,
   isQrRequestAllowed,
   serializeSessionCookie,
@@ -84,21 +92,14 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
 });
-const loginOtps = new Map();
-const otpCooldowns = new Map();
 const webSessions = new Map();
 const cameraSessions = new Map();
 const permissionSessions = new Map();
 const QR_RESET_TOKEN = crypto.randomBytes(32).toString("hex");
-const otpRequestLimiter = createRateLimiter({
+const loginLimiter = createRateLimiter({
   windowMs: 10 * 60_000,
-  limit: 20,
-  message: "Terlalu banyak permintaan OTP dari koneksi ini. Coba lagi nanti.",
-});
-const otpVerifyLimiter = createRateLimiter({
-  windowMs: 10 * 60_000,
-  limit: 50,
-  message: "Terlalu banyak percobaan OTP dari koneksi ini. Coba lagi nanti.",
+  limit: 10,
+  message: "Terlalu banyak percobaan login dari koneksi ini. Coba lagi nanti.",
 });
 const cameraRequestLimiter = createRateLimiter({
   windowMs: 5 * 60_000,
@@ -138,8 +139,7 @@ app.use("/api", (_req, res, next) => {
   res.setHeader("Pragma", "no-cache");
   next();
 });
-app.use("/api/auth/request-otp", otpRequestLimiter);
-app.use("/api/auth/verify", otpVerifyLimiter);
+app.use("/api/auth/login", loginLimiter);
 app.use("/api/attendance-camera", cameraRequestLimiter);
 app.use("/api/permission-camera", cameraRequestLimiter);
 app.use(express.json({ limit: "10mb" }));
@@ -167,10 +167,25 @@ const ATTENDANCE_PHOTO_DIR = "./attendance_photos";
 const IZIN_PATH = "./izin.json";
 const KELAS_PATH = "./kelas.json";
 const USER_NAMES_PATH = "./user_names.json";
+const DASHBOARD_ACCOUNTS_PATH = "./dashboard_accounts.json";
 const initialAdminNumber = String(process.env.INITIAL_ADMIN_NUMBER || "").replace(/\D/g, "");
 const INITIAL_ROLES = /^62\d{8,14}$/.test(initialAdminNumber)
   ? { [`${initialAdminNumber}@c.us`]: "admin" }
   : {};
+const initialAdminUsername = normalizeUsername(process.env.INITIAL_ADMIN_USERNAME);
+const initialAdminPassword = String(process.env.INITIAL_ADMIN_PASSWORD || "");
+const INITIAL_DASHBOARD_ACCOUNTS =
+  /^62\d{8,14}$/.test(initialAdminNumber) &&
+  isValidUsername(initialAdminUsername) &&
+  isValidPassword(initialAdminPassword)
+    ? {
+        [initialAdminUsername]: {
+          userId: `${initialAdminNumber}@c.us`,
+          passwordHash: hashPasswordSync(initialAdminPassword),
+        },
+      }
+    : {};
+const DUMMY_PASSWORD_HASH = hashPasswordSync("dummy-login-password");
 
 const JSON_STORES = {
   [STORAGE_PATH]: { path: STORAGE_PATH, fallback: {} },
@@ -195,6 +210,10 @@ const JSON_STORES = {
   [IZIN_PATH]: { path: IZIN_PATH, fallback: {} },
   [KELAS_PATH]: { path: KELAS_PATH, fallback: {} },
   [USER_NAMES_PATH]: { path: USER_NAMES_PATH, fallback: {} },
+  [DASHBOARD_ACCOUNTS_PATH]: {
+    path: DASHBOARD_ACCOUNTS_PATH,
+    fallback: INITIAL_DASHBOARD_ACCOUNTS,
+  },
 };
 
 const jsonState = new JsonState({ writeBatch: saveJsonBatch });
@@ -609,6 +628,38 @@ function loadRoles() {
   return loadJSON(ROLE_PATH, {});
 }
 
+function loadDashboardAccounts() {
+  return loadJSON(DASHBOARD_ACCOUNTS_PATH, {});
+}
+
+function dashboardAccountForUser(accounts, userId) {
+  for (const [username, account] of Object.entries(accounts || {})) {
+    if (account?.userId === userId) return { username, ...account };
+  }
+  return null;
+}
+
+function setDashboardAccount(accounts, { username, userId, passwordHash }) {
+  const existing = accounts[username];
+  if (existing && existing.userId !== userId) {
+    const error = new Error("Username sudah digunakan akun lain.");
+    error.code = "USERNAME_EXISTS";
+    throw error;
+  }
+  for (const [savedUsername, account] of Object.entries(accounts)) {
+    if (account?.userId === userId && savedUsername !== username) {
+      delete accounts[savedUsername];
+    }
+  }
+  accounts[username] = { userId, passwordHash };
+}
+
+function removeDashboardAccount(accounts, userId) {
+  for (const [username, account] of Object.entries(accounts || {})) {
+    if (account?.userId === userId) delete accounts[username];
+  }
+}
+
 function dashboardUserName(id, role) {
   const savedName = loadJSON(USER_NAMES_PATH, {})[id];
   if (savedName) return savedName;
@@ -628,7 +679,7 @@ function teksBantuan(role, terdaftar) {
     lines.push(
       "",
       "Akses: Administrator",
-      "• *!lokasi* - Mengatur titik lokasi sekolah melalui bot utama. Setelah perintah ini, bagikan lokasi sekolah melalui fitur Lokasi WhatsApp.",
+      "• *!lokasi* - Mengatur titik lokasi sekolah melalui salah satu bot wali kelas. Setelah perintah ini, bagikan lokasi sekolah melalui fitur Lokasi WhatsApp.",
       "• *!bantuan* - Menampilkan daftar perintah yang tersedia untuk role kamu.",
       "",
       `Pengelolaan siswa, kelas, jadwal, izin, admin, dan laporan tersedia di dashboard: ${publicBaseUrl()}`
@@ -889,7 +940,6 @@ async function catatAbsensiKamera(userId, tipe, lokasi, foto, botKey) {
 
 const whatsapp = new BaileysManager({
   authRoot: process.env.BAILEYS_AUTH_DATA_PATH || "./.baileys_auth",
-  mainExpectedNumber: process.env.WA_MAIN_NUMBER || process.env.WA_EXPECTED_NUMBER,
 });
 
 notificationOutboxProcessor = new NotificationOutboxProcessor({
@@ -936,12 +986,6 @@ const pendingLokasi = new Map();
 
 function cleanupRuntimeState() {
   const now = Date.now();
-  for (const [id, expiresAt] of otpCooldowns) {
-    if (expiresAt <= now) otpCooldowns.delete(id);
-  }
-  for (const [token, session] of loginOtps) {
-    if (session.expiresAt <= now) loginOtps.delete(token);
-  }
   for (const [token, session] of webSessions) {
     if (session.expiresAt <= now) webSessions.delete(token);
   }
@@ -971,7 +1015,6 @@ whatsapp.on("status", (status) => {
 
 whatsapp.on("message", safeAsyncListener(async ({
   botKey,
-  botRole,
   expectedNumber,
   classNames,
   message: msg,
@@ -1013,34 +1056,20 @@ whatsapp.on("message", safeAsyncListener(async ({
     }
   }
 
-  if (botRole === "main") {
-    if (msg.type === "location" && pendingLokasi.get(sender) > Date.now()) {
-      const validation = validateLocationMessage(msg);
-      if (!validation.valid) {
-        return replyCommand(locationRejectionMessage(validation.reason));
-      }
-      await saveJSON(LOKASI_PATH, validation.location);
-      pendingLokasi.delete(sender);
-      return replyCommand("✅ Lokasi sekolah disimpan.");
+  const pendingLocationKey = `${botKey}:${sender}`;
+  if (msg.type === "location" && pendingLokasi.get(pendingLocationKey) > Date.now()) {
+    const validation = validateLocationMessage(msg);
+    if (!validation.valid) {
+      return replyCommand(locationRejectionMessage(validation.reason));
     }
-    if (body === "!lokasi" || body === "!setlokasi") {
-      if (role !== "admin") return replyCommand("❌ Hanya admin.");
-      pendingLokasi.set(sender, Date.now() + LOCATION_REQUEST_TTL_MS);
-      return replyCommand("📍 Bagikan lokasi sekolah sekarang melalui fitur Lokasi WhatsApp.");
-    }
-    if (body === "!bantuan") {
-      return replyCommand(
-        role === "admin"
-          ? "*Bot Utama Ruang Hadir*\n\n• *!lokasi* - Mengatur lokasi sekolah.\n• Kode login dashboard dikirim otomatis oleh bot ini."
-          : "Bot utama hanya melayani pengaturan lokasi oleh admin dan pengiriman kode login dashboard."
-      );
-    }
-    if (body.startsWith("!")) {
-      return replyCommand(
-        "Perintah absensi dikirim ke nomor WhatsApp wali kelas kamu. Bot utama hanya melayani *!lokasi* dan kode login."
-      );
-    }
-    return;
+    await saveJSON(LOKASI_PATH, validation.location);
+    pendingLokasi.delete(pendingLocationKey);
+    return replyCommand("✅ Lokasi sekolah disimpan.");
+  }
+  if (body === "!lokasi" || body === "!setlokasi") {
+    if (role !== "admin") return replyCommand("❌ Hanya admin.");
+    pendingLokasi.set(pendingLocationKey, Date.now() + LOCATION_REQUEST_TTL_MS);
+    return replyCommand("📍 Bagikan lokasi sekolah sekarang melalui fitur Lokasi WhatsApp.");
   }
 
   const kelasSiswa = findKelasSiswa(loadKelas(), sender);
@@ -1050,6 +1079,9 @@ whatsapp.on("message", safeAsyncListener(async ({
     classNames.includes(kelasSiswa.namaKelas);
 
   if (body === "!bantuan") {
+    if (role === "admin" || role === "wali_kelas") {
+      return replyCommand(teksBantuan(role, beradaDiBotWali));
+    }
     return replyCommand(
       beradaDiBotWali
         ? teksBantuan("user", true)
@@ -1164,9 +1196,11 @@ function webUser(req) {
     return null;
   }
   const currentRole = loadRoles()[session.id];
+  const currentAccount = loadDashboardAccounts()[session.username];
   if (
     currentRole !== session.role ||
-    !["admin", "wali_kelas"].includes(currentRole)
+    !["admin", "wali_kelas"].includes(currentRole) ||
+    currentAccount?.userId !== session.id
   ) {
     webSessions.delete(token);
     return null;
@@ -1470,89 +1504,47 @@ app.post("/api/attendance-camera/:token", async (req, res) => {
   }
 });
 
-app.post("/api/auth/request-otp", async (req, res) => {
-  const nomor = normalizeNomor(req.body.nomor);
-  const id = `${nomor}@c.us`;
-  const role = loadRoles()[id];
-  const genericResponse = {
-    ok: true,
-    message: "Jika nomor memiliki akses, OTP akan dikirim melalui WhatsApp.",
-  };
-  if (!whatsapp.isReady("main")) {
-    return res.status(503).json({ error: "Bot WhatsApp belum terhubung." });
-  }
-  if (!/^62\d{8,14}$/.test(nomor)) {
-    return res.json(genericResponse);
-  }
-
-  if (otpCooldowns.get(id) > Date.now()) {
-    return res.json(genericResponse);
-  }
-  otpCooldowns.set(id, Date.now() + 60_000);
-  if (!/^(admin|wali_kelas)$/.test(role || "")) {
-    return res.json(genericResponse);
-  }
-  const code = String(crypto.randomInt(100000, 1000000));
-  const issuedOtp = {
-    hash: crypto.createHash("sha256").update(code).digest("hex"),
-    expiresAt: Date.now() + 5 * 60_000,
-    sentAt: Date.now(),
-    attempts: 0,
-  };
-  loginOtps.set(id, issuedOtp);
-  void sendWhatsappWithRetry(
-      () =>
-        whatsapp.sendText(
-          "main",
-          id,
-          `🔐 *Kode Login Ruang Hadir*\n\nKode OTP: *${code}*\nBerlaku selama 5 menit. Jangan berikan kode ini kepada siapa pun.`
-        ),
-      { recipientId: id, priority: "high", senderKey: "main" }
-    )
-    .catch((error) => {
-      if (loginOtps.get(id) === issuedOtp) loginOtps.delete(id);
-      console.error(`[OTP ERROR] ${id}:`, error.message);
-    });
-  res.json(genericResponse);
-});
-
-app.post("/api/auth/verify", async (req, res) => {
-  const nomor = normalizeNomor(req.body.nomor);
-  const id = `${nomor}@c.us`;
-  const otp = loginOtps.get(id);
-  const codeHash = crypto
-    .createHash("sha256")
-    .update(String(req.body.code || ""))
-    .digest("hex");
-  if (!otp || otp.expiresAt < Date.now()) {
-    loginOtps.delete(id);
-    return res.status(400).json({ error: "Kode OTP tidak valid atau kedaluwarsa." });
-  }
-  otp.attempts++;
-  if (otp.attempts > 5 || otp.hash !== codeHash) {
-    if (otp.attempts >= 5) loginOtps.delete(id);
-    return res.status(400).json({ error: "Kode OTP tidak valid atau kedaluwarsa." });
+app.post("/api/auth/login", async (req, res) => {
+  const username = normalizeUsername(req.body.username);
+  const accounts = loadDashboardAccounts();
+  const account = accounts[username];
+  const passwordValid = await verifyPassword(
+    req.body.password,
+    account?.passwordHash || DUMMY_PASSWORD_HASH
+  );
+  const id = account?.userId;
+  const role = id ? loadRoles()[id] : null;
+  if (!account || !passwordValid || !["admin", "wali_kelas"].includes(role)) {
+    return res.status(401).json({ error: "Username atau password salah." });
   }
 
-  const role = loadRoles()[id];
-  if (!/^(admin|wali_kelas)$/.test(role || "")) {
-    return res.status(403).json({ error: "Akses dashboard sudah dicabut." });
-  }
-  loginOtps.delete(id);
   const token = crypto.randomBytes(32).toString("hex");
   const nama = await resolveDashboardUserName(id, role);
-  webSessions.set(token, { id, nomor, nama, role, expiresAt: Date.now() + 8 * 60 * 60_000 });
+  const nomor = id.replace("@c.us", "");
+  webSessions.set(token, {
+    id,
+    nomor,
+    username,
+    nama,
+    role,
+    expiresAt: Date.now() + 8 * 60 * 60_000,
+  });
   res.setHeader(
     "Set-Cookie",
     serializeSessionCookie(token, { secure: sessionCookieIsSecure(req) })
   );
-  res.json({ ok: true, user: { nomor, nama, role } });
+  res.json({ ok: true, user: { nomor, username, nama, role } });
 });
 
 app.get("/api/auth/me", (req, res) => {
   const user = webUser(req);
   if (!user) return res.status(401).json({ error: "Belum login." });
-  res.json({ nomor: user.nomor, nama: dashboardUserName(user.id, user.role), role: user.role });
+  res.json({
+    nomor: user.nomor,
+    username: user.username,
+    nama: dashboardUserName(user.id, user.role),
+    role: user.role,
+  });
 });
 
 app.post("/api/auth/logout", (req, res) => {
@@ -1573,6 +1565,7 @@ async function dashboardData(user) {
   const kelas =
     user.role === "admin" ? semuaKelas : kelasUntukWali(semuaKelas, user.id);
   const roles = loadRoles();
+  const accounts = loadDashboardAccounts();
   const jam = loadJSON(JAM_PATH, {
     masuk: "07:00:00",
     pulang: "14:00:00",
@@ -1609,7 +1602,7 @@ async function dashboardData(user) {
 
   return {
     tanggal: today,
-    botReady: whatsapp.isReady("main"),
+    botReady: whatsapp.statuses().length > 0 && whatsapp.statuses().every((bot) => bot.ready),
     whatsappBots: whatsapp.statuses().map(({ qr, ...status }) => status),
     jam,
     siswa,
@@ -1617,13 +1610,19 @@ async function dashboardData(user) {
       nama,
       waliKelas: data.waliKelas?.replace("@c.us", "") || "",
       namaWali: data.namaWali || "",
+      username: dashboardAccountForUser(accounts, data.waliKelas)?.username || "",
       jumlahSiswa: Object.keys(data.siswa || {}).length,
     })),
     admins: user.role === "admin" ? Object.entries(roles)
       .filter(([, role]) => role === "admin")
-      .map(([id]) => id.replace("@c.us", "")) : [],
+      .map(([id]) => ({
+        nomor: id.replace("@c.us", ""),
+        nama: dashboardUserName(id, "admin"),
+        username: dashboardAccountForUser(accounts, id)?.username || "",
+      })) : [],
     currentUser: {
       nomor: user.nomor,
+      username: user.username,
       nama: dashboardUserName(user.id, user.role),
       role: user.role,
     },
@@ -1638,30 +1637,65 @@ app.get("/api/dashboard", async (req, res) => {
 
 app.post("/api/admins", requireWebAdmin, async (req, res) => {
   const nomor = normalizeNomor(req.body.nomor);
+  const originalNomor = normalizeNomor(req.body.originalNomor);
   const nama = toTitleCase(String(req.body.nama || "").trim());
+  const username = normalizeUsername(req.body.username);
+  const password = String(req.body.password || "");
+  const editing = Boolean(originalNomor);
   if (!/^62\d{8,14}$/.test(nomor)) {
     return res.status(400).json({ error: "Nomor WhatsApp admin belum valid." });
+  }
+  if (editing && originalNomor !== nomor) {
+    return res.status(400).json({ error: "Nomor admin tidak dapat diubah dari form akun." });
   }
   if (nama.length < 3) {
     return res.status(400).json({ error: "Nama admin minimal 3 karakter." });
   }
+  if (!isValidUsername(username)) {
+    return res.status(400).json({
+      error: "Username harus 3-32 karakter: huruf kecil, angka, titik, garis bawah, atau tanda hubung.",
+    });
+  }
 
   const id = `${nomor}@c.us`;
+  const currentAccount = dashboardAccountForUser(loadDashboardAccounts(), id);
+  if (!password && !currentAccount) {
+    return res.status(400).json({ error: "Password wajib diisi untuk akun baru." });
+  }
+  if (password && !isValidPassword(password)) {
+    return res.status(400).json({ error: "Password harus 10-128 karakter." });
+  }
+  const passwordHash = password
+    ? await hashPassword(password)
+    : currentAccount.passwordHash;
   try {
-    await updateJSON([ROLE_PATH, USER_NAMES_PATH], (draft) => {
-      if (draft[ROLE_PATH][id] === "admin") {
+    await updateJSON([ROLE_PATH, USER_NAMES_PATH, DASHBOARD_ACCOUNTS_PATH], (draft) => {
+      if (!editing && draft[ROLE_PATH][id] === "admin") {
         const error = new Error("Nomor tersebut sudah menjadi admin.");
         error.code = "ALREADY_EXISTS";
         throw error;
       }
+      if (editing && draft[ROLE_PATH][id] !== "admin") {
+        const error = new Error("Admin yang diedit tidak ditemukan.");
+        error.code = "NOT_FOUND";
+        throw error;
+      }
       draft[ROLE_PATH][id] = "admin";
       draft[USER_NAMES_PATH][id] = nama;
+      setDashboardAccount(draft[DASHBOARD_ACCOUNTS_PATH], {
+        username,
+        userId: id,
+        passwordHash,
+      });
     });
   } catch (error) {
     if (error.code === "ALREADY_EXISTS") return res.status(409).json({ error: error.message });
+    if (error.code === "USERNAME_EXISTS") return res.status(409).json({ error: error.message });
+    if (error.code === "NOT_FOUND") return res.status(404).json({ error: error.message });
     throw error;
   }
-  res.status(201).json({ ok: true, nomor, nama, role: "admin" });
+  if (id === req.webUser.id) req.webUser.username = username;
+  res.status(editing ? 200 : 201).json({ ok: true, nomor, nama, username, role: "admin" });
 });
 
 app.delete("/api/admins/:number", requireWebAdmin, async (req, res) => {
@@ -1676,14 +1710,20 @@ app.delete("/api/admins/:number", requireWebAdmin, async (req, res) => {
   }
 
   let found = false;
-  await updateJSON(ROLE_PATH, (draft) => {
+  await updateJSON([ROLE_PATH, DASHBOARD_ACCOUNTS_PATH, KELAS_PATH], (draft) => {
     if (draft[ROLE_PATH][id] === "admin") {
       found = true;
-      delete draft[ROLE_PATH][id];
+      const masihMenjadiWali = Object.values(draft[KELAS_PATH]).some(
+        (data) => data.waliKelas === id
+      );
+      if (masihMenjadiWali) draft[ROLE_PATH][id] = "wali_kelas";
+      else {
+        delete draft[ROLE_PATH][id];
+        removeDashboardAccount(draft[DASHBOARD_ACCOUNTS_PATH], id);
+      }
     }
   });
   if (!found) return res.status(404).json({ error: "Admin tidak ditemukan." });
-  loginOtps.delete(id);
   res.json({ ok: true, nomor });
 });
 
@@ -1692,21 +1732,32 @@ app.post("/api/classes", requireWebAdmin, async (req, res) => {
   const originalNama = String(req.body.originalNama || "").trim().toUpperCase();
   const waliKelas = normalizeNomor(req.body.waliKelas);
   const namaWali = toTitleCase(String(req.body.namaWali || "").trim());
+  const requestedUsername = normalizeUsername(req.body.username);
+  const password = String(req.body.password || "");
   if (!nama || !/^62\d{8,14}$/.test(waliKelas) || !namaWali) {
     return res.status(400).json({ error: "Data kelas dan wali kelas belum valid." });
   }
-  if (
-    waliKelas ===
-    normalizeNomor(process.env.WA_MAIN_NUMBER || process.env.WA_EXPECTED_NUMBER)
-  ) {
+  const waliId = `${waliKelas}@c.us`;
+  const currentAccount = dashboardAccountForUser(loadDashboardAccounts(), waliId);
+  const username = requestedUsername || currentAccount?.username || "";
+  if (!isValidUsername(username)) {
     return res.status(400).json({
-      error: "Nomor bot utama tidak dapat dipakai sebagai bot wali kelas.",
+      error: "Username wali harus 3-32 karakter: huruf kecil, angka, titik, garis bawah, atau tanda hubung.",
     });
   }
-
-  const waliId = `${waliKelas}@c.us`;
+  if (!password && !currentAccount) {
+    return res.status(400).json({ error: "Password wajib diisi untuk akun wali baru." });
+  }
+  if (password && !isValidPassword(password)) {
+    return res.status(400).json({ error: "Password harus 10-128 karakter." });
+  }
+  const passwordHash = password
+    ? await hashPassword(password)
+    : currentAccount.passwordHash;
   try {
-    await updateJSON([KELAS_PATH, ROLE_PATH, USER_NAMES_PATH], (draft) => {
+    await updateJSON(
+      [KELAS_PATH, ROLE_PATH, USER_NAMES_PATH, DASHBOARD_ACCOUNTS_PATH],
+      (draft) => {
       const kelas = draft[KELAS_PATH];
       const roles = draft[ROLE_PATH];
       if (originalNama) {
@@ -1737,10 +1788,19 @@ app.post("/api/classes", requireWebAdmin, async (req, res) => {
       if (roles[waliId] !== "admin") roles[waliId] = "wali_kelas";
       draft[USER_NAMES_PATH][waliId] = namaWali;
       removeUnusedWaliRole(waliSebelumnya, kelas, roles);
+      if (waliSebelumnya && !roles[waliSebelumnya]) {
+        removeDashboardAccount(draft[DASHBOARD_ACCOUNTS_PATH], waliSebelumnya);
+      }
+      setDashboardAccount(draft[DASHBOARD_ACCOUNTS_PATH], {
+        username,
+        userId: waliId,
+        passwordHash,
+      });
     });
   } catch (error) {
     if (error.code === "NOT_FOUND") return res.status(404).json({ error: error.message });
     if (error.code === "ALREADY_EXISTS") return res.status(409).json({ error: error.message });
+    if (error.code === "USERNAME_EXISTS") return res.status(409).json({ error: error.message });
     throw error;
   }
   void whatsapp.sync(loadKelas()).catch((error) => {
@@ -1752,7 +1812,7 @@ app.post("/api/classes", requireWebAdmin, async (req, res) => {
 app.delete("/api/classes/:name", requireWebAdmin, async (req, res) => {
   const nama = String(req.params.name || "").toUpperCase();
   try {
-    await updateJSON([KELAS_PATH, ROLE_PATH], (draft) => {
+    await updateJSON([KELAS_PATH, ROLE_PATH, DASHBOARD_ACCOUNTS_PATH], (draft) => {
       const kelas = draft[KELAS_PATH];
       if (!kelas[nama]) {
         const error = new Error("Kelas tidak ditemukan.");
@@ -1767,6 +1827,9 @@ app.delete("/api/classes/:name", requireWebAdmin, async (req, res) => {
       const waliKelas = kelas[nama].waliKelas;
       delete kelas[nama];
       removeUnusedWaliRole(waliKelas, kelas, draft[ROLE_PATH]);
+      if (!draft[ROLE_PATH][waliKelas]) {
+        removeDashboardAccount(draft[DASHBOARD_ACCOUNTS_PATH], waliKelas);
+      }
     });
   } catch (error) {
     if (error.code === "NOT_FOUND") return res.status(404).json({ error: error.message });
@@ -2183,8 +2246,8 @@ app.get("/qr", requireQrAccess, (req, res) => {
   };
   const bots = whatsapp.statuses();
   const cards = bots.map((bot) => {
-    const classes = bot.classes.length ? `Kelas: ${bot.classes.map(escapeHtml).join(", ")}` : "Layanan lokasi dan OTP dashboard";
-    const expected = bot.expectedNumber || "belum dibatasi melalui WA_MAIN_NUMBER";
+    const classes = bot.classes.length ? `Kelas: ${bot.classes.map(escapeHtml).join(", ")}` : "Bot wali kelas";
+    const expected = bot.expectedNumber || "nomor wali belum diatur";
     const qr = bot.qr ? `<div class="qr">${qrToSvg(bot.qr)}</div>` : "";
     const reset = ["mismatch", "logged_out", "error"].includes(bot.state)
       ? `<form method="post" action="/qr/reset/${encodeURIComponent(bot.key)}?token=${QR_RESET_TOKEN}"><button type="submit">Hapus sesi dan tampilkan QR baru</button></form>`
@@ -2259,6 +2322,7 @@ let httpServer = null;
 
 function startHttpServer() {
   httpServer = app.listen(PORT, () => {
+    console.log(`🌐 Dashboard: ${publicBaseUrl()}`);
     console.log(`🌐 Akses QR lokal di: http://localhost:${PORT}/qr`);
     if (!process.env.PUBLIC_BASE_URL) {
       console.warn(
@@ -2276,6 +2340,11 @@ async function startBot() {
   try {
     jsonState.replace(await initJsonStore(JSON_STORES));
     console.log(`Database Sequelize siap: ${DB_PATH}`);
+    if (!Object.keys(loadDashboardAccounts()).length) {
+      console.warn(
+        "⚠️ Belum ada akun dashboard. Atur INITIAL_ADMIN_USERNAME dan INITIAL_ADMIN_PASSWORD, lalu gunakan database baru atau buat akun melalui data akun."
+      );
+    }
     hardenSensitiveStorage();
     cleanupOrphanedFaceFiles();
     const migratedPhotos = await migrateEmbeddedAttendancePhotos();

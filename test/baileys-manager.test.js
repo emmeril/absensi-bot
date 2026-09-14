@@ -34,7 +34,7 @@ test("converts IDs between application and Baileys formats", () => {
   assert.equal(toAppUserId("12345@lid"), "12345@lid");
 });
 
-test("creates one main session and one session per unique wali number", () => {
+test("creates only one session per unique wali number", () => {
   const definitions = sessionDefinitions({
     "7A": {
       waliKelas: "628111@c.us",
@@ -51,9 +51,9 @@ test("creates one main session and one session per unique wali number", () => {
       namaWali: "Pak Budi",
       siswa: {},
     },
-  }, "628999");
+  });
 
-  assert.deepEqual([...definitions.keys()], ["main", "wali:628111", "wali:628112"]);
+  assert.deepEqual([...definitions.keys()], ["wali:628111", "wali:628112"]);
   assert.deepEqual(definitions.get("wali:628111").classNames, ["7A", "7B"]);
   assert.deepEqual(definitions.get("wali:628111").studentNumbers, ["628201", "628202"]);
 });

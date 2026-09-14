@@ -9,43 +9,51 @@ const { safeAsyncListener } = require("../lib/safe-async-listener");
 
 const source = fs.readFileSync(require.resolve("../index.js"), "utf8");
 
-test("OTP cooldown survives invalid guesses and failed delivery", async () => {
-  let now = 100000;
-  let sends = 0;
-  let failSend = false;
+test("login username/password membuat sesi sesuai role tanpa WhatsApp", async () => {
   const routes = {};
+  const sessions = new Map();
   const context = {
     app: { post: (route, handler) => { routes[route] = handler; } },
-    Date: { now: () => now }, crypto,
-    normalizeNomor: (value) => value,
-    loadRoles: () => ({ "621234567890@c.us": "admin" }),
-    loginOtps: new Map(), otpCooldowns: new Map(),
-    sendWhatsappWithRetry: async (send) => send(),
-    whatsapp: {
-      isReady: () => true,
-      sendText: async () => { sends++; if (failSend) throw Error("offline"); },
-    },
-    webSessions: new Map(), resolveDashboardUserName: async () => "Admin",
+    Date, crypto,
+    normalizeUsername: (value) => String(value || "").trim().toLowerCase(),
+    loadDashboardAccounts: () => ({
+      admin: { userId: "621234567890@c.us", passwordHash: "benar" },
+      wali: { userId: "621111111111@c.us", passwordHash: "wali-benar" },
+    }),
+    loadRoles: () => ({
+      "621234567890@c.us": "admin",
+      "621111111111@c.us": "wali_kelas",
+    }),
+    verifyPassword: async (password, hash) => password === hash,
+    DUMMY_PASSWORD_HASH: "dummy",
+    webSessions: sessions,
+    resolveDashboardUserName: async () => "Admin",
+    serializeSessionCookie: (token) => `absensi_session=${token}`,
+    sessionCookieIsSecure: () => true,
   };
-  vm.runInNewContext(source.slice(source.indexOf('app.post("/api/auth/request-otp"'), source.indexOf('app.get("/api/auth/me"')), context);
-  const request = { body: { nomor: "621234567890", code: "invalid" } };
+  vm.runInNewContext(source.slice(source.indexOf('app.post("/api/auth/login"'), source.indexOf('app.get("/api/auth/me"')), context);
   function response() {
-    return { statusCode: 200, status(code) { this.statusCode = code; return this; }, json() {}, setHeader() {} };
+    return { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(body) { this.body = body; }, setHeader(name, value) { this[name] = value; } };
   }
-  await routes["/api/auth/request-otp"](request, response());
-  for (let i = 0; i < 6; i++) await routes["/api/auth/verify"](request, response());
   let res = response();
-  await routes["/api/auth/request-otp"](request, res);
+  await routes["/api/auth/login"]({ body: { username: " ADMIN ", password: "benar" } }, res);
   assert.equal(res.statusCode, 200);
-  assert.equal(sends, 1);
-  now += 60000;
-  failSend = true;
-  await routes["/api/auth/request-otp"](request, response());
-  await new Promise(setImmediate);
+  assert.equal(res.body.user.role, "admin");
+  assert.equal(res.body.user.username, "admin");
+  assert.equal(sessions.size, 1);
+  assert.match(res["Set-Cookie"], /^absensi_session=/);
+
   res = response();
-  await routes["/api/auth/request-otp"](request, res);
+  await routes["/api/auth/login"]({ body: { username: "wali", password: "wali-benar" } }, res);
   assert.equal(res.statusCode, 200);
-  assert.equal(sends, 2);
+  assert.equal(res.body.user.role, "wali_kelas");
+  assert.equal(sessions.size, 2);
+
+  res = response();
+  await routes["/api/auth/login"]({ body: { username: "admin", password: "salah" } }, res);
+  assert.equal(res.statusCode, 401);
+  assert.equal(res.body.error, "Username atau password salah.");
+  assert.equal(sessions.size, 2);
 });
 
 test("simultaneous exports retain each user's filtered report", async (t) => {

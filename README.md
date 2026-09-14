@@ -11,8 +11,8 @@ Ruang Hadir adalah aplikasi absensi sekolah berbasis WhatsApp dengan verifikasi 
 - Notifikasi absensi dan izin kepada admin, wali kelas, dan orang tua.
 - Dashboard web untuk mengelola siswa, kelas, wali kelas, admin, jadwal, izin, dan laporan.
 - Ekspor laporan ke Excel.
-- Login dashboard menggunakan OTP yang dikirim melalui WhatsApp.
-- Multi-bot Baileys: satu bot utama dan satu sesi bot untuk setiap nomor wali kelas.
+- Login dashboard menggunakan username dan password dengan role admin atau wali kelas.
+- Multi-bot Baileys: satu sesi bot untuk setiap nomor wali kelas.
 - Absensi disimpan sebagai baris SQLite terindeks; data JSON lama dimigrasikan otomatis saat startup.
 - Notifikasi memakai outbox SQLite persisten, sehingga antrean dilanjutkan setelah restart.
 - Ekspor Excel dibuat dalam buffer terpisah untuk setiap permintaan.
@@ -24,10 +24,10 @@ Ruang Hadir adalah aplikasi absensi sekolah berbasis WhatsApp dengan verifikasi 
 | `!masuk` | Memulai absensi masuk | Siswa, melalui bot wali kelasnya |
 | `!pulang` | Memulai absensi pulang | Siswa, melalui bot wali kelasnya |
 | `!izin alasan` | Membuka proses izin dua tahap melalui tautan sekali pakai | Siswa, melalui bot wali kelasnya |
-| `!lokasi` | Meminta pengiriman lokasi sekolah baru | Admin, melalui bot utama |
+| `!lokasi` | Meminta pengiriman lokasi sekolah baru | Admin, melalui salah satu bot wali kelas |
 | `!bantuan` | Menampilkan perintah yang tersedia sesuai role pengirim | Semua pengguna |
 
-Bot utama hanya menerima `!lokasi` dari admin dan mengirim OTP login dashboard. Siswa mengirim `!masuk`, `!pulang`, atau `!izin alasan` ke nomor wali kelasnya. Sistem menolak siswa yang mengirim command ke bot wali kelas lain.
+Seluruh perintah dikirim ke nomor bot wali kelas. Admin dapat mengirim `!lokasi` ke salah satu bot wali, sedangkan siswa mengirim `!masuk`, `!pulang`, atau `!izin alasan` ke nomor wali kelasnya. Sistem menolak siswa yang mengirim command ke bot wali kelas lain.
 
 Setelah mengirim `!masuk` atau `!pulang`, siswa menerima tautan sekali pakai yang berlaku selama 2 menit. Tautan membuka kamera depan dan GPS tanpa menyediakan pilihan unggah dari galeri. Setelah mengirim `!izin alasan`, siswa menerima tautan izin selama 5 menit untuk mengambil selfie langsung, mencatat GPS, lalu mengunggah surat atau bukti secara terpisah. Lokasi izin tidak dibatasi radius sekolah. Absensi masuk/pulang langsung masuk laporan setelah lolos verifikasi. Izin langsung dicatat setelah selfie terverifikasi dan bukti diunggah, tanpa konfirmasi admin/wali kelas.
 
@@ -35,7 +35,6 @@ Setelah mengirim `!masuk` atau `!pulang`, siswa menerima tautan sekali pakai yan
 
 - Node.js 22.12 atau lebih baru.
 - npm.
-- Satu nomor WhatsApp aktif untuk bot utama.
 - Nomor WhatsApp setiap wali kelas yang akan dijadikan bot kelas.
 
 ## Instalasi
@@ -58,7 +57,7 @@ Pada PowerShell:
 Copy-Item .env.example .env
 ```
 
-Isi `INITIAL_ADMIN_NUMBER` pada `.env` dengan nomor admin pertama.
+Isi `INITIAL_ADMIN_NUMBER`, `INITIAL_ADMIN_USERNAME`, dan `INITIAL_ADMIN_PASSWORD` pada `.env` untuk akun admin pertama.
 
 Gunakan kode negara tanpa tanda `+`; nomor Indonesia yang diawali `08` ditulis menjadi `628`.
 
@@ -84,7 +83,8 @@ Variabel lingkungan opsional:
 | `DB_PATH` | `data/absensi.sqlite` | Lokasi database SQLite |
 | `PUBLIC_BASE_URL` | `http://localhost:3200` | Alamat publik HTTPS yang dibuka siswa untuk kamera absensi |
 | `INITIAL_ADMIN_NUMBER` | kosong | Nomor admin pertama untuk database baru |
-| `WA_MAIN_NUMBER` | kosong | Nomor akun WhatsApp bot utama yang wajib terhubung |
+| `INITIAL_ADMIN_USERNAME` | kosong | Username admin pertama, 3–32 karakter |
+| `INITIAL_ADMIN_PASSWORD` | kosong | Password admin pertama, minimal 10 karakter |
 | `QR_ACCESS_TOKEN` | kosong | Password HTTP Basic minimal 16 karakter untuk membuka `/qr` dari jaringan |
 | `TRUST_PROXY_HOPS` | `0` | Jumlah reverse proxy tepercaya di depan aplikasi |
 | `SESSION_COOKIE_SECURE` | otomatis | Paksa cookie sesi hanya melalui HTTPS |
@@ -135,7 +135,7 @@ Pada proses pertama, pindai QR WhatsApp yang tampil di terminal atau buka:
 - Dashboard: `http://localhost:3200`
 - Status/QR WhatsApp: `http://localhost:3200/qr`
 
-Halaman `/qr` menampilkan satu kartu untuk bot utama dan satu kartu untuk setiap nomor wali kelas yang tersimpan di dashboard. Pindai masing-masing QR memakai nomor yang tertulis pada kartu. Satu wali yang menangani beberapa kelas tetap memakai satu sesi. Sesi disimpan di `.baileys_auth`, sehingga pemindaian biasanya hanya diperlukan sekali. Jika akun salah atau sudah logout, tombol pada kartu dapat menghapus sesi tersebut dan menampilkan QR baru.
+Halaman `/qr` menampilkan satu kartu untuk setiap nomor wali kelas yang tersimpan di dashboard. Pindai masing-masing QR memakai nomor yang tertulis pada kartu. Satu wali yang menangani beberapa kelas tetap memakai satu sesi. Sesi disimpan di `.baileys_auth`, sehingga pemindaian biasanya hanya diperlukan sekali. Jika akun salah atau sudah logout, tombol pada kartu dapat menghapus sesi tersebut dan menampilkan QR baru.
 
 Untuk produksi menggunakan PM2:
 
@@ -147,14 +147,13 @@ pm2 save
 
 ## Alur penggunaan
 
-1. Admin menjalankan aplikasi lalu menghubungkan bot utama dan semua bot wali melalui `/qr`.
-2. Admin masuk ke dashboard dengan nomor yang tercatat sebagai admin.
-3. OTP enam digit dikirim ke WhatsApp dan berlaku selama 5 menit.
-4. Admin membuat kelas, menetapkan wali kelas, dan menambahkan siswa serta nomor orang tua.
-5. Admin atau wali kelas mengunggah foto referensi wajah siswa melalui dashboard.
-6. Siswa mengirim `!masuk` atau `!pulang` ke nomor wali kelasnya, membuka tautan sekali pakai, lalu mengambil selfie langsung dan mengizinkan GPS.
-7. Untuk izin, siswa mengirim `!izin alasan` ke nomor wali kelasnya, memverifikasi selfie dan GPS melalui tautan, lalu mengunggah surat atau bukti pada tahap kedua.
-8. Absensi masuk/pulang dan izin yang memenuhi persyaratan langsung dicatat dan dikirimkan sebagai notifikasi kepada pihak terkait. Tidak ada tahap persetujuan admin/wali kelas.
+1. Admin menjalankan aplikasi lalu masuk ke dashboard memakai username dan password.
+2. Admin membuat kelas, menetapkan wali kelas beserta akun dashboard-nya, dan menambahkan siswa serta nomor orang tua.
+3. Admin menghubungkan semua bot wali melalui `/qr`.
+4. Admin atau wali kelas mengunggah foto referensi wajah siswa melalui dashboard.
+5. Siswa mengirim `!masuk` atau `!pulang` ke nomor wali kelasnya, membuka tautan sekali pakai, lalu mengambil selfie langsung dan mengizinkan GPS.
+6. Untuk izin, siswa mengirim `!izin alasan` ke nomor wali kelasnya, memverifikasi selfie dan GPS melalui tautan, lalu mengunggah surat atau bukti pada tahap kedua.
+7. Absensi masuk/pulang dan izin yang memenuhi persyaratan langsung dicatat dan dikirimkan sebagai notifikasi kepada pihak terkait. Tidak ada tahap persetujuan admin/wali kelas.
 
 Wali kelas hanya dapat mengakses dan mengunggah foto siswa pada kelas yang menjadi tanggung jawabnya.
 
@@ -192,10 +191,10 @@ Direktori seperti `.baileys_auth`, `data`, `face_db`, `face_rec`, `attendance_ph
 ## Catatan keamanan
 
 - Jangan membagikan direktori sesi `.baileys_auth`.
-- Isi `WA_MAIN_NUMBER` dan `QR_ACCESS_TOKEN` pada produksi. `/qr` tanpa token hanya dapat dibuka langsung melalui localhost; akses jaringan akan meminta HTTP Basic dengan token sebagai password.
+- Isi `QR_ACCESS_TOKEN` pada produksi. `/qr` tanpa token hanya dapat dibuka langsung melalui localhost; akses jaringan akan meminta HTTP Basic dengan token sebagai password.
 - Batasi akses jaringan ke dashboard karena aplikasi saat ini berjalan melalui HTTP.
 - Gunakan HTTPS pada `PUBLIC_BASE_URL`; browser ponsel memblokir kamera pada alamat HTTP biasa.
-- Ganti nomor admin bawaan sebelum digunakan di lingkungan lain.
+- Ganti username dan password admin awal sebelum digunakan di lingkungan lain.
 - Cadangkan database SQLite dan foto referensi secara berkala.
 - Gunakan reverse proxy HTTPS apabila dashboard diakses di luar jaringan lokal.
 
