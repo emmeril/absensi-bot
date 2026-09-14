@@ -101,8 +101,12 @@ test("simultaneous exports retain each user's filtered report", async (t) => {
   assert.deepEqual(results[1].map((row) => row.Nama), ["Student A", "Student B", "Former Student"]);
 });
 
-test("QR dan reset WhatsApp memakai autentikasi admin dashboard", () => {
-  const context = {};
+test("QR dan reset WhatsApp dibatasi sesuai kepemilikan bot wali", () => {
+  const bots = [
+    { key: "wali:62111", expectedNumber: "62111", qr: "own" },
+    { key: "wali:62222", expectedNumber: "62222", qr: "other" },
+  ];
+  const context = { whatsapp: { statuses: () => bots } };
   vm.runInNewContext(
     source.slice(
       source.indexOf("function requireWebAdmin"),
@@ -110,26 +114,48 @@ test("QR dan reset WhatsApp memakai autentikasi admin dashboard", () => {
     ),
     context
   );
-  const response = {
+  const response = () => ({
     statusCode: 200,
     status(code) { this.statusCode = code; return this; },
     json(body) { this.body = body; return this; },
-  };
+  });
   let nextCalls = 0;
-  context.requireWebAdmin({ webUser: { role: "wali_kelas" } }, response, () => { nextCalls += 1; });
-  assert.equal(response.statusCode, 403);
-  context.requireWebAdmin({ webUser: { role: "admin" } }, response, () => { nextCalls += 1; });
-  assert.equal(nextCalls, 1);
+  const ownRequest = {
+    params: { key: "wali:62111" },
+    webUser: { role: "wali_kelas", nomor: "62111" },
+  };
+  context.requireWhatsappBotAccess(ownRequest, response(), () => { nextCalls += 1; });
+  assert.equal(ownRequest.whatsappBot.key, "wali:62111");
+
+  let res = response();
+  context.requireWhatsappBotAccess({
+    params: { key: "wali:62222" },
+    webUser: { role: "wali_kelas", nomor: "62111" },
+  }, res, () => { nextCalls += 1; });
+  assert.equal(res.statusCode, 403);
+
+  context.requireWhatsappBotAccess({
+    params: { key: "wali:62222" },
+    webUser: { role: "admin", nomor: "62999" },
+  }, response(), () => { nextCalls += 1; });
+  assert.equal(nextCalls, 2);
+
+  res = response();
+  context.requireWhatsappBotAccess({
+    params: { key: "wali:missing" },
+    webUser: { role: "admin", nomor: "62999" },
+  }, res, () => { nextCalls += 1; });
+  assert.equal(res.statusCode, 404);
   assert.match(
     source,
-    /app\.get\("\/api\/whatsapp\/:key\/qr\.svg", requireWebAdmin/
+    /app\.get\("\/api\/whatsapp\/:key\/qr\.svg", requireWhatsappBotAccess/
   );
   assert.match(
     source,
-    /app\.post\("\/api\/whatsapp\/:key\/reset", requireWebAdmin/
+    /app\.post\("\/api\/whatsapp\/:key\/reset", requireWhatsappBotAccess/
   );
-  assert.match(source, /whatsappBots: user\.role === "admin"/);
-  assert.match(source, /\{ \.\.\.status, hasQr: Boolean\(qr\) \}/);
+  assert.match(source, /user\.role === "admin" \|\| bot\.expectedNumber === user\.nomor/);
+  assert.match(source, /hasQr: Boolean\(qr\)/);
   assert.doesNotMatch(source, /QR_ACCESS_TOKEN|requireQrAccess|QR_RESET_TOKEN/);
 });
 

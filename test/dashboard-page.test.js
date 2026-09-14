@@ -43,8 +43,9 @@ test("semua input password memiliki placeholder dan tombol tampilkan password", 
   assert.match(dashboardPage, /aria-label/);
 });
 
-test("koneksi WhatsApp dikelola di dalam dashboard admin", () => {
+test("koneksi WhatsApp tersedia untuk admin dan wali kelas", () => {
   assert.match(dashboardPage, /id:"whatsapp",label:"WhatsApp"/);
+  assert.match(dashboardPage, /\["ringkasan","siswa","whatsapp"\]/);
   assert.match(dashboardPage, /tab === 'whatsapp'/);
   assert.match(dashboardPage, /\/api\/whatsapp\/\$\{encodeURIComponent\(bot\.key\)\}\/qr\.svg/);
   assert.match(dashboardPage, /resetWhatsapp\(bot\)/);

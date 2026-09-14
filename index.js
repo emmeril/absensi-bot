@@ -1220,6 +1220,23 @@ function requireWebAdmin(req, res, next) {
   next();
 }
 
+function requireWhatsappBotAccess(req, res, next) {
+  const bot = whatsapp.statuses().find((status) => status.key === req.params.key);
+  if (!bot) {
+    return res.status(404).json({ error: "Sesi WhatsApp tidak ditemukan." });
+  }
+  const ownsBot =
+    req.webUser?.role === "wali_kelas" &&
+    bot.expectedNumber === req.webUser.nomor;
+  if (req.webUser?.role !== "admin" && !ownsBot) {
+    return res.status(403).json({
+      error: "Wali kelas hanya dapat mengelola sesi WhatsApp miliknya.",
+    });
+  }
+  req.whatsappBot = bot;
+  next();
+}
+
 function requireWebPhotoManager(req, res, next) {
   if (req.webUser?.role === "admin") return next();
 
@@ -1597,13 +1614,17 @@ async function dashboardData(user) {
       izin: izinHariIni[id] || null,
     };
   });
+  const whatsappBots = whatsapp.statuses().filter(
+    (bot) => user.role === "admin" || bot.expectedNumber === user.nomor
+  );
 
   return {
     tanggal: today,
-    botReady: whatsapp.statuses().length > 0 && whatsapp.statuses().every((bot) => bot.ready),
-    whatsappBots: user.role === "admin"
-      ? whatsapp.statuses().map(({ qr, ...status }) => ({ ...status, hasQr: Boolean(qr) }))
-      : [],
+    botReady: whatsappBots.length > 0 && whatsappBots.every((bot) => bot.ready),
+    whatsappBots: whatsappBots.map(({ qr, ...status }) => ({
+      ...status,
+      hasQr: Boolean(qr),
+    })),
     jam,
     siswa,
     kelas: Object.entries(kelas).map(([nama, data]) => ({
@@ -2221,13 +2242,14 @@ app.get("/api/export", async (req, res) => {
   res.send(buffer);
 });
 
-app.get("/api/whatsapp/:key/qr.svg", requireWebAdmin, (req, res) => {
-  const bot = whatsapp.statuses().find((status) => status.key === req.params.key);
-  if (!bot?.qr) return res.status(404).json({ error: "QR bot belum tersedia." });
-  res.type("image/svg+xml").send(qrToSvg(bot.qr));
+app.get("/api/whatsapp/:key/qr.svg", requireWhatsappBotAccess, (req, res) => {
+  if (!req.whatsappBot.qr) {
+    return res.status(404).json({ error: "QR bot belum tersedia." });
+  }
+  res.type("image/svg+xml").send(qrToSvg(req.whatsappBot.qr));
 });
 
-app.post("/api/whatsapp/:key/reset", requireWebAdmin, async (req, res) => {
+app.post("/api/whatsapp/:key/reset", requireWhatsappBotAccess, async (req, res) => {
   try {
     await whatsapp.reset(req.params.key);
     res.json({ ok: true });
