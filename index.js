@@ -166,6 +166,13 @@ const IZIN_PATH = "./izin.json";
 const KELAS_PATH = "./kelas.json";
 const USER_NAMES_PATH = "./user_names.json";
 const DASHBOARD_ACCOUNTS_PATH = "./dashboard_accounts.json";
+const BRAND_PATH = "./brand.json";
+const BRAND_LOGO_DIR = "./brand";
+const DEFAULT_BRAND = {
+  name: "Ruang Hadir",
+  logoFile: "",
+  logoMimeType: "",
+};
 const initialAdminNumber = String(process.env.INITIAL_ADMIN_NUMBER || "").replace(/\D/g, "");
 const INITIAL_ROLES = /^62\d{8,14}$/.test(initialAdminNumber)
   ? { [`${initialAdminNumber}@c.us`]: "admin" }
@@ -212,6 +219,7 @@ const JSON_STORES = {
     path: DASHBOARD_ACCOUNTS_PATH,
     fallback: INITIAL_DASHBOARD_ACCOUNTS,
   },
+  [BRAND_PATH]: { path: BRAND_PATH, fallback: DEFAULT_BRAND },
 };
 
 const jsonState = new JsonState({ writeBatch: saveJsonBatch });
@@ -264,6 +272,43 @@ async function saveJSON(path, data) {
     draft[path] = cloneData(data);
   });
 }
+
+function normalizeBrandName(value) {
+  const name = String(value || "").trim().replace(/\s+/g, " ");
+  if (name.length < 2 || name.length > 60 || /[\u0000-\u001f\u007f]/.test(name)) {
+    return "";
+  }
+  return name;
+}
+
+function loadBrandSettings() {
+  const stored = loadJSON(BRAND_PATH, DEFAULT_BRAND);
+  return {
+    name: normalizeBrandName(stored?.name) || DEFAULT_BRAND.name,
+    logoFile: /^logo-[a-f0-9]{16}\.(?:png|jpg)$/.test(stored?.logoFile || "")
+      ? stored.logoFile
+      : "",
+    logoMimeType: ["image/png", "image/jpeg"].includes(stored?.logoMimeType)
+      ? stored.logoMimeType
+      : "",
+  };
+}
+
+function brandLogoPath(brand = loadBrandSettings()) {
+  return brand.logoFile ? path.join(BRAND_LOGO_DIR, brand.logoFile) : "";
+}
+
+function publicBrandSettings() {
+  const brand = loadBrandSettings();
+  const logoPath = brandLogoPath(brand);
+  const hasLogo = Boolean(logoPath && fs.existsSync(logoPath));
+  return {
+    name: brand.name,
+    hasLogo,
+    logoUrl: hasLogo ? `/api/brand/logo?v=${path.parse(brand.logoFile).name}` : "",
+  };
+}
+
 async function updateJSON(paths, mutate) {
   return jsonState.update(paths, mutate);
 }
@@ -558,7 +603,7 @@ function cleanupOrphanedFaceFiles() {
 }
 
 function hardenSensitiveStorage() {
-  for (const root of [FACE_DB, FACE_REC, IZIN_BUKTI_DIR, ATTENDANCE_PHOTO_DIR]) {
+  for (const root of [FACE_DB, FACE_REC, IZIN_BUKTI_DIR, ATTENDANCE_PHOTO_DIR, BRAND_LOGO_DIR]) {
     hardenPrivateTree(root);
   }
 }
@@ -671,7 +716,7 @@ function dashboardUserName(id, role) {
 }
 
 function teksBantuan(role, terdaftar) {
-  const lines = ["*Perintah WhatsApp Ruang Hadir*"];
+  const lines = [`*Perintah WhatsApp ${loadBrandSettings().name}*`];
 
   if (role === "admin") {
     lines.push(
@@ -1574,6 +1619,20 @@ app.post("/api/auth/logout", (req, res) => {
   res.json({ ok: true });
 });
 
+app.get("/api/brand", (_req, res) => {
+  res.json(publicBrandSettings());
+});
+
+app.get("/api/brand/logo", (_req, res) => {
+  const brand = loadBrandSettings();
+  const logoPath = brandLogoPath(brand);
+  if (!logoPath || !fs.existsSync(logoPath)) {
+    return res.status(404).json({ error: "Logo brand belum tersedia." });
+  }
+  res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+  res.type(brand.logoMimeType).sendFile(path.resolve(logoPath));
+});
+
 app.use("/api", requireWebAuth);
 
 async function dashboardData(user) {
@@ -2046,6 +2105,73 @@ app.post(
     res.json({ ok: true });
   }
 );
+
+app.post(
+  "/api/settings/brand",
+  requireWebAdmin,
+  upload.single("logo"),
+  async (req, res) => {
+    const name = normalizeBrandName(req.body.name);
+    if (!name) {
+      return res.status(400).json({
+        error: "Nama aplikasi harus terdiri dari 2-60 karakter.",
+      });
+    }
+
+    const current = loadBrandSettings();
+    const next = { ...current, name };
+    let newLogoPath = "";
+    if (req.file) {
+      if (req.file.size > 2 * 1024 * 1024) {
+        return res.status(413).json({ error: "Ukuran logo maksimal 2 MB." });
+      }
+      let metadata;
+      try {
+        metadata = await validateImageBuffer(req.file.buffer);
+      } catch (error) {
+        return res.status(400).json({ error: error.message });
+      }
+      const digest = crypto
+        .createHash("sha256")
+        .update(req.file.buffer)
+        .digest("hex")
+        .slice(0, 16);
+      next.logoFile = `logo-${digest}.${imageExtension(metadata.mimetype)}`;
+      next.logoMimeType = metadata.mimetype;
+      newLogoPath = brandLogoPath(next);
+      writePrivateFile(newLogoPath, req.file.buffer);
+    }
+
+    try {
+      await saveJSON(BRAND_PATH, next);
+    } catch (error) {
+      if (newLogoPath && newLogoPath !== brandLogoPath(current)) {
+        deletePrivateFileSafely(newLogoPath, BRAND_LOGO_DIR, "logo brand baru");
+      }
+      throw error;
+    }
+
+    const previousLogoPath = brandLogoPath(current);
+    if (previousLogoPath && previousLogoPath !== newLogoPath && req.file) {
+      deletePrivateFileSafely(previousLogoPath, BRAND_LOGO_DIR, "logo brand lama");
+    }
+    res.json({ ok: true, brand: publicBrandSettings() });
+  }
+);
+
+app.delete("/api/settings/brand/logo", requireWebAdmin, async (_req, res) => {
+  const current = loadBrandSettings();
+  await saveJSON(BRAND_PATH, {
+    ...current,
+    logoFile: "",
+    logoMimeType: "",
+  });
+  const logoPath = brandLogoPath(current);
+  if (logoPath) {
+    deletePrivateFileSafely(logoPath, BRAND_LOGO_DIR, "logo brand");
+  }
+  res.json({ ok: true, brand: publicBrandSettings() });
+});
 
 app.post("/api/settings/time", requireWebAdmin, async (req, res) => {
   const masuk = String(req.body.masuk || "");

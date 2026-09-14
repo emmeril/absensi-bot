@@ -54,10 +54,11 @@ test("koneksi WhatsApp tersedia untuk admin dan wali kelas", () => {
   assert.doesNotMatch(dashboardPage, /title="Status WhatsApp"/);
 });
 
-test("menu admin, WhatsApp, dan jadwal berada di submenu pengaturan", () => {
+test("menu brand, jadwal, WhatsApp, dan admin berada di submenu pengaturan", () => {
   assert.match(dashboardPage, /item in mainTabs/);
   assert.match(dashboardPage, /item in settingsTabs/);
   assert.match(dashboardPage, /toggleSettingsMenu\(\)/);
+  assert.match(dashboardPage, /label:"Pengaturan Brand",icon:"fa-solid fa-palette"/);
   assert.match(dashboardPage, /label:"Pengaturan Jadwal",icon:"fa-solid fa-calendar-days"/);
 
   const script = dashboardPage.match(
@@ -75,6 +76,7 @@ test("menu admin, WhatsApp, dan jadwal berada di submenu pengaturan", () => {
     "izin",
   ]);
   assert.deepEqual(Array.from(state.settingsTabs, (item) => item.id), [
+    "brand",
     "pengaturan",
     "whatsapp",
     "admin",
@@ -86,6 +88,19 @@ test("menu admin, WhatsApp, dan jadwal berada di submenu pengaturan", () => {
     "siswa",
   ]);
   assert.deepEqual(Array.from(state.settingsTabs, (item) => item.id), ["whatsapp"]);
+});
+
+test("pengaturan brand mengubah nama dan mengunggah logo aplikasi", () => {
+  assert.match(dashboardPage, /tab === 'brand'/);
+  assert.match(dashboardPage, /@submit\.prevent="saveBrand"/);
+  assert.match(dashboardPage, /x-model="brandForm\.name"/);
+  assert.match(dashboardPage, /accept="image\/png,image\/jpeg,\.png,\.jpg,\.jpeg"/);
+  assert.match(dashboardPage, /@change="selectBrandLogo\(\$event\)"/);
+  assert.match(dashboardPage, /request\("\/api\/settings\/brand",\{method:"POST",body:form\}\)/);
+  assert.match(dashboardPage, /request\("\/api\/settings\/brand\/logo",\{method:"DELETE"\}\)/);
+  assert.match(dashboardPage, /document\.title=`\$\{this\.brand\.name\} \| Panel Administrasi`/);
+  assert.match(dashboardPage, /x-text="brand\.name"/);
+  assert.match(dashboardPage, /:src="brand\.logoUrl"/);
 });
 
 test("ikon user navbar membuka informasi akun dan tombol logout", () => {

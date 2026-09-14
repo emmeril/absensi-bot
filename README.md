@@ -10,6 +10,7 @@ Ruang Hadir adalah aplikasi absensi sekolah berbasis WhatsApp dengan verifikasi 
 - Pengajuan izin dua tahap: selfie terverifikasi lalu unggah bukti terpisah.
 - Notifikasi absensi dan izin kepada admin, wali kelas, dan orang tua.
 - Dashboard web untuk mengelola siswa, kelas, wali kelas, admin, jadwal, izin, dan laporan.
+- Pengaturan brand dashboard untuk mengganti nama aplikasi dan logo PNG/JPEG.
 - Ekspor laporan ke Excel.
 - Login dashboard menggunakan username dan password dengan role admin atau wali kelas.
 - Multi-bot Baileys: satu sesi bot untuk setiap nomor wali kelas.
@@ -73,7 +74,7 @@ Template konfigurasi awal tersedia pada berkas berikut:
 | `lokasi.example.json` | Contoh koordinat lokasi sekolah |
 | `jam.example.json` | Contoh jadwal masuk dan pulang |
 
-File JSON runtime lama tetap dapat diimpor pada instalasi yang sudah ada, tetapi semuanya diabaikan Git karena dapat berisi data pribadi. Perubahan selanjutnya disimpan ke SQLite. Foto absensi disimpan sebagai file privat di `attendance_photos`; versi lama yang masih tertanam sebagai Base64 dimigrasikan otomatis saat startup.
+File JSON runtime lama tetap dapat diimpor pada instalasi yang sudah ada, tetapi semuanya diabaikan Git karena dapat berisi data pribadi. Perubahan selanjutnya, termasuk pengaturan brand, disimpan ke SQLite. `brand.json` hanya dipakai sebagai sumber impor awal jika tersedia, sedangkan logo disimpan sebagai file privat di direktori `brand`. Foto absensi disimpan sebagai file privat di `attendance_photos`; versi lama yang masih tertanam sebagai Base64 dimigrasikan otomatis saat startup.
 
 Variabel lingkungan opsional:
 
@@ -130,11 +131,11 @@ node index.js
 node index.js
 ```
 
-Pada proses pertama, masuk ke dashboard lalu buka menu **WhatsApp**:
+Pada proses pertama, masuk ke dashboard lalu buka menu **Pengaturan > WhatsApp**:
 
 - Dashboard: `http://localhost:3200`
 
-Menu WhatsApp tersedia untuk pengguna yang sudah login ke dashboard dan tidak memakai password koneksi terpisah. Administrator dapat melihat seluruh bot, sedangkan wali kelas hanya dapat melihat dan mengelola bot yang nomornya sesuai dengan akun wali tersebut. Pindai QR memakai nomor yang tertulis pada kartu. Satu wali yang menangani beberapa kelas tetap memakai satu sesi. Sesi disimpan di `.baileys_auth`, sehingga pemindaian biasanya hanya diperlukan sekali. Jika akun salah atau sudah logout, tombol pada kartu dapat menghapus sesi tersebut dan menampilkan QR baru.
+Submenu WhatsApp di Pengaturan tersedia untuk pengguna yang sudah login ke dashboard dan tidak memakai password koneksi terpisah. Administrator dapat melihat seluruh bot, sedangkan wali kelas hanya dapat melihat dan mengelola bot yang nomornya sesuai dengan akun wali tersebut. Pindai QR memakai nomor yang tertulis pada kartu. Satu wali yang menangani beberapa kelas tetap memakai satu sesi. Sesi disimpan di `.baileys_auth`, sehingga pemindaian biasanya hanya diperlukan sekali. Jika akun salah atau sudah logout, tombol pada kartu dapat menghapus sesi tersebut dan menampilkan QR baru.
 
 Untuk produksi menggunakan PM2:
 
@@ -148,7 +149,7 @@ pm2 save
 
 1. Admin menjalankan aplikasi lalu masuk ke dashboard memakai username dan password.
 2. Admin membuat kelas, menetapkan wali kelas beserta akun dashboard-nya, dan menambahkan siswa serta nomor orang tua.
-3. Admin menghubungkan semua bot wali melalui menu **WhatsApp** di dashboard; wali kelas juga dapat menghubungkan bot miliknya sendiri.
+3. Admin menghubungkan semua bot wali melalui menu **Pengaturan > WhatsApp** di dashboard; wali kelas juga dapat menghubungkan bot miliknya sendiri.
 4. Admin atau wali kelas mengunggah foto referensi wajah siswa melalui dashboard.
 5. Siswa mengirim `!masuk` atau `!pulang` ke nomor wali kelasnya, membuka tautan sekali pakai, lalu mengambil selfie langsung dan mengizinkan GPS.
 6. Untuk izin, siswa mengirim `!izin alasan` ke nomor wali kelasnya, memverifikasi selfie dan GPS melalui tautan, lalu mengunggah surat atau bukti pada tahap kedua.
@@ -185,7 +186,7 @@ attendance_photos/       Foto absensi privat di luar blob SQLite
 exports/                 Arsip ekspor lokal; diabaikan Git
 ```
 
-Direktori seperti `.baileys_auth`, `data`, `face_db`, `face_rec`, `attendance_photos`, `izin_bukti`, dan `exports` berisi data lokal atau sensitif dan telah diabaikan Git.
+Direktori seperti `.baileys_auth`, `data`, `face_db`, `face_rec`, `attendance_photos`, `izin_bukti`, `brand`, dan `exports` berisi data lokal atau sensitif dan telah diabaikan Git.
 
 ## Catatan keamanan
 

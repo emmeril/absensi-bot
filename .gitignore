@@ -17,6 +17,7 @@ face_db/
 face_rec/
 izin_bukti/
 attendance_photos/
+brand/
 exports/
 core
 core.*
@@ -31,5 +32,6 @@ izin.json
 kelas.json
 user_names.json
 dashboard_accounts.json
+brand.json
 pending_requests.json
 pending_selfie.json
