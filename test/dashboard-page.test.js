@@ -124,3 +124,38 @@ test("filter tabel dapat dikombinasikan dan direset", () => {
   assert.equal(state.tables.students.photoFilter, "");
   assert.equal(state.tables.students.page, 1);
 });
+
+test("header tabel mengurutkan data naik dan turun sebelum pagination", () => {
+  const script = dashboardPage.match(
+    /<script>\s*(function dashboard\(\)[\s\S]*?)\s*<\/script>/
+  );
+  assert.ok(script, "fungsi dashboard ditemukan");
+  const createDashboard = vm.runInNewContext(`${script[1]}; dashboard;`);
+  const state = createDashboard();
+
+  for (const table of ["report", "students", "classes", "permissions", "admins"]) {
+    assert.match(dashboardPage, new RegExp(`toggleSort\\('${table}'`));
+  }
+
+  state.data.siswa = [
+    { nama: "Zaki", nomor: "10", kelas: "7B", orangTua: "20", punyaFoto: true },
+    { nama: "Andi", nomor: "2", kelas: "7A", orangTua: "10", punyaFoto: false },
+  ];
+  state.tables.students.page = 3;
+  state.toggleSort("students", "name");
+  assert.equal(state.tables.students.page, 1);
+  assert.equal(state.sortAria("students", "name"), "ascending");
+  assert.equal(state.sortIcon("students", "name"), "fa-sort-up");
+  assert.deepEqual(Array.from(state.pagedStudents, (row) => row.nama), ["Andi", "Zaki"]);
+
+  state.toggleSort("students", "name");
+  assert.equal(state.sortAria("students", "name"), "descending");
+  assert.deepEqual(Array.from(state.pagedStudents, (row) => row.nama), ["Zaki", "Andi"]);
+
+  state.data.kelas = [
+    { nama: "7A", namaWali: "Wati", waliKelas: "1", username: "a", jumlahSiswa: 10 },
+    { nama: "7B", namaWali: "Dodi", waliKelas: "2", username: "b", jumlahSiswa: 2 },
+  ];
+  state.toggleSort("classes", "studentCount");
+  assert.deepEqual(Array.from(state.pagedClasses, (row) => row.jumlahSiswa), [2, 10]);
+});
