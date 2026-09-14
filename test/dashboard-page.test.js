@@ -53,6 +53,18 @@ test("koneksi WhatsApp tersedia untuk admin dan wali kelas", () => {
   assert.doesNotMatch(dashboardPage, /href="\/qr"/);
 });
 
+test("ikon user navbar membuka informasi akun dan tombol logout", () => {
+  assert.match(dashboardPage, /userMenuOpen: false/);
+  assert.match(dashboardPage, /@click="userMenuOpen=!userMenuOpen"/);
+  assert.match(dashboardPage, /@click\.outside="userMenuOpen=false"/);
+  assert.match(dashboardPage, /@keydown\.escape\.window="userMenuOpen=false"/);
+  assert.match(dashboardPage, /:aria-expanded="userMenuOpen"/);
+  assert.match(dashboardPage, /x-text="user\?\.username \|\| '-'"/);
+  assert.match(dashboardPage, /x-text="user\?\.nomor \|\| '-'"/);
+  assert.match(dashboardPage, /@click="logout\(\)"/);
+  assert.match(dashboardPage, /async logout\(\)\{this\.userMenuOpen=false/);
+});
+
 test("semua tabel data memiliki filter dan tombol reset", () => {
   assert.match(dashboardPage, /display: flex; flex-wrap: nowrap; align-items: center; overflow-x: auto/);
 
