@@ -103,6 +103,15 @@ test("pengaturan brand mengubah nama dan mengunggah logo aplikasi", () => {
   assert.match(dashboardPage, /:src="brand\.logoUrl"/);
 });
 
+test("pengaturan brand tetap responsif pada layar mobile", () => {
+  assert.match(dashboardPage, /lg:grid-cols-\[280px_minmax\(0,1fr\)\]/);
+  assert.match(dashboardPage, /sm:h-32 sm:w-32/);
+  assert.match(dashboardPage, /flex-col items-center justify-center[^\n]+sm:flex-row/);
+  assert.match(dashboardPage, /max-w-full truncate[^\n]+brandLogoFile/);
+  assert.match(dashboardPage, /grid grid-cols-1 gap-2[^\n]+sm:flex sm:justify-end/);
+  assert.match(dashboardPage, /w-full rounded[^\n]+Simpan Brand/);
+});
+
 test("ikon user navbar membuka informasi akun dan tombol logout", () => {
   assert.match(dashboardPage, /userMenuOpen: false/);
   assert.match(dashboardPage, /@click="userMenuOpen=!userMenuOpen"/);

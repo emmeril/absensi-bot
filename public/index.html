@@ -74,16 +74,16 @@
       </aside>
 
       <div class="admin-content min-h-screen">
-      <header class="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-slate-200 bg-white px-4 shadow-sm sm:px-7">
-        <div class="flex items-center gap-4"><button @click="toggleSidebar()" class="grid h-9 w-9 place-items-center rounded border border-slate-200 text-slate-500"><i class="fa-solid fa-bars"></i></button><div><h1 class="font-bold text-slate-800" x-text="currentTab.label"></h1><p class="hidden text-xs text-slate-400 sm:block"><span x-text="brand.name"></span> / <span x-text="currentTab.label"></span></p></div></div>
-        <div class="relative" @keydown.escape.window="userMenuOpen=false">
+      <header class="sticky top-0 z-20 flex h-16 min-w-0 items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 shadow-sm sm:gap-4 sm:px-7">
+        <div class="flex min-w-0 items-center gap-2 sm:gap-4"><button @click="toggleSidebar()" class="grid h-9 w-9 shrink-0 place-items-center rounded border border-slate-200 text-slate-500"><i class="fa-solid fa-bars"></i></button><div class="min-w-0"><h1 class="truncate text-sm font-bold text-slate-800 sm:text-base" x-text="currentTab.label"></h1><p class="hidden truncate text-xs text-slate-400 sm:block"><span x-text="brand.name"></span> / <span x-text="currentTab.label"></span></p></div></div>
+        <div class="relative shrink-0" @keydown.escape.window="userMenuOpen=false">
           <button type="button" @click="userMenuOpen=!userMenuOpen" aria-label="Buka menu akun" aria-haspopup="true" :aria-expanded="userMenuOpen" class="flex items-center gap-2 rounded-lg px-2 py-1.5 text-right transition hover:bg-slate-100"><span class="hidden sm:block"><strong class="block text-sm text-slate-700" x-text="user?.nama"></strong><small class="text-slate-400" x-text="user?.role === 'admin' ? 'Administrator' : 'Wali kelas'"></small></span><span class="grid h-9 w-9 place-items-center rounded-full bg-slate-100 text-[#3c8dbc]"><i class="fa-solid fa-user"></i></span><i class="fa-solid fa-chevron-down text-xs text-slate-400 transition-transform" :class="userMenuOpen ? 'rotate-180' : ''"></i></button>
           <div x-show="userMenuOpen" x-cloak x-transition.origin.top.right @click.outside="userMenuOpen=false" class="absolute right-0 top-full z-30 mt-2 w-72 overflow-hidden rounded-lg border border-slate-200 bg-white text-left shadow-xl"><div class="flex items-center gap-3 bg-slate-50 p-4"><span class="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-[#3c8dbc] text-lg text-white"><i class="fa-solid fa-user"></i></span><div class="min-w-0"><strong class="block truncate text-sm text-slate-800" x-text="user?.nama"></strong><span class="mt-1 inline-block rounded bg-blue-50 px-2 py-1 text-xs text-blue-700" x-text="user?.role === 'admin' ? 'Administrator' : 'Wali kelas'"></span></div></div><div class="space-y-3 p-4 text-sm"><div><p class="text-xs text-slate-400">Username</p><p class="mt-1 truncate font-bold text-slate-700" x-text="user?.username || '-'"></p></div><div><p class="text-xs text-slate-400">Nomor WhatsApp</p><p class="mt-1 font-bold text-slate-700" x-text="user?.nomor || '-'"></p></div></div><div class="border-t border-slate-200 p-2"><button type="button" @click="logout()" class="flex w-full items-center gap-2 rounded px-3 py-2 text-sm font-bold text-red-700 hover:bg-red-50"><i class="fa-solid fa-right-from-bracket"></i>Keluar</button></div></div>
         </div>
       </header>
 
-    <main class="mx-auto max-w-[1500px] px-4 py-6 sm:px-7">
-      <div class="mb-6"><h2 class="text-2xl font-bold text-slate-800"><i class="mr-2 text-[#3c8dbc]" :class="currentTab.icon"></i><span x-text="currentTab.label"></span></h2><p class="mt-1 text-sm text-slate-500">Kelola data dan aktivitas absensi sekolah.</p></div>
+    <main class="mx-auto min-w-0 max-w-[1500px] px-3 py-5 sm:px-7 sm:py-6">
+      <div class="mb-5 min-w-0 sm:mb-6"><h2 class="flex min-w-0 items-center text-xl font-bold text-slate-800 sm:text-2xl"><i class="mr-2 shrink-0 text-[#3c8dbc]" :class="currentTab.icon"></i><span class="truncate" x-text="currentTab.label"></span></h2><p class="mt-1 text-sm text-slate-500">Kelola data dan aktivitas absensi sekolah.</p></div>
       <section class="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <template x-for="card in cards" :key="card.label">
           <div class="paper-edge rounded-lg p-5 shadow-card" :style="`--accent:${card.color}`">
@@ -159,21 +159,21 @@
             </div>
           </div>
 
-          <div x-show="!loading && tab === 'brand'" x-cloak>
+          <div x-show="!loading && tab === 'brand'" x-cloak class="min-w-0">
             <div class="mb-5"><h3 class="font-bold">Pengaturan Brand</h3><p class="text-xs text-slate-400">Atur nama aplikasi dan logo yang tampil pada dashboard</p></div>
-            <form @submit.prevent="saveBrand" class="grid gap-6 lg:grid-cols-[280px_1fr]">
-              <div class="rounded-lg border border-slate-200 bg-slate-50 p-5 text-center">
+            <form @submit.prevent="saveBrand" class="grid min-w-0 gap-5 lg:grid-cols-[280px_minmax(0,1fr)] lg:gap-6">
+              <div class="min-w-0 rounded-lg border border-slate-200 bg-slate-50 p-4 text-center sm:p-5">
                 <p class="mb-4 text-xs font-bold uppercase tracking-widest text-slate-400">Pratinjau logo</p>
-                <div class="mx-auto grid h-32 w-32 overflow-hidden place-items-center rounded-lg border border-slate-200 bg-white text-3xl font-black text-[#3c8dbc] shadow-sm">
+                <div class="mx-auto grid h-24 w-24 overflow-hidden place-items-center rounded-lg border border-slate-200 bg-white text-2xl font-black text-[#3c8dbc] shadow-sm sm:h-32 sm:w-32 sm:text-3xl">
                   <template x-if="brandLogoPreview || brand.hasLogo"><img :src="brandLogoPreview || brand.logoUrl" :alt="'Logo ' + (brandForm.name || brand.name)" class="h-full w-full object-contain p-3" /></template>
                   <template x-if="!brandLogoPreview && !brand.hasLogo"><span x-text="brandInitials"></span></template>
                 </div>
                 <strong class="mt-4 block truncate text-slate-700" x-text="brandForm.name || brand.name"></strong>
               </div>
-              <div class="space-y-5">
-                <label class="block text-sm font-bold text-slate-700">Nama Aplikasi<input x-model="brandForm.name" required minlength="2" maxlength="60" placeholder="Contoh: Ruang Hadir" class="mt-2 w-full rounded border border-slate-300 px-4 py-3" /><small class="mt-1 block font-normal text-slate-500">Nama ini tampil pada halaman login, sidebar, judul browser, dan pesan bantuan WhatsApp.</small></label>
-                <div><p class="text-sm font-bold text-slate-700">Logo Aplikasi</p><label class="mt-2 flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-600 hover:bg-slate-100"><i class="fa-solid fa-cloud-arrow-up text-lg text-[#3c8dbc]"></i><span x-text="brandLogoFile?.name || 'Pilih logo PNG atau JPG'"></span><input type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg" class="hidden" @change="selectBrandLogo($event)" /></label><small class="mt-1 block text-slate-500">Ukuran maksimal 2 MB. Gunakan gambar persegi agar hasil terbaik.</small></div>
-                <div class="flex flex-wrap justify-end gap-2 border-t border-slate-200 pt-4"><button x-show="brand.hasLogo" type="button" @click="removeBrandLogo" class="rounded border border-red-200 px-4 py-2 text-sm font-bold text-red-700 hover:bg-red-50"><i class="fa-solid fa-trash mr-2"></i>Hapus Logo</button><button type="submit" :disabled="brandSaving" class="rounded bg-[#3c8dbc] px-4 py-2 text-sm font-bold text-white disabled:opacity-50"><i class="fa-solid fa-floppy-disk mr-2"></i><span x-text="brandSaving ? 'Menyimpan...' : 'Simpan Brand'"></span></button></div>
+              <div class="min-w-0 space-y-5">
+                <label class="block min-w-0 text-sm font-bold text-slate-700">Nama Aplikasi<input x-model="brandForm.name" required minlength="2" maxlength="60" placeholder="Contoh: Ruang Hadir" class="mt-2 block w-full min-w-0 rounded border border-slate-300 px-3 py-3 sm:px-4" /><small class="mt-1 block font-normal text-slate-500">Nama ini tampil pada halaman login, sidebar, judul browser, dan pesan bantuan WhatsApp.</small></label>
+                <div class="min-w-0"><p class="text-sm font-bold text-slate-700">Logo Aplikasi</p><label class="mt-2 flex min-w-0 cursor-pointer flex-col items-center justify-center gap-2 overflow-hidden rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-5 text-center text-sm text-slate-600 hover:bg-slate-100 sm:flex-row sm:px-4 sm:py-6"><i class="fa-solid fa-cloud-arrow-up shrink-0 text-lg text-[#3c8dbc]"></i><span class="block max-w-full truncate" x-text="brandLogoFile?.name || 'Pilih logo PNG atau JPG'"></span><input type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg" class="hidden" @change="selectBrandLogo($event)" /></label><small class="mt-1 block text-slate-500">Ukuran maksimal 2 MB. Gunakan gambar persegi agar hasil terbaik.</small></div>
+                <div class="grid grid-cols-1 gap-2 border-t border-slate-200 pt-4 sm:flex sm:justify-end"><button x-show="brand.hasLogo" type="button" @click="removeBrandLogo" class="w-full rounded border border-red-200 px-4 py-2.5 text-sm font-bold text-red-700 hover:bg-red-50 sm:w-auto sm:py-2"><i class="fa-solid fa-trash mr-2"></i>Hapus Logo</button><button type="submit" :disabled="brandSaving" class="w-full rounded bg-[#3c8dbc] px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50 sm:w-auto sm:py-2"><i class="fa-solid fa-floppy-disk mr-2"></i><span x-text="brandSaving ? 'Menyimpan...' : 'Simpan Brand'"></span></button></div>
               </div>
             </form>
           </div>
