@@ -1008,6 +1008,8 @@ whatsapp.on("status", (status) => {
     console.log(`[Baileys ${status.key}] Terhubung sebagai ${status.connectedNumber}.`);
   } else if (status.state === "mismatch") {
     console.error(`[Baileys ${status.key}] ${status.error}`);
+  } else if (["closed", "logged_out", "error"].includes(status.state)) {
+    console.warn(`[Baileys ${status.key}] ${status.error || "Koneksi terputus."}`);
   }
 });
 

@@ -89,6 +89,7 @@ Variabel lingkungan opsional:
 | `SESSION_COOKIE_SECURE` | otomatis | Paksa cookie sesi hanya melalui HTTPS |
 | `BAILEYS_AUTH_DATA_PATH` | `.baileys_auth` | Direktori seluruh sesi Baileys |
 | `WA_LOG_LEVEL` | `silent` | Level log internal Baileys |
+| `WA_WEB_VERSION` | otomatis | Versi protokol WhatsApp Web; biarkan kosong agar mengikuti versi terbaru |
 | `FACE_WORKER_COUNT` | `1` | Jumlah worker verifikasi wajah; tambah hanya jika RAM dan CPU mencukupi |
 | `FACE_QUEUE_LIMIT` | `100` | Batas antrean verifikasi wajah |
 | `FACE_ESTIMATED_JOB_MS` | `2500` | Estimasi awal durasi verifikasi untuk admission control; disesuaikan otomatis saat runtime |

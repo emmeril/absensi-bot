@@ -3,10 +3,41 @@ const assert = require("node:assert/strict");
 const {
   adaptIncomingMessage,
   RecentMessageStore,
+  resolveWaVersion,
   sessionDefinitions,
   toAppUserId,
   toBaileysJid,
 } = require("../lib/baileys-manager");
+
+test("uses the current WhatsApp Web version for new connections", async () => {
+  const library = {
+    DEFAULT_CONNECTION_CONFIG: { version: [2, 3000, 1] },
+    fetchLatestWaWebVersion: async () => ({
+      version: [2, 3000, 99],
+      isLatest: true,
+    }),
+  };
+
+  assert.deepEqual(await resolveWaVersion(library), {
+    version: [2, 3000, 99],
+    source: "web.whatsapp.com",
+  });
+});
+
+test("falls back to the bundled WhatsApp version when lookup fails", async (t) => {
+  t.mock.method(console, "warn", () => {});
+  const library = {
+    DEFAULT_CONNECTION_CONFIG: { version: [2, 3000, 1] },
+    fetchLatestWaWebVersion: async () => {
+      throw new Error("offline");
+    },
+  };
+
+  assert.deepEqual(await resolveWaVersion(library), {
+    version: [2, 3000, 1],
+    source: "bawaan Baileys",
+  });
+});
 
 test("keeps recent messages available for WhatsApp decryption retries", () => {
   let now = 1_000;
