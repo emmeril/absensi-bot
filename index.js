@@ -1835,7 +1835,7 @@ app.post("/api/classes", requireWebAdmin, async (req, res) => {
   const originalNama = String(req.body.originalNama || "").trim().toUpperCase();
   const waliKelas = normalizeNomor(req.body.waliKelas);
   if (waliKelas && waliKelas === teacherAttendance.config().number) {
-    return res.status(400).json({ error: "Nomor bot TU tidak boleh digunakan sebagai bot wali kelas." });
+    return res.status(400).json({ error: "Nomor Bot Guru tidak boleh digunakan sebagai Bot Siswa." });
   }
   const namaWali = toTitleCase(String(req.body.namaWali || "").trim());
   const requestedUsername = normalizeUsername(req.body.username);
@@ -1864,7 +1864,7 @@ app.post("/api/classes", requireWebAdmin, async (req, res) => {
     await updateJSON(
       [KELAS_PATH, ROLE_PATH, USER_NAMES_PATH, DASHBOARD_ACCOUNTS_PATH],
       (draft) => {
-      if (waliKelas === teacherAttendance.config().number) throw new Error("Nomor bot TU tidak boleh digunakan sebagai bot wali kelas.");
+      if (waliKelas === teacherAttendance.config().number) throw new Error("Nomor Bot Guru tidak boleh digunakan sebagai Bot Siswa.");
       const kelas = draft[KELAS_PATH];
       const roles = draft[ROLE_PATH];
       if (originalNama) {

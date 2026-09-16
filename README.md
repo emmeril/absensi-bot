@@ -20,15 +20,15 @@ Ruang Hadir adalah aplikasi absensi sekolah berbasis WhatsApp dengan verifikasi 
 
 ## Perintah WhatsApp aktif
 
-### Absensi guru melalui bot TU
+### Absensi guru melalui Bot Guru
 
-Admin membuka menu **Absensi Guru** untuk:
+Admin membuka kelompok menu **Absen Guru**, yang berisi **Ringkasan**, **Data Guru**, **Jam Mengajar**, **Izin**, dan **Laporan Kehadiran Guru**. Koneksi nomor guru tersedia di **Pengaturan > Bot Guru**.
 
-1. Mengatur nomor WhatsApp khusus TU, berbeda dari nomor guru dan bot wali kelas. Hubungkan nomor tersebut dengan memindai QR di **Pengaturan > WhatsApp**.
+1. Mengatur nomor WhatsApp khusus bot guru, berbeda dari nomor guru dan bot siswa. Hubungkan nomor tersebut dengan memindai QR di **Pengaturan > Bot Guru**.
 2. Menambahkan nama dan nomor guru, termasuk guru yang juga menjadi wali kelas, lalu mengunggah foto referensi wajah.
 3. Menambahkan jadwal mingguan: guru, hari, kelas, mata pelajaran, jam mulai/selesai, toleransi terlambat, dan tanggal berlaku. Jam pelajaran berurutan di kelas yang sama dibuat sebagai satu sesi. Jadwal guru yang bertabrakan ditolak. Akhiri jadwal lama sebelum menggantinya, dan masukkan tanggal libur sekolah pada pengaturan guru.
 
-Guru mengirim **`!masuk` ke bot TU**, lalu membuka satu tautan pribadi:
+Guru mengirim **`!masuk` ke Bot Guru**, lalu membuka satu tautan pribadi:
 
 - Tahap 1: selfie terverifikasi dan GPS dalam radius 100 meter sekolah. Kehadiran langsung disimpan, terpisah dari bukti mengajar.
 - Tahap 2: foto kegiatan melalui kamera belakang dan materi yang diajarkan. GPS diperiksa kembali. Bukti hanya dapat dikirim setelah sesi dimulai; tidak ada perintah `!jurnal` atau unggahan galeri.
@@ -36,7 +36,7 @@ Guru mengirim **`!masuk` ke bot TU**, lalu membuka satu tautan pribadi:
 - Jendela absensi dibuka 15 menit sebelum mulai sampai tepat sebelum jam selesai. Jika dua jendela sesi berdekatan sedang terbuka, bot mengirim tautan masing-masing dengan label kelas dan jam agar guru memilih sesi yang benar.
 - **`!jadwal`** menampilkan jadwal hari ini. Tidak ada kewajiban absen pada hari tanpa jadwal atau tanggal libur.
 
-Admin dapat melihat laporan harian, membuka selfie/foto kegiatan privat, menandai hasil tinjauan beserta catatan, dan mengunduh CSV yang dapat dibuka di Excel. Status membedakan belum hadir, hadir dengan bukti belum lengkap, dan bukti lengkap. Catatan perbaikan ditindaklanjuti TU secara langsung; pengiriman ulang bukti yang sudah final dan alur izin guru belum tersedia. Foto kegiatan merupakan bahan tinjauan, bukan verifikasi otomatis bahwa guru mengajar sepanjang sesi.
+Ringkasan guru menampilkan jumlah guru aktif, sesi terjadwal, sesi hadir, dan guru izin untuk tanggal pilihan. Admin dapat mencatat Izin, Sakit, atau Tugas Luar per hari; izin berlaku untuk seluruh sesi pada tanggal itu, membatalkan tautan yang masih aktif, dan tidak dapat ditambahkan setelah guru mulai absen. Laporan harian menyediakan selfie/foto kegiatan privat, tinjauan beserta catatan, dan ekspor CSV. Status membedakan belum hadir, izin, hadir dengan bukti belum lengkap, dan bukti lengkap. Foto kegiatan merupakan bahan tinjauan, bukan verifikasi otomatis bahwa guru mengajar sepanjang sesi.
 
 Data guru, jadwal, token yang di-hash, dan catatan sesi disimpan di SQLite melalui penyimpanan JSON aplikasi. Foto disimpan privat di `attendance_photos/teachers`; hanya admin dapat membuka bukti lewat API. Jadwal dan identitas disalin ke catatan kehadiran untuk mempertahankan riwayat. Absensi siswa tetap menggunakan bot wali kelas dan aturan yang sudah ada.
 
@@ -153,11 +153,11 @@ node index.js
 node index.js
 ```
 
-Pada proses pertama, masuk ke dashboard lalu buka menu **Pengaturan > WhatsApp**:
+Pada proses pertama, masuk ke dashboard lalu buka **Pengaturan > Bot Siswa** untuk nomor wali kelas dan **Pengaturan > Bot Guru** untuk nomor khusus guru:
 
 - Dashboard: `http://localhost:3200`
 
-Submenu WhatsApp di Pengaturan tersedia untuk pengguna yang sudah login ke dashboard dan tidak memakai password koneksi terpisah. Administrator dapat melihat seluruh bot, sedangkan wali kelas hanya dapat melihat dan mengelola bot yang nomornya sesuai dengan akun wali tersebut. Pindai QR memakai nomor yang tertulis pada kartu. Satu wali yang menangani beberapa kelas tetap memakai satu sesi. Sesi disimpan di `.baileys_auth`, sehingga pemindaian biasanya hanya diperlukan sekali. Jika akun salah atau sudah logout, tombol pada kartu dapat menghapus sesi tersebut dan menampilkan QR baru.
+Submenu Bot Siswa dan Bot Guru di Pengaturan tersedia untuk pengguna yang sudah login tanpa password koneksi terpisah. Administrator dapat melihat keduanya, sedangkan wali kelas hanya dapat melihat dan mengelola Bot Siswa yang nomornya sesuai dengan akun wali tersebut. Pindai QR memakai nomor yang tertulis pada kartu. Satu wali yang menangani beberapa kelas tetap memakai satu sesi. Sesi disimpan di `.baileys_auth`, sehingga pemindaian biasanya hanya diperlukan sekali. Jika akun salah atau sudah logout, tombol pada kartu dapat menghapus sesi tersebut dan menampilkan QR baru.
 
 Untuk produksi menggunakan PM2:
 
@@ -171,7 +171,7 @@ pm2 save
 
 1. Admin menjalankan aplikasi lalu masuk ke dashboard memakai username dan password.
 2. Admin membuat kelas, menetapkan wali kelas beserta akun dashboard-nya, dan menambahkan siswa serta nomor orang tua.
-3. Admin menghubungkan semua bot wali melalui menu **Pengaturan > WhatsApp** di dashboard; wali kelas juga dapat menghubungkan bot miliknya sendiri.
+3. Admin menghubungkan semua bot wali melalui **Pengaturan > Bot Siswa** dan nomor guru melalui **Pengaturan > Bot Guru**; wali kelas juga dapat menghubungkan bot siswa miliknya sendiri.
 4. Admin atau wali kelas mengunggah foto referensi wajah siswa melalui dashboard.
 5. Siswa mengirim `!masuk` atau `!pulang` ke nomor wali kelasnya, membuka tautan sekali pakai, lalu mengambil selfie langsung dan mengizinkan GPS.
 6. Untuk izin, siswa mengirim `!izin alasan` ke nomor wali kelasnya, memverifikasi selfie dan GPS melalui tautan, lalu mengunggah surat atau bukti pada tahap kedua.

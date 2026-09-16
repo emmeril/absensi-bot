@@ -1,32 +1,11 @@
 <!doctype html>
-<html lang="id"><head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Absensi Guru | Ruang Hadir</title><link rel="stylesheet" href="/vendor/bootstrap.min.css">
-  <style>body{background:#f4f6f9;color:#243748}main{max-width:1240px;margin:auto;padding:24px}section{background:#fff;border:1px solid #e1e7ed;border-radius:12px;padding:24px;margin:20px 0}label{font-weight:600;font-size:.9rem}th{white-space:nowrap}td{vertical-align:middle}.actions{display:flex;gap:8px;flex-wrap:wrap}.notice{position:sticky;top:10px;z-index:2;white-space:pre-line}[hidden]{display:none!important}input,select,button{min-height:42px}.table-wrap{overflow:auto}small{color:#607080}</style>
-</head><body><main>
-  <a href="/">← Dashboard</a><div class="d-flex flex-wrap justify-content-between align-items-center mt-3 gap-2"><div><h1>Absensi Guru</h1><p class="text-secondary mb-0">Jadwal mengajar, bot TU, dan bukti kegiatan dalam satu tempat.</p></div><a class="btn btn-outline-primary" href="/#whatsapp">Hubungkan bot TU / QR</a></div>
-  <p id="message" class="alert alert-info notice mt-3" role="status" aria-live="polite">Memeriksa akses admin…</p>
-  <div id="content" hidden>
-  <section><h2 class="h4">Bot TU & hari libur</h2><p>Gunakan nomor khusus TU. Guru mengirim <strong>!masuk</strong> ke nomor ini. Kehadiran dan bukti dilengkapi melalui satu tautan.</p>
-    <form id="settingsForm" class="row g-3"><div class="col-md-5"><label for="tuNumber">Nomor WhatsApp bot TU</label><input id="tuNumber" class="form-control" placeholder="62812…" inputmode="tel"><small>Kosongkan untuk menonaktifkan bot TU.</small></div><div class="col-md-7"><label for="holidays">Tanggal libur (satu per baris, YYYY-MM-DD)</label><textarea id="holidays" class="form-control" rows="2" placeholder="2026-12-25"></textarea></div><div><button class="btn btn-primary">Simpan pengaturan</button></div></form>
-  </section>
-  <section><h2 class="h4">Data guru</h2><p>Guru yang juga wali kelas tetap memakai nomor pribadinya. Unggah foto referensi wajah sebelum absensi pertama.</p>
-    <form id="teacherForm" class="row g-3"><div class="col-md-4"><label for="teacherName">Nama guru</label><input id="teacherName" class="form-control" required maxlength="120"></div><div class="col-md-4"><label for="teacherNumber">Nomor WhatsApp guru</label><input id="teacherNumber" class="form-control" required inputmode="tel" placeholder="08… / 628…"></div><div class="col-md-2"><label for="teacherActive">Status</label><select id="teacherActive" class="form-select"><option value="true">Aktif</option><option value="false">Nonaktif</option></select></div><div class="col-md-2 align-self-end"><button class="btn btn-primary w-100">Simpan guru</button></div></form>
-    <div class="table-wrap mt-4"><table class="table"><thead><tr><th>Nama</th><th>Nomor</th><th>Status</th><th>Foto referensi</th><th>Tindakan</th></tr></thead><tbody id="teachers"></tbody></table></div>
-  </section>
-  <section><h2 class="h4">Jadwal mengajar</h2><p>Gabungkan jam pelajaran berurutan di kelas yang sama sebagai satu sesi. Absen dibuka 15 menit sebelum mulai dan ditutup saat sesi berakhir.</p>
-    <form id="scheduleForm" class="row g-3">
-      <div class="col-md-4"><label for="scheduleTeacher">Guru</label><select id="scheduleTeacher" class="form-select" required></select></div>
-      <div class="col-md-2"><label for="day">Hari</label><select id="day" class="form-select"><option value="1">Senin</option><option value="2">Selasa</option><option value="3">Rabu</option><option value="4">Kamis</option><option value="5">Jumat</option><option value="6">Sabtu</option><option value="0">Minggu</option></select></div>
-      <div class="col-md-3"><label for="subject">Mata pelajaran</label><input id="subject" class="form-control" required maxlength="120"></div><div class="col-md-3"><label for="className">Kelas</label><input id="className" class="form-control" required maxlength="120" placeholder="VII A"></div>
-      <div class="col-md-2"><label for="start">Jam mulai</label><input id="start" type="time" class="form-control" required></div><div class="col-md-2"><label for="end">Jam selesai</label><input id="end" type="time" class="form-control" required></div><div class="col-md-2"><label for="tolerance">Toleransi (menit)</label><input id="tolerance" type="number" min="0" max="60" value="0" class="form-control" required></div>
-      <div class="col-md-3"><label for="from">Berlaku mulai</label><input id="from" type="date" class="form-control" required></div><div class="col-md-3"><label for="until">Berlaku sampai (opsional)</label><input id="until" type="date" class="form-control"></div><div><button class="btn btn-primary">Tambah jadwal</button></div>
-    </form>
-    <div class="table-wrap mt-4"><table class="table"><thead><tr><th>Guru</th><th>Hari / Jam</th><th>Kelas / Pelajaran</th><th>Berlaku</th><th>Tindakan</th></tr></thead><tbody id="schedules"></tbody></table></div>
-  </section>
-  <section><div class="d-flex flex-wrap gap-3 align-items-end justify-content-between"><div><h2 class="h4">Laporan & bukti mengajar</h2><label for="reportDate">Tanggal laporan</label><input type="date" id="reportDate" class="form-control"></div><div class="actions"><button id="refreshReport" class="btn btn-outline-primary">Muat ulang</button><button id="exportReport" class="btn btn-outline-success">Unduh CSV</button></div></div>
-    <p class="mt-3 text-secondary">Foto dan materi merupakan bukti yang dapat ditinjau. Status lengkap tidak otomatis berarti sudah diverifikasi oleh TU.</p>
-    <div class="table-wrap"><table class="table"><thead><tr><th>Guru</th><th>Sesi</th><th>Hadir</th><th>Status</th><th>Materi</th><th>Foto</th><th>Tinjauan</th></tr></thead><tbody id="report"></tbody></table></div>
-  </section>
-  </div>
-</main><script src="/teachers.js" defer></script></body></html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="refresh" content="0;url=/#guru" />
+    <title>Absensi Guru</title>
+    <script>location.replace('/#guru');</script>
+  </head>
+  <body><p><a href="/#guru">Buka Absensi Guru di dashboard</a></p></body>
+</html>

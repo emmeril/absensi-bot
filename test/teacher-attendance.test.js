@@ -63,8 +63,8 @@ async function fixture(t) {
   const server = app.listen(0, "127.0.0.1"); await once(server, "listening");
   t.after(async () => { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); fs.rmSync(temp, { recursive: true, force: true }); });
   const base = `http://127.0.0.1:${server.address().port}`;
-  const request = async (url, body, role) => {
-    const response = await fetch(base + url, { method: body ? "POST" : "GET", headers: { ...(body ? { "Content-Type": "application/json" } : {}), ...(role ? { "x-role": role } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  const request = async (url, body, role, method = body ? "POST" : "GET") => {
+    const response = await fetch(base + url, { method, headers: { ...(body ? { "Content-Type": "application/json" } : {}), ...(role ? { "x-role": role } : {}) }, body: body ? JSON.stringify(body) : undefined });
     const raw = await response.text(); let data; try { data = JSON.parse(raw); } catch { data = raw; } return { status: response.status, data };
   };
   async function command(body = "!masuk", sender = `${num}@c.us`, botKey = `tu:${tu}`) { let reply; const handled = await service.command({ body, sender, botKey, reply: async (text) => { reply = text; } }); return { reply, handled, token: reply?.match(/#([a-f0-9]{64})/)?.[1] }; }
@@ -132,4 +132,24 @@ test("failed durable write rolls back photo and leaves attendance retryable", as
   assert.equal((await f.request(`/api/teacher-camera/${token}/arrival`, photo)).status, 400);
   assert.equal(fs.readdirSync(f.temp).length, 0); assert.equal(f.service.report(date)[0].arrival, undefined);
   f.setFail(false); assert.equal((await f.request(`/api/teacher-camera/${token}/arrival`, photo)).status, 200);
+});
+test("teacher permission covers scheduled sessions, revokes links, and blocks attendance", async (t) => {
+  const f = await fixture(t); const issued = await f.command(); assert.ok(issued.token);
+  const body = { number: num, date, type: "Sakit", reason: "Demam" };
+  assert.equal((await f.request("/api/teachers/permissions", body)).status, 401);
+  assert.equal((await f.request("/api/teachers/permissions", body, "admin")).status, 200);
+  assert.equal((await f.request("/api/teachers/permissions", body, "admin")).status, 400);
+  assert.equal((await f.request(`/api/teacher-camera/${issued.token}`)).status, 410);
+  const command = await f.command(); assert.equal(command.token, undefined); assert.match(command.reply, /sakit hari ini/);
+  const rows = f.service.report(date); assert.equal(rows.length, 1); assert.equal(rows[0].permission.reason, "Demam");
+  const listed = await f.request(`/api/teachers/permissions?date=${date}`, undefined, "admin");
+  assert.equal(listed.status, 200); assert.equal(listed.data.rows[0].type, "Sakit");
+  assert.equal((await f.request(`/api/teachers/permissions/${date}/${num}`, undefined, "admin", "DELETE")).status, 200);
+  assert.equal(f.service.report(date)[0].permission, null);
+});
+test("teacher permission is rejected after attendance or without a teaching schedule", async (t) => {
+  const f = await fixture(t); const { token } = await f.command();
+  await f.request(`/api/teacher-camera/${token}/arrival`, photo);
+  assert.equal((await f.request("/api/teachers/permissions", { number: num, date, type: "Izin", reason: "Keperluan keluarga" }, "admin")).status, 400);
+  assert.equal((await f.request("/api/teachers/permissions", { number: num, date: "2026-09-15", type: "Izin", reason: "Keperluan keluarga" }, "admin")).status, 400);
 });

@@ -81,7 +81,7 @@ $("submit").onclick = async () => {
 window.addEventListener("pagehide", stop);
 (async () => {
   try {
-    if (!/^[a-f0-9]{64}$/.test(token)) throw new Error("Buka tautan pribadi yang dikirim bot TU.");
+    if (!/^[a-f0-9]{64}$/.test(token)) throw new Error("Buka tautan pribadi yang dikirim Bot Guru.");
     session = await request(); render();
   } catch (error) { status(error.message, true); }
 })();

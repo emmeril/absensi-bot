@@ -8,6 +8,10 @@ const dashboardPage = fs.readFileSync(
   path.join(__dirname, "..", "public", "index.html"),
   "utf8"
 );
+const teacherScript = fs.readFileSync(
+  path.join(__dirname, "..", "public", "teachers.js"),
+  "utf8"
+);
 
 test("dashboard hanya memuat aset lokal", () => {
   assert.match(dashboardPage, /\/dashboard\.css/);
@@ -45,7 +49,7 @@ test("semua input password memiliki placeholder dan tombol tampilkan password", 
 });
 
 test("koneksi WhatsApp tersedia untuk admin dan wali kelas", () => {
-  assert.match(dashboardPage, /id:"whatsapp",label:"WhatsApp"/);
+  assert.match(dashboardPage, /id:"whatsapp",label:"Bot Siswa"/);
   assert.match(dashboardPage, /\["ringkasan","siswa","whatsapp"\]/);
   assert.match(dashboardPage, /tab === 'whatsapp'/);
   assert.match(dashboardPage, /\/api\/whatsapp\/\$\{encodeURIComponent\(bot\.key\)\}\/qr\.svg/);
@@ -54,8 +58,8 @@ test("koneksi WhatsApp tersedia untuk admin dan wali kelas", () => {
   assert.doesNotMatch(dashboardPage, /title="Status WhatsApp"/);
 });
 
-test("menu brand, jadwal, WhatsApp, dan admin berada di submenu pengaturan", () => {
-  assert.match(dashboardPage, /item in mainTabs/);
+test("sidebar memisahkan absen siswa, absen guru, dan pengaturan umum", () => {
+  assert.match(dashboardPage, /group in attendanceGroups/);
   assert.match(dashboardPage, /item in settingsTabs/);
   assert.match(dashboardPage, /toggleSettingsMenu\(\)/);
   assert.match(dashboardPage, /label:"Pengaturan Brand",icon:"fa-solid fa-palette"/);
@@ -74,20 +78,35 @@ test("menu brand, jadwal, WhatsApp, dan admin berada di submenu pengaturan", () 
     "siswa",
     "kelas",
     "izin",
-  ]);
-  assert.deepEqual(Array.from(state.settingsTabs, (item) => item.id), [
-    "brand",
     "pengaturan",
-    "whatsapp",
-    "admin",
   ]);
+  assert.deepEqual(Array.from(state.settingsTabs, (item) => item.label), [
+    "Pengaturan Brand",
+    "Bot Siswa",
+    "Bot Guru",
+    "Admin",
+  ]);
+  assert.deepEqual(Array.from(state.teacherTabs, (item) => item.label), ["Ringkasan", "Data Guru", "Jam Mengajar", "Izin", "Laporan Kehadiran Guru"]);
+  state.data.whatsappBots = [{ role: "tu", key: "tu:1" }, { role: "wali", key: "wali:2" }];
+  state.tab = "bot-tu";
+  assert.deepEqual(Array.from(state.visibleWhatsappBots, bot => bot.key), ["tu:1"]);
+  state.tab = "whatsapp";
+  assert.deepEqual(Array.from(state.visibleWhatsappBots, bot => bot.key), ["wali:2"]);
 
   state.user = { role: "teacher" };
   assert.deepEqual(Array.from(state.mainTabs, (item) => item.id), [
     "ringkasan",
     "siswa",
   ]);
-  assert.deepEqual(Array.from(state.settingsTabs, (item) => item.id), ["whatsapp"]);
+  assert.deepEqual(Array.from(state.settingsTabs, (item) => item.label), ["Bot Siswa"]);
+  assert.deepEqual(Array.from(state.teacherTabs), []);
+});
+
+test("pemberitahuan bot pada menu guru hanya mengarah ke Bot Guru", () => {
+  assert.match(dashboardPage, /data-bot-alert="teacher"[^>]+isTeacherTab/);
+  assert.match(dashboardPage, /Bot Guru belum siap atau belum terhubung/);
+  assert.match(dashboardPage, /data-bot-alert="student"[^>]+!isTeacherPage/);
+  assert.doesNotMatch(dashboardPage, /currentTeacherDescription/);
 });
 
 test("pengaturan brand mengubah nama dan mengunggah logo aplikasi", () => {
@@ -241,10 +260,23 @@ test("header aksi tidak menampilkan ikon dan tidak dapat diurutkan", () => {
     /<th class="text-center">Aksi<\/th>/g
   ) || [];
 
-  assert.equal(actionHeaders.length, 4);
+  assert.equal(actionHeaders.length, 5);
   assert.doesNotMatch(dashboardPage, /toggleSort\([^)]*['"]action['"]/);
   assert.match(
     dashboardPage,
     /th\.text-center::before, \.data-table thead th\.text-center::after \{ display: none !important; content: none !important; \}/
   );
+});
+
+test("data guru mengikuti pola tabel siswa dan memakai modal", () => {
+  assert.match(dashboardPage, /id="addTeacher"[^>]*>[^<]*<i[^>]*><\/i>Tambah Guru<\/button>/);
+  assert.match(dashboardPage, /id="teacherModal"[^>]+role="dialog"[^>]+aria-modal="true"/);
+  assert.match(dashboardPage, /id="teacherPageSize"/);
+  assert.match(dashboardPage, /id="teacherSearch"/);
+  assert.match(dashboardPage, /id="teacherStatusFilter"/);
+  assert.match(dashboardPage, /id="teacherPhotoFilter"/);
+  for (const key of ["name", "number", "status", "photo"]) assert.match(dashboardPage, new RegExp(`data-teacher-sort="${key}"`));
+  assert.match(teacherScript, /function renderTeachers\(\)/);
+  assert.match(teacherScript, /teacherTable\.page/);
+  assert.doesNotMatch(dashboardPage, /<th>Tindakan<\/th>/);
 });

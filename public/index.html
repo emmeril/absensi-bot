@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Ruang Hadir | Panel Administrasi</title>
     <link rel="stylesheet" href="/dashboard.css" />
+    <script defer src="/teachers.js"></script>
     <script defer src="/vendor/alpine.min.js"></script>
     <link rel="stylesheet" href="/vendor/fontawesome/css/all.min.css" />
     <style>
@@ -62,8 +63,14 @@
         <div class="sidebar-profile flex items-center gap-3 border-b border-white/10 px-5 py-5"><div class="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#3c8dbc] text-white"><i class="fa-solid fa-user-shield"></i></div><div class="min-w-0"><p class="truncate text-sm font-bold text-white" x-text="user?.nama"></p><p class="mt-1 text-xs"><i class="fa-solid fa-circle mr-1 text-[8px] text-emerald-400"></i><span x-text="user?.role === 'admin' ? 'Administrator' : 'Wali kelas'"></span></p></div></div>
         <p class="sidebar-section px-5 pb-2 pt-5 text-[11px] font-bold uppercase tracking-widest text-slate-500">Menu utama</p>
         <nav class="flex-1 space-y-1 overflow-y-auto px-3">
-          <a x-show="user?.role === 'admin'" href="/teachers.html" title="Absensi Guru" class="sidebar-link flex w-full items-center gap-3 rounded px-3 py-2.5 text-left text-sm"><i class="fa-solid fa-chalkboard-user w-5 shrink-0 text-center"></i><span class="sidebar-label whitespace-nowrap">Absensi Guru</span></a>
-          <template x-for="item in mainTabs" :key="item.id"><button @click="changeTab(item.id)" :title="item.label" class="sidebar-link flex w-full items-center gap-3 rounded px-3 py-2.5 text-left text-sm transition" :class="tab === item.id ? 'bg-[#3c8dbc] text-white shadow' : 'hover:bg-white/5 hover:text-white'"><i class="w-5 shrink-0 text-center" :class="item.icon"></i><span class="sidebar-label whitespace-nowrap" x-text="item.label"></span><i x-show="tab === item.id" class="sidebar-label fa-solid fa-angle-right ml-auto text-xs"></i></button></template>
+          <template x-for="group in attendanceGroups" :key="group.id">
+            <div x-show="group.items.length">
+              <button @click="toggleAttendanceMenu(group.id)" :title="group.label" :aria-expanded="group.open" class="sidebar-link flex w-full items-center gap-3 rounded px-3 py-2.5 text-left text-sm transition" :class="group.items.some(item=>item.id===tab) ? 'bg-white/5 text-white' : 'hover:bg-white/5 hover:text-white'"><i class="w-5 shrink-0 text-center" :class="group.icon"></i><span class="sidebar-label whitespace-nowrap" x-text="group.label"></span><i class="sidebar-label fa-solid fa-angle-down ml-auto text-xs transition-transform" :class="group.open ? 'rotate-180' : ''"></i></button>
+              <div x-show="group.open" x-transition class="sidebar-settings-menu ml-4 mt-1 space-y-1 border-l border-white/10 pl-3">
+                <template x-for="item in group.items" :key="item.id"><button @click="changeTab(item.id)" :title="item.label" class="sidebar-link flex w-full items-center gap-3 rounded px-3 py-2 text-left text-sm transition" :class="tab === item.id ? 'bg-[#3c8dbc] text-white shadow' : 'hover:bg-white/5 hover:text-white'"><i class="w-5 shrink-0 text-center" :class="item.icon"></i><span class="sidebar-label whitespace-nowrap" x-text="item.label"></span></button></template>
+              </div>
+            </div>
+          </template>
           <div x-show="settingsTabs.length">
             <button @click="toggleSettingsMenu()" title="Pengaturan" :aria-expanded="settingsMenuOpen" class="sidebar-link flex w-full items-center gap-3 rounded px-3 py-2.5 text-left text-sm transition" :class="isSettingsTab ? 'bg-white/5 text-white' : 'hover:bg-white/5 hover:text-white'"><i class="fa-solid fa-gears w-5 shrink-0 text-center"></i><span class="sidebar-label whitespace-nowrap">Pengaturan</span><i class="sidebar-label fa-solid fa-angle-down ml-auto text-xs transition-transform" :class="settingsMenuOpen ? 'rotate-180' : ''"></i></button>
             <div x-show="settingsMenuOpen" x-transition class="sidebar-settings-menu ml-4 mt-1 space-y-1 border-l border-white/10 pl-3">
@@ -85,7 +92,7 @@
 
     <main class="mx-auto min-w-0 max-w-[1500px] px-3 py-5 sm:px-7 sm:py-6">
       <div class="mb-5 min-w-0 sm:mb-6"><h2 class="flex min-w-0 items-center text-xl font-bold text-slate-800 sm:text-2xl"><i class="mr-2 shrink-0 text-[#3c8dbc]" :class="currentTab.icon"></i><span class="truncate" x-text="currentTab.label"></span></h2><p class="mt-1 text-sm text-slate-500">Kelola data dan aktivitas absensi sekolah.</p></div>
-      <section class="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <section x-show="!isTeacherPage" class="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <template x-for="card in cards" :key="card.label">
           <div class="paper-edge rounded-lg p-5 shadow-card" :style="`--accent:${card.color}`">
             <p class="text-xs font-bold uppercase tracking-[.18em] text-ink/45" x-text="card.label"></p>
@@ -104,9 +111,13 @@
             <strong>Verifikasi wajah belum siap.</strong>
             Pastikan dependensi sudah terpasang dan file model face-api tersedia di folder <code class="font-bold">models</code>.
           </div>
-          <div x-show="!loading && data.whatsappBots?.some(bot => !bot.ready)" x-cloak class="mb-5 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
-            <strong>Ada bot WhatsApp yang belum terhubung.</strong>
-            <button @click="changeTab('whatsapp')" class="font-bold underline">Buka menu WhatsApp</button> untuk memindai QR bot wali kelas.
+          <div data-bot-alert="student" x-show="!loading && !isTeacherPage && data.whatsappBots?.some(bot => bot.role !== 'tu' && !bot.ready)" x-cloak class="mb-5 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+            <strong>Ada Bot Siswa yang belum terhubung.</strong>
+            <button @click="changeTab('whatsapp')" class="font-bold underline">Buka Bot Siswa</button> untuk memindai QR.
+          </div>
+          <div data-bot-alert="teacher" x-show="!loading && isTeacherTab && !data.whatsappBots?.some(bot => bot.role === 'tu' && bot.ready)" x-cloak class="mb-5 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+            <strong>Bot Guru belum siap atau belum terhubung.</strong>
+            <button @click="changeTab('bot-tu')" class="font-bold underline">Buka Bot Guru</button> untuk mengatur nomor atau memindai QR.
           </div>
 
           <div x-show="!loading && tab === 'ringkasan'" x-cloak>
@@ -140,15 +151,96 @@
             <div class="overflow-x-auto border"><table class="data-table w-full min-w-[760px] text-left text-sm"><thead><tr><th>No</th><th :aria-sort="sortAria('admins','name')"><button type="button" @click="toggleSort('admins','name')" class="sort-button">Nama<i class="fa-solid" :class="sortIcon('admins','name')"></i></button></th><th :aria-sort="sortAria('admins','phone')"><button type="button" @click="toggleSort('admins','phone')" class="sort-button">Nomor WhatsApp<i class="fa-solid" :class="sortIcon('admins','phone')"></i></button></th><th :aria-sort="sortAria('admins','username')"><button type="button" @click="toggleSort('admins','username')" class="sort-button">Username<i class="fa-solid" :class="sortIcon('admins','username')"></i></button></th><th :aria-sort="sortAria('admins','role')"><button type="button" @click="toggleSort('admins','role')" class="sort-button">Role<i class="fa-solid" :class="sortIcon('admins','role')"></i></button></th><th :aria-sort="sortAria('admins','status')"><button type="button" @click="toggleSort('admins','status')" class="sort-button">Status<i class="fa-solid" :class="sortIcon('admins','status')"></i></button></th><th class="text-center">Aksi</th></tr></thead><tbody><template x-for="(admin,index) in pagedAdmins" :key="admin.nomor"><tr><td x-text="rowNumber('admins',index)"></td><td class="font-bold" x-text="admin.nama"></td><td x-text="admin.nomor"></td><td x-text="admin.username || 'Belum diatur'"></td><td><span class="rounded bg-blue-50 px-2 py-1 text-xs text-blue-700"><i class="fa-solid fa-user-shield mr-1"></i>Administrator</span></td><td><span class="rounded px-2 py-1 text-xs" :class="admin.nomor===user?.nomor?'bg-emerald-50 text-emerald-700':'bg-slate-100 text-slate-600'" x-text="admin.nomor===user?.nomor?'Akun aktif':'Aktif'"></span></td><td><div class="flex justify-center gap-1"><button @click="editAdmin(admin)" class="rounded bg-amber-50 px-2.5 py-1.5 text-amber-700"><i class="fa-solid fa-pen-to-square"></i></button><button x-show="admin.nomor!==user?.nomor" @click="removeAdmin(admin.nomor)" class="rounded bg-red-50 px-2.5 py-1.5 text-red-700"><i class="fa-solid fa-trash"></i></button></div></td></tr></template><tr x-show="!filteredAdmins.length"><td colspan="7" class="py-10 text-center text-slate-400">Data tidak ditemukan</td></tr></tbody></table></div><div class="mt-4 flex items-center justify-between text-sm"><span x-text="pageInfo('admins',filteredAdmins.length)" class="text-slate-500"></span><div class="flex gap-1"><button @click="prevPage('admins')" class="rounded border px-3 py-1.5"><i class="fa-solid fa-chevron-left"></i></button><span class="rounded bg-[#3c8dbc] px-3 py-1.5 text-white" x-text="tables.admins.page"></span><button @click="nextPage('admins',filteredAdmins.length)" class="rounded border px-3 py-1.5"><i class="fa-solid fa-chevron-right"></i></button></div></div>
           </div>
 
-          <div x-show="!loading && tab === 'whatsapp'" x-cloak>
-            <div class="mb-5 flex flex-wrap items-center justify-between gap-3"><div><h3 class="font-bold">Koneksi Bot WhatsApp</h3><p class="text-xs text-slate-400" x-text="user?.role === 'admin' ? 'Kelola seluruh bot wali kelas' : 'Kelola bot WhatsApp milik Anda'"></p></div><button @click="refreshWhatsapp()" class="rounded bg-slate-100 px-3 py-2 text-sm text-slate-600 hover:bg-slate-200"><i class="fa-solid fa-rotate mr-2"></i>Refresh</button></div>
-            <div x-show="!data.whatsappBots?.length" class="rounded border border-dashed border-slate-300 py-12 text-center text-slate-400"><i class="fa-brands fa-whatsapp mb-3 block text-4xl"></i><span x-text="user?.role === 'admin' ? 'Belum ada nomor wali kelas yang terdaftar.' : 'Nomor WhatsApp belum terhubung dengan akun wali kelas ini.'"></span></div>
+          <template x-if="!loading && isTeacherPage && user?.role === 'admin'">
+            <div class="teacher-panel min-w-0" x-init="window.mountTeacherPanel($el, (message, type) => notify(message, type), tab, () => refreshWhatsapp())" x-effect="$el.setTeacherView?.(tab)">
+              <p id="message" class="mb-4 text-sm text-slate-500" role="status" aria-live="polite">Memuat data guru...</p>
+              <button id="retryTeachers" type="button" class="teacher-button-secondary mb-4" hidden>Coba muat ulang</button>
+              <div id="content" hidden>
+                <section id="teacherSummaryPanel" data-teacher-panel hidden>
+                  <div class="mb-5 flex flex-wrap items-end justify-between gap-3"><div><h4 class="font-bold text-slate-700">Ringkasan Kehadiran Guru</h4><p class="text-xs text-slate-400">Status seluruh sesi mengajar pada tanggal yang dipilih.</p></div><label class="text-sm" for="teacherSummaryDate">Tanggal<input type="date" id="teacherSummaryDate" class="teacher-field" /></label></div>
+                  <div class="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <div class="paper-edge rounded-lg p-4 shadow-card" style="--accent:#3c8dbc"><p class="text-xs font-bold uppercase tracking-wider text-slate-400">Guru Aktif</p><strong id="summaryActive" class="mt-2 block text-3xl">0</strong></div>
+                    <div class="paper-edge rounded-lg p-4 shadow-card" style="--accent:#64748b"><p class="text-xs font-bold uppercase tracking-wider text-slate-400">Sesi Terjadwal</p><strong id="summaryScheduled" class="mt-2 block text-3xl">0</strong></div>
+                    <div class="paper-edge rounded-lg p-4 shadow-card" style="--accent:#00a65a"><p class="text-xs font-bold uppercase tracking-wider text-slate-400">Sesi Hadir</p><strong id="summaryPresent" class="mt-2 block text-3xl">0</strong></div>
+                    <div class="paper-edge rounded-lg p-4 shadow-card" style="--accent:#f39c12"><p class="text-xs font-bold uppercase tracking-wider text-slate-400">Guru Izin</p><strong id="summaryPermissions" class="mt-2 block text-3xl">0</strong></div>
+                  </div>
+                  <div class="overflow-x-auto border border-slate-200"><table class="data-table w-full min-w-[650px] text-left text-sm"><thead><tr><th>Guru</th><th>Waktu</th><th>Kelas / Pelajaran</th><th>Status</th></tr></thead><tbody id="teacherSummary"></tbody></table></div>
+                </section>
+                <section id="reportPanel" data-teacher-panel>
+                  <div class="mb-4 border-t border-slate-200 pt-5"><h4 class="font-bold text-slate-700">Laporan Kehadiran Guru</h4><p class="text-xs text-slate-400">Periksa kehadiran, materi, dan bukti kegiatan mengajar.</p></div>
+                  <div class="mb-4 flex flex-wrap items-end justify-between gap-3"><label class="text-sm" for="teacherReportDate">Tanggal laporan<input type="date" id="teacherReportDate" class="teacher-field" /></label><div class="flex flex-wrap gap-2"><button id="refreshReport" type="button" class="teacher-button-secondary"><i class="fa-solid fa-rotate mr-2"></i>Refresh</button><button id="exportReport" type="button" class="rounded bg-emerald-600 px-3 py-2 text-sm font-bold text-white"><i class="fa-solid fa-file-csv mr-2"></i>Unduh CSV</button></div></div>
+                  <p class="mb-4 text-xs text-slate-500">Bukti lengkap siap diperiksa TU. Status tinjauan dicatat terpisah dari kehadiran.</p>
+                  <div class="overflow-x-auto border border-slate-200"><table class="data-table w-full min-w-[850px] text-left text-sm"><thead><tr><th>Guru</th><th>Sesi</th><th>Hadir</th><th>Status</th><th>Materi</th><th>Foto</th><th>Tinjauan</th></tr></thead><tbody id="teacherReport"></tbody></table></div>
+                </section>
+                <section id="peoplePanel" data-teacher-panel hidden>
+                  <div class="mb-5 flex items-center justify-between gap-3"><div><h4 class="font-bold text-slate-700">Daftar Guru</h4><p class="text-xs text-slate-400">Guru yang juga wali kelas tetap memakai nomor pribadinya. Unggah foto referensi sebelum absensi pertama.</p></div><button id="addTeacher" type="button" class="teacher-button-primary shrink-0"><i class="fa-solid fa-user-plus mr-2"></i>Tambah Guru</button></div>
+                  <div class="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-[140px_minmax(240px,1fr)_180px_180px_auto]"><label class="flex items-center gap-2 text-sm" for="teacherPageSize">Tampil<select id="teacherPageSize" aria-label="Jumlah baris guru" class="rounded border border-slate-300 px-2 py-2"><option>5</option><option selected>10</option><option>25</option><option>50</option></select></label><div class="relative"><i class="fa-solid fa-magnifying-glass absolute left-3 top-3 text-slate-400"></i><input id="teacherSearch" aria-label="Cari guru" placeholder="Cari nama atau nomor WhatsApp..." class="w-full rounded border border-slate-300 py-2 pl-9 pr-3 text-sm" /></div><select id="teacherStatusFilter" aria-label="Filter status guru" class="rounded border border-slate-300 px-3 py-2 text-sm"><option value="">Semua status</option><option value="active">Aktif</option><option value="inactive">Nonaktif</option></select><select id="teacherPhotoFilter" aria-label="Filter foto guru" class="rounded border border-slate-300 px-3 py-2 text-sm"><option value="">Semua foto</option><option value="available">Foto tersedia</option><option value="missing">Belum ada foto</option></select><button id="resetTeacherFilters" type="button" class="whitespace-nowrap rounded border border-slate-300 px-3 py-2 text-sm text-slate-600 hover:bg-slate-100" hidden><i class="fa-solid fa-filter-circle-xmark mr-2"></i>Reset</button></div>
+                  <div class="overflow-x-auto border border-slate-200"><table class="data-table w-full min-w-[760px] text-left text-sm"><thead><tr><th>No</th><th aria-sort="none"><button type="button" class="sort-button" data-teacher-sort="name">Nama<i class="fa-solid fa-sort"></i></button></th><th aria-sort="none"><button type="button" class="sort-button" data-teacher-sort="number">WhatsApp<i class="fa-solid fa-sort"></i></button></th><th aria-sort="none"><button type="button" class="sort-button" data-teacher-sort="status">Status<i class="fa-solid fa-sort"></i></button></th><th aria-sort="none"><button type="button" class="sort-button" data-teacher-sort="photo">Foto Referensi<i class="fa-solid fa-sort"></i></button></th><th class="text-center">Aksi</th></tr></thead><tbody id="teachers"></tbody></table></div>
+                  <div class="mt-4 flex items-center justify-between gap-3 text-sm"><span id="teacherPageInfo" class="text-slate-500">Menampilkan 0 data</span><div class="flex gap-1"><button id="teacherPrevPage" type="button" aria-label="Halaman guru sebelumnya" class="rounded border px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-40"><i class="fa-solid fa-chevron-left"></i></button><span id="teacherCurrentPage" class="rounded bg-[#3c8dbc] px-3 py-1.5 text-white">1</span><button id="teacherNextPage" type="button" aria-label="Halaman guru berikutnya" class="rounded border px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-40"><i class="fa-solid fa-chevron-right"></i></button></div></div>
+
+                  <div id="teacherModal" class="fixed inset-0 z-[70] grid place-items-center overflow-y-auto bg-slate-950/55 p-4" role="dialog" aria-modal="true" aria-labelledby="teacherModalTitle" hidden>
+                    <div class="my-8 w-full max-w-lg overflow-hidden rounded-lg bg-white shadow-2xl">
+                      <div class="flex items-center justify-between border-b bg-slate-50 px-5 py-4"><div><h4 id="teacherModalTitle" class="font-bold text-slate-800">Tambah Guru</h4><p class="text-xs text-slate-400">Lengkapi data guru dengan benar</p></div><button id="closeTeacherModal" type="button" aria-label="Tutup modal guru" class="grid h-8 w-8 place-items-center rounded text-slate-400 hover:bg-slate-200"><i class="fa-solid fa-xmark"></i></button></div>
+                      <form id="teacherForm" class="space-y-4 p-5">
+                        <label class="block text-sm font-bold" for="teacherName">Nama guru<input id="teacherName" class="teacher-field" required maxlength="120" /></label>
+                        <label class="block text-sm font-bold" for="teacherNumber">Nomor WhatsApp<input id="teacherNumber" class="teacher-field disabled:bg-slate-100" required inputmode="tel" placeholder="08… / 628…" /></label>
+                        <label class="block text-sm font-bold" for="teacherActive">Status<select id="teacherActive" class="teacher-field"><option value="true">Aktif</option><option value="false">Nonaktif</option></select></label>
+                        <div class="flex justify-end gap-2 border-t pt-4"><button id="cancelTeacherModal" type="button" class="rounded border px-4 py-2 text-sm">Batal</button><button class="teacher-button-primary"><i class="fa-solid fa-floppy-disk mr-2"></i>Simpan</button></div>
+                      </form>
+                    </div>
+                  </div>
+                </section>
+                <section id="schedulePanel" data-teacher-panel hidden>
+                  <div class="mb-5"><h4 class="font-bold text-slate-700">Jadwal Mengajar</h4><p class="text-xs text-slate-400">Jam berurutan di kelas yang sama dihitung satu sesi. Absen dibuka 15 menit sebelum mulai sampai sesi berakhir.</p></div>
+                  <details id="scheduleEditor" class="mb-5"><summary class="teacher-button-primary inline-block cursor-pointer"><i class="fa-solid fa-plus mr-2"></i>Tambah Jadwal</summary>
+                    <form id="scheduleForm" class="mt-4 grid gap-4 rounded border border-slate-200 bg-slate-50 p-4 sm:grid-cols-2 lg:grid-cols-3">
+                      <label class="text-sm font-bold" for="scheduleTeacher">Guru<select id="scheduleTeacher" class="teacher-field" required></select></label>
+                      <label class="text-sm font-bold" for="day">Hari<select id="day" class="teacher-field"><option value="1">Senin</option><option value="2">Selasa</option><option value="3">Rabu</option><option value="4">Kamis</option><option value="5">Jumat</option><option value="6">Sabtu</option><option value="0">Minggu</option></select></label>
+                      <label class="text-sm font-bold" for="subject">Mata pelajaran<input id="subject" class="teacher-field" required maxlength="120" /></label>
+                      <label class="text-sm font-bold" for="className">Kelas<input id="className" class="teacher-field" required maxlength="120" placeholder="VII A" /></label>
+                      <label class="text-sm font-bold" for="start">Jam mulai<input id="start" type="time" class="teacher-field" required /></label>
+                      <label class="text-sm font-bold" for="end">Jam selesai<input id="end" type="time" class="teacher-field" required /></label>
+                      <label class="text-sm font-bold" for="tolerance">Toleransi (menit)<input id="tolerance" type="number" min="0" max="60" value="0" class="teacher-field" required /></label>
+                      <label class="text-sm font-bold" for="from">Berlaku mulai<input id="from" type="date" class="teacher-field" required /></label>
+                      <label class="text-sm font-bold" for="until">Berlaku sampai (opsional)<input id="until" type="date" class="teacher-field" /></label>
+                      <div class="flex justify-end sm:col-span-2 lg:col-span-3"><button class="teacher-button-primary"><i class="fa-solid fa-floppy-disk mr-2"></i>Simpan Jadwal</button></div>
+                    </form>
+                  </details>
+                  <div class="overflow-x-auto border border-slate-200"><table class="data-table w-full min-w-[760px] text-left text-sm"><thead><tr><th>Guru</th><th>Hari / Jam</th><th>Kelas / Pelajaran</th><th>Berlaku</th><th>Aksi</th></tr></thead><tbody id="schedules"></tbody></table></div>
+                </section>
+                <section id="teacherPermissionPanel" data-teacher-panel hidden>
+                  <div class="mb-5 flex flex-wrap items-end justify-between gap-3"><div><h4 class="font-bold text-slate-700">Izin Guru</h4><p class="text-xs text-slate-400">Izin berlaku untuk seluruh sesi mengajar guru pada tanggal tersebut.</p></div><label class="text-sm" for="teacherPermissionDate">Tanggal<input type="date" id="teacherPermissionDate" class="teacher-field" /></label></div>
+                  <details id="permissionEditor" class="mb-5"><summary class="teacher-button-primary inline-block cursor-pointer"><i class="fa-solid fa-plus mr-2"></i>Tambah Izin Guru</summary>
+                    <form id="teacherPermissionForm" class="mt-4 grid gap-4 rounded border border-slate-200 bg-slate-50 p-4 sm:grid-cols-2">
+                      <label class="text-sm font-bold" for="permissionTeacher">Guru<select id="permissionTeacher" class="teacher-field" required></select></label>
+                      <label class="text-sm font-bold" for="permissionType">Jenis<select id="permissionType" class="teacher-field"><option>Izin</option><option>Sakit</option><option>Tugas Luar</option></select></label>
+                      <label class="text-sm font-bold sm:col-span-2" for="permissionReason">Alasan<textarea id="permissionReason" class="teacher-field" required maxlength="1000" rows="3"></textarea></label>
+                      <div class="flex justify-end sm:col-span-2"><button class="teacher-button-primary"><i class="fa-solid fa-floppy-disk mr-2"></i>Simpan Izin</button></div>
+                    </form>
+                  </details>
+                  <div class="overflow-x-auto border border-slate-200"><table class="data-table w-full min-w-[650px] text-left text-sm"><thead><tr><th>Guru</th><th>Jenis</th><th>Alasan</th><th>Tanggal</th><th>Aksi</th></tr></thead><tbody id="teacherPermissions"></tbody></table></div>
+                </section>
+                <section id="settingsPanel" data-teacher-panel hidden>
+                  <div class="mb-5"><h4 class="font-bold text-slate-700">Bot Guru & Hari Libur</h4><p class="text-xs text-slate-400">Guru mengirim !masuk ke nomor bot guru, kemudian melengkapi kehadiran dan bukti dalam satu tautan.</p></div>
+                  <form id="settingsForm" class="grid gap-4 sm:grid-cols-2">
+                    <div><label class="text-sm font-bold" for="tuNumber">Nomor WhatsApp bot guru<input id="tuNumber" class="teacher-field" placeholder="62812…" inputmode="tel" /></label><p class="mt-2 text-xs text-slate-400">Kosongkan untuk menonaktifkan bot guru.</p></div>
+                    <label class="text-sm font-bold" for="holidays">Tanggal libur<textarea id="holidays" class="teacher-field" rows="4" placeholder="2026-12-25"></textarea><span class="mt-2 block text-xs font-normal text-slate-400">Satu tanggal per baris, format YYYY-MM-DD.</span></label>
+                    <div class="flex justify-end border-t pt-4 sm:col-span-2"><button class="teacher-button-primary"><i class="fa-solid fa-floppy-disk mr-2"></i>Simpan Pengaturan</button></div>
+                  </form>
+                </section>
+              </div>
+            </div>
+          </template>
+
+          <div x-show="!loading && (tab === 'whatsapp' || tab === 'bot-tu')" x-cloak :class="tab === 'bot-tu' ? 'mt-6 border-t pt-6' : ''">
+            <div class="mb-5 flex flex-wrap items-center justify-between gap-3"><div><h3 class="font-bold">Koneksi Bot WhatsApp</h3><p class="text-xs text-slate-400" x-text="tab === 'bot-tu' ? 'Hubungkan nomor bot guru untuk absensi guru' : user?.role === 'admin' ? 'Kelola seluruh bot siswa melalui nomor wali kelas' : 'Kelola bot siswa milik Anda'"></p></div><button @click="refreshWhatsapp()" class="rounded bg-slate-100 px-3 py-2 text-sm text-slate-600 hover:bg-slate-200"><i class="fa-solid fa-rotate mr-2"></i>Refresh</button></div>
+            <div x-show="!visibleWhatsappBots.length" class="rounded border border-dashed border-slate-300 py-12 text-center text-slate-400"><i class="fa-brands fa-whatsapp mb-3 block text-4xl"></i><span x-text="tab === 'bot-tu' ? 'Isi dan simpan nomor bot guru di atas untuk menampilkan koneksi.' : user?.role === 'admin' ? 'Belum ada bot siswa yang terdaftar.' : 'Bot siswa belum terhubung dengan akun wali kelas ini.'"></span></div>
             <div class="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
-              <template x-for="bot in data.whatsappBots" :key="bot.key">
+              <template x-for="bot in visibleWhatsappBots" :key="bot.key">
                 <article class="overflow-hidden rounded-lg border bg-white" :class="bot.ready ? 'border-emerald-300' : 'border-amber-300'">
-                  <div class="flex items-start justify-between gap-3 border-b bg-slate-50 p-4"><div class="min-w-0"><h4 class="truncate font-bold text-slate-700" x-text="bot.label"></h4><p class="mt-1 text-xs text-slate-400" x-text="bot.classes?.length ? 'Kelas: ' + bot.classes.join(', ') : 'Bot wali kelas'"></p></div><span class="shrink-0 rounded-full px-2.5 py-1 text-xs font-bold" :class="bot.ready ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'" x-text="whatsappStatus(bot.state)"></span></div>
+                  <div class="flex items-start justify-between gap-3 border-b bg-slate-50 p-4"><div class="min-w-0"><h4 class="truncate font-bold text-slate-700" x-text="bot.label"></h4><p class="mt-1 text-xs text-slate-400" x-text="bot.role === 'tu' ? 'Bot absensi guru' : bot.classes?.length ? 'Kelas: ' + bot.classes.join(', ') : 'Bot siswa'"></p></div><span class="shrink-0 rounded-full px-2.5 py-1 text-xs font-bold" :class="bot.ready ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'" x-text="whatsappStatus(bot.state)"></span></div>
                   <div class="space-y-3 p-4 text-sm">
-                    <p>Nomor wali: <strong x-text="bot.expectedNumber || '-'"></strong></p>
+                    <p><span x-text="bot.role === 'tu' ? 'Nomor bot guru: ' : 'Nomor wali: '"></span><strong x-text="bot.expectedNumber || '-'"></strong></p>
                     <p x-show="bot.connectedNumber">Terhubung sebagai: <strong x-text="bot.connectedNumber"></strong></p>
                     <p x-show="bot.error" class="rounded bg-red-50 p-3 text-red-700" x-text="bot.error"></p>
                     <template x-if="bot.hasQr"><div class="rounded border bg-white p-3 text-center"><img :src="whatsappQrUrl(bot)" :alt="'QR WhatsApp ' + bot.label" class="mx-auto h-auto w-full max-w-[320px]" /><p class="mt-2 text-xs text-slate-500">Buka WhatsApp &gt; Perangkat tertaut &gt; Tautkan perangkat.</p></div></template>
@@ -205,7 +297,7 @@
       function dashboard() {
         return {
           tab: "ringkasan", modal: "", editing: false, sidebarOpen: false, sidebarCollapsed: false, settingsMenuOpen: false, userMenuOpen: false, brandSaving: false, brandLogoFile: null, brandLogoPreview: "", loading: true, toast: "", toastType: "ok", authChecked: false, authLoading: false, showLoginPassword: false, showClassPassword: false, showAdminPassword: false, whatsappRefreshKey: Date.now(), whatsappTimer: null, user: null, loginError: "", login: {username:"",password:""}, brand: {name:"Ruang Hadir",hasLogo:false,logoUrl:""}, brandForm: {name:"Ruang Hadir"}, data: { siswa: [], kelas: [], admins: [], jam: {}, whatsappBots: [] }, report: { rows: [] }, reportDate: "",
-          tabs: [{id:"ringkasan",label:"Ringkasan",icon:"fa-solid fa-chart-pie"},{id:"siswa",label:"Siswa",icon:"fa-solid fa-user-graduate"},{id:"kelas",label:"Kelas & Wali",icon:"fa-solid fa-school"},{id:"izin",label:"Izin",icon:"fa-solid fa-file-circle-check"},{id:"brand",label:"Pengaturan Brand",icon:"fa-solid fa-palette"},{id:"pengaturan",label:"Pengaturan Jadwal",icon:"fa-solid fa-calendar-days"},{id:"whatsapp",label:"WhatsApp",icon:"fa-brands fa-whatsapp"},{id:"admin",label:"Admin",icon:"fa-solid fa-user-shield"}],
+          tabs: [{id:"ringkasan",label:"Ringkasan",icon:"fa-solid fa-chart-pie"},{id:"siswa",label:"Siswa",icon:"fa-solid fa-user-graduate"},{id:"kelas",label:"Kelas & Wali",icon:"fa-solid fa-school"},{id:"ringkasan-guru",label:"Ringkasan",icon:"fa-solid fa-chart-pie"},{id:"guru",label:"Data Guru",icon:"fa-solid fa-chalkboard-user"},{id:"jam-guru",label:"Jam Mengajar",icon:"fa-solid fa-calendar-days"},{id:"izin-guru",label:"Izin",icon:"fa-solid fa-file-circle-check"},{id:"laporan-guru",label:"Laporan Kehadiran Guru",icon:"fa-solid fa-clipboard-check"},{id:"bot-tu",label:"Bot Guru",icon:"fa-brands fa-whatsapp"},{id:"izin",label:"Izin",icon:"fa-solid fa-file-circle-check"},{id:"brand",label:"Pengaturan Brand",icon:"fa-solid fa-palette"},{id:"pengaturan",label:"Pengaturan Jadwal",icon:"fa-solid fa-calendar-days"},{id:"whatsapp",label:"Bot Siswa",icon:"fa-brands fa-whatsapp"},{id:"admin",label:"Admin",icon:"fa-solid fa-user-shield"}],
           tables: {
             report:{search:"",classFilter:"",statusFilter:"",sortKey:"",sortDirection:"asc",page:1,size:10},
             students:{search:"",classFilter:"",photoFilter:"",sortKey:"",sortDirection:"asc",page:1,size:10},
@@ -217,8 +309,14 @@
           get cards() { const hadir=this.data.siswa.filter(s=>s.masuk).length, izin=this.data.siswa.filter(s=>s.izin).length; return [{label:"Total siswa",value:this.data.siswa.length,icon:"fa-solid fa-user-graduate",color:"#3c8dbc"},{label:"Hadir hari ini",value:hadir,icon:"fa-solid fa-circle-check",color:"#00a65a"},{label:"Belum hadir",value:Math.max(0,this.data.siswa.length-hadir-izin),icon:"fa-solid fa-clock",color:"#f39c12"},{label:"Izin",value:izin,icon:"fa-solid fa-file-circle-check",color:"#dd4b39"}]; },
           get currentTab(){ return this.tabs.find(item=>item.id===this.tab)||this.tabs[0]; },
           get visibleTabs() { return this.user?.role === "admin" ? this.tabs : this.tabs.filter(item=>["ringkasan","siswa","whatsapp"].includes(item.id)); },
-          get mainTabs(){return this.visibleTabs.filter(item=>!["brand","pengaturan","whatsapp","admin"].includes(item.id));},
-          get settingsTabs(){return this.visibleTabs.filter(item=>["brand","pengaturan","whatsapp","admin"].includes(item.id));},
+          studentMenuOpen: true, teacherMenuOpen: false,
+          get mainTabs(){return this.visibleTabs.filter(item=>["ringkasan","siswa","kelas","izin","pengaturan"].includes(item.id));},
+          get teacherTabs(){return this.visibleTabs.filter(item=>["ringkasan-guru","guru","jam-guru","izin-guru","laporan-guru"].includes(item.id));},
+          get isTeacherTab(){return this.teacherTabs.some(item=>item.id===this.tab);},
+          get isTeacherPage(){return this.isTeacherTab||this.tab==="bot-tu";},
+          get visibleWhatsappBots(){return (this.data.whatsappBots||[]).filter(bot=>this.tab==="bot-tu"?bot.role==="tu":bot.role!=="tu");},
+          get attendanceGroups(){return [{id:"student",label:"Absen Siswa",icon:"fa-solid fa-user-graduate",open:this.studentMenuOpen,items:this.mainTabs},{id:"teacher",label:"Absen Guru",icon:"fa-solid fa-chalkboard-user",open:this.teacherMenuOpen,items:this.teacherTabs}];},
+          get settingsTabs(){return ["brand","whatsapp","bot-tu","admin"].map(id=>this.visibleTabs.find(item=>item.id===id)).filter(Boolean);},
           get isSettingsTab(){return this.settingsTabs.some(item=>item.id===this.tab);},
           get brandInitials(){const words=String(this.brandForm.name||this.brand.name||"RH").trim().split(/\s+/);return words.slice(0,2).map(word=>word[0]||"").join("").toUpperCase()||"RH";},
           get filteredReport(){
@@ -282,8 +380,9 @@
           async loadDashboard(){ await this.refresh();this.reportDate=this.data.tanggal;this.permission.tanggal=this.data.tanggal;await this.loadReport(); },
           toggleSidebar(){if(innerWidth<1024)this.sidebarOpen=!this.sidebarOpen;else{this.sidebarCollapsed=!this.sidebarCollapsed;localStorage.setItem("sidebarCollapsed",this.sidebarCollapsed);}},
           toggleSettingsMenu(){if(innerWidth>=1024&&this.sidebarCollapsed){this.sidebarCollapsed=false;this.settingsMenuOpen=true;localStorage.setItem("sidebarCollapsed","false");return;}this.settingsMenuOpen=!this.settingsMenuOpen;},
+          toggleAttendanceMenu(group){const key=group==="teacher"?"teacherMenuOpen":"studentMenuOpen";if(innerWidth>=1024&&this.sidebarCollapsed){this.sidebarCollapsed=false;this[key]=true;localStorage.setItem("sidebarCollapsed","false");return;}this[key]=!this[key];},
           openRequestedTab(){const requested=location.hash.slice(1);if(this.visibleTabs.some(item=>item.id===requested))this.changeTab(requested);},
-          changeTab(id){if(!this.visibleTabs.some(item=>item.id===id))return;this.tab=id;this.sidebarOpen=false;if(["brand","pengaturan","whatsapp","admin"].includes(id))this.settingsMenuOpen=true;history.replaceState(null,"",`#${id}`);if(id==="whatsapp")this.startWhatsappRefresh();else this.stopWhatsappRefresh();const key={ringkasan:"report",siswa:"students",kelas:"classes",izin:"permissions",admin:"admins"}[id];if(key)this.tables[key].page=1;},
+          changeTab(id){if(!this.visibleTabs.some(item=>item.id===id))return;this.tab=id;this.sidebarOpen=false;if(this.isSettingsTab)this.settingsMenuOpen=true;else if(this.isTeacherTab)this.teacherMenuOpen=true;else this.studentMenuOpen=true;history.replaceState(null,"",`#${id}`);if(["whatsapp","bot-tu"].includes(id)){this.startWhatsappRefresh();void this.refreshWhatsapp();}else this.stopWhatsappRefresh();const key={ringkasan:"report",siswa:"students",kelas:"classes",izin:"permissions",admin:"admins"}[id];if(key)this.tables[key].page=1;},
           openModal(type){this.editing=false;if(type==="student")this.student={originalNomor:"",nomor:"",nama:"",kelas:"",orangTua:""};if(type==="class"){this.classForm={originalNama:"",nama:"",namaWali:"",waliKelas:"",username:"",password:""};this.showClassPassword=false;}if(type==="permission")this.permission={nomor:"",tanggal:this.reportDate||this.data.tanggal,alasan:""};if(type==="admin"){this.adminForm={originalNomor:"",nomor:"",nama:"",username:"",password:""};this.showAdminPassword=false;}this.modal=type;},
           closeModal(){this.modal="";this.editing=false;},
           hasTableFilters(key){const t=this.tables[key];return Boolean(t.search||Object.entries(t).some(([name,value])=>name.endsWith("Filter")&&value));},
