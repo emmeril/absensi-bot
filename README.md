@@ -20,6 +20,28 @@ Ruang Hadir adalah aplikasi absensi sekolah berbasis WhatsApp dengan verifikasi 
 
 ## Perintah WhatsApp aktif
 
+### Absensi guru melalui bot TU
+
+Admin membuka menu **Absensi Guru** untuk:
+
+1. Mengatur nomor WhatsApp khusus TU, berbeda dari nomor guru dan bot wali kelas. Hubungkan nomor tersebut dengan memindai QR di **Pengaturan > WhatsApp**.
+2. Menambahkan nama dan nomor guru, termasuk guru yang juga menjadi wali kelas, lalu mengunggah foto referensi wajah.
+3. Menambahkan jadwal mingguan: guru, hari, kelas, mata pelajaran, jam mulai/selesai, toleransi terlambat, dan tanggal berlaku. Jam pelajaran berurutan di kelas yang sama dibuat sebagai satu sesi. Jadwal guru yang bertabrakan ditolak. Akhiri jadwal lama sebelum menggantinya, dan masukkan tanggal libur sekolah pada pengaturan guru.
+
+Guru mengirim **`!masuk` ke bot TU**, lalu membuka satu tautan pribadi:
+
+- Tahap 1: selfie terverifikasi dan GPS dalam radius 100 meter sekolah. Kehadiran langsung disimpan, terpisah dari bukti mengajar.
+- Tahap 2: foto kegiatan melalui kamera belakang dan materi yang diajarkan. GPS diperiksa kembali. Bukti hanya dapat dikirim setelah sesi dimulai; tidak ada perintah `!jurnal` atau unggahan galeri.
+- Tautan dapat dibuka kembali hingga sesi berakhir, termasuk setelah restart server. Tautan bersifat rahasia dan menjadi akses ke sesi guru tersebut. Mengirim `!masuk` lagi menghasilkan tautan pengganti dan membatalkan tautan sebelumnya.
+- Jendela absensi dibuka 15 menit sebelum mulai sampai tepat sebelum jam selesai. Jika dua jendela sesi berdekatan sedang terbuka, bot mengirim tautan masing-masing dengan label kelas dan jam agar guru memilih sesi yang benar.
+- **`!jadwal`** menampilkan jadwal hari ini. Tidak ada kewajiban absen pada hari tanpa jadwal atau tanggal libur.
+
+Admin dapat melihat laporan harian, membuka selfie/foto kegiatan privat, menandai hasil tinjauan beserta catatan, dan mengunduh CSV yang dapat dibuka di Excel. Status membedakan belum hadir, hadir dengan bukti belum lengkap, dan bukti lengkap. Catatan perbaikan ditindaklanjuti TU secara langsung; pengiriman ulang bukti yang sudah final dan alur izin guru belum tersedia. Foto kegiatan merupakan bahan tinjauan, bukan verifikasi otomatis bahwa guru mengajar sepanjang sesi.
+
+Data guru, jadwal, token yang di-hash, dan catatan sesi disimpan di SQLite melalui penyimpanan JSON aplikasi. Foto disimpan privat di `attendance_photos/teachers`; hanya admin dapat membuka bukti lewat API. Jadwal dan identitas disalin ke catatan kehadiran untuk mempertahankan riwayat. Absensi siswa tetap menggunakan bot wali kelas dan aturan yang sudah ada.
+
+### Absensi siswa dan pengaturan lokasi
+
 | Perintah | Fungsi | Akses |
 | --- | --- | --- |
 | `!masuk` | Memulai absensi masuk | Siswa, melalui bot wali kelasnya |

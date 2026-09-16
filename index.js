@@ -36,6 +36,7 @@ const {
   withDatabaseTransaction,
 } = require("./models/database");
 const { BaileysManager } = require("./lib/baileys-manager");
+const { TEACHERS_PATH, TEACHER_RECORDS_PATH, EMPTY_TEACHERS, createTeacherAttendance } = require("./lib/teacher-attendance");
 const { qrToSvg } = require("./lib/qr-svg");
 const {
   validateLocationMessage,
@@ -193,6 +194,8 @@ const INITIAL_DASHBOARD_ACCOUNTS =
 const DUMMY_PASSWORD_HASH = hashPasswordSync("dummy-login-password");
 
 const JSON_STORES = {
+  [TEACHERS_PATH]: { path: TEACHERS_PATH, fallback: EMPTY_TEACHERS },
+  [TEACHER_RECORDS_PATH]: { path: TEACHER_RECORDS_PATH, fallback: { records: {}, tokens: {} } },
   [STORAGE_PATH]: { path: STORAGE_PATH, fallback: {} },
   [KONTAK_PATH]: { path: KONTAK_PATH, fallback: {} },
   [ROLE_PATH]: { path: ROLE_PATH, fallback: INITIAL_ROLES },
@@ -577,12 +580,14 @@ async function migrateEmbeddedAttendancePhotos() {
 
 function cleanupOrphanedFaceFiles() {
   const kontak = loadJSON(KONTAK_PATH);
+  const teachers = loadJSON(TEACHERS_PATH, EMPTY_TEACHERS).teachers;
   let removed = 0;
   for (const root of [FACE_DB, FACE_REC]) {
     if (!fs.existsSync(root)) continue;
     for (const fileName of fs.readdirSync(root)) {
       const studentId = `${path.parse(fileName).name}@c.us`;
-      if (!kontak[studentId] && deleteManagedFile(path.join(root, fileName), root)) removed += 1;
+      const teacher = teachers[path.parse(fileName).name];
+      if (!kontak[studentId] && !teacher && deleteManagedFile(path.join(root, fileName), root)) removed += 1;
     }
   }
   if (fs.existsSync(FACE_DB)) {
@@ -1117,6 +1122,8 @@ whatsapp.on("message", safeAsyncListener(async ({
     return replyCommand("📍 Bagikan lokasi sekolah sekarang melalui fitur Lokasi WhatsApp.");
   }
 
+  if (await teacherAttendance.command({ botKey, sender, body, reply: replyCommand })) return;
+
   const kelasSiswa = findKelasSiswa(loadKelas(), sender);
   const beradaDiBotWali =
     terdaftar &&
@@ -1311,6 +1318,20 @@ function removeUnusedWaliRole(userId, kelas, roles) {
   );
   if (!masihMenjadiWali) delete roles[userId];
 }
+
+const teacherAttendance = createTeacherAttendance({
+  loadJSON, updateJSON, parseImageDataUrl, validateImagePayload, validateImageBuffer,
+  verifyFace: (userId, buffer) => antreVerifikasiWajah(userId, buffer).promise,
+  writePrivateFile, requireWebAuth, requireWebAdmin, upload, publicBaseUrl,
+  getClasses: loadKelas, getStudents: () => loadJSON(KONTAK_PATH),
+  syncBots: () => whatsapp.sync(loadKelas()),
+});
+whatsapp.getTuConfig = () => {
+  const config = teacherAttendance.config();
+  return { number: config.number, teacherNumbers: Object.keys(config.teachers) };
+};
+teacherAttendance.registerCamera(app, cameraRequestLimiter);
+teacherAttendance.registerAdmin(app);
 
 app.get("/api/permission-camera/:token", (req, res) => {
   const session = getPermissionSession(req.params.token);
@@ -1813,6 +1834,9 @@ app.post("/api/classes", requireWebAdmin, async (req, res) => {
   const nama = String(req.body.nama || "").trim().toUpperCase();
   const originalNama = String(req.body.originalNama || "").trim().toUpperCase();
   const waliKelas = normalizeNomor(req.body.waliKelas);
+  if (waliKelas && waliKelas === teacherAttendance.config().number) {
+    return res.status(400).json({ error: "Nomor bot TU tidak boleh digunakan sebagai bot wali kelas." });
+  }
   const namaWali = toTitleCase(String(req.body.namaWali || "").trim());
   const requestedUsername = normalizeUsername(req.body.username);
   const password = String(req.body.password || "");
@@ -1840,6 +1864,7 @@ app.post("/api/classes", requireWebAdmin, async (req, res) => {
     await updateJSON(
       [KELAS_PATH, ROLE_PATH, USER_NAMES_PATH, DASHBOARD_ACCOUNTS_PATH],
       (draft) => {
+      if (waliKelas === teacherAttendance.config().number) throw new Error("Nomor bot TU tidak boleh digunakan sebagai bot wali kelas.");
       const kelas = draft[KELAS_PATH];
       const roles = draft[ROLE_PATH];
       if (originalNama) {
@@ -1926,6 +1951,9 @@ app.delete("/api/classes/:name", requireWebAdmin, async (req, res) => {
 
 app.post("/api/students", requireWebAdmin, async (req, res) => {
   const nomor = normalizeNomor(req.body.nomor);
+  if (teacherAttendance.config().teachers[nomor]) {
+    return res.status(400).json({ error: "Nomor sudah terdaftar sebagai guru." });
+  }
   const originalNomor = normalizeNomor(req.body.originalNomor);
   const nama = toTitleCase(String(req.body.nama || "").trim());
   const namaKelas = String(req.body.kelas || "").trim().toUpperCase();
@@ -1950,6 +1978,7 @@ app.post("/api/students", requireWebAdmin, async (req, res) => {
     await updateJSONAtomic(
       [KONTAK_PATH, KELAS_PATH, IZIN_PATH],
       (draft) => {
+        if (teacherAttendance.config().teachers[nomor]) throw new Error("Nomor sudah terdaftar sebagai guru.");
         const kontak = draft[KONTAK_PATH];
         const kelas = draft[KELAS_PATH];
         if (namaKelas && !kelas[namaKelas]) {

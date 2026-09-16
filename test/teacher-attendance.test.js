@@ -1,0 +1,135 @@
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const express = require("express");
+const moment = require("moment");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const { once } = require("events");
+const { JsonState } = require("../lib/json-state");
+const { writePrivateFile } = require("../lib/private-files");
+const { sessionDefinitions } = require("../lib/baileys-manager");
+const { TEACHERS_PATH, TEACHER_RECORDS_PATH, EMPTY_TEACHERS, createTeacherAttendance, scheduledSessions, windowFor, validateSchedule } = require("../lib/teacher-attendance");
+const num = "6281234567890", tu = "6289876543210";
+const id = "10000000-0000-4000-8000-000000000001";
+const date = "2026-09-14";
+const baseSchedule = { id, number: num, day: 1, start: "07:00", end: "08:20", subject: "Matematika", className: "VII A", tolerance: 5, from: "2026-09-01", until: "" };
+function configuration() { return { ...structuredClone(EMPTY_TEACHERS), number: tu, teachers: { [num]: { name: "Bu Ani", active: true } }, schedules: { [id]: structuredClone(baseSchedule) } }; }
+test("TU is a distinct session and maps all teachers without changing wali sessions", () => {
+  const classes = { "VII A": { waliKelas: `${num}@c.us`, siswa: {} } };
+  const defs = sessionDefinitions(classes, { number: tu, teacherNumbers: [num] });
+  assert.equal(defs.size, 2); assert.equal(defs.get(`tu:${tu}`).role, "tu");
+  assert.deepEqual(defs.get(`tu:${tu}`).studentNumbers, [num]);
+  assert.throws(() => sessionDefinitions(classes, { number: num }), /berbeda/);
+});
+test("schedules honor weekdays, effective dates, holidays, and inactive teachers", () => {
+  const c = configuration(); assert.equal(scheduledSessions(c, date, num).length, 1);
+  assert.equal(scheduledSessions(c, "2026-09-15", num).length, 0);
+  assert.equal(scheduledSessions(c, "2026-08-31", num).length, 0);
+  assert.equal(scheduledSessions(c, "2026-02-30", num).length, 0);
+  c.holidays = [date]; assert.equal(scheduledSessions(c, date, num).length, 0);
+  c.holidays = []; c.teachers[num].active = false; assert.equal(scheduledSessions(c, date, num).length, 0);
+});
+test("schedule validation rejects conflicts, malformed times and permits consecutive sessions", () => {
+  const c = configuration(); const other = { ...baseSchedule, id: undefined };
+  assert.throws(() => validateSchedule(other, c), /bertabrakan/);
+  assert.equal(validateSchedule({ ...other, start: "08:20", end: "09:00" }, c).start, "08:20");
+  assert.throws(() => validateSchedule({ ...other, start: "25:00" }, c), /tidak valid/);
+  assert.throws(() => validateSchedule({ ...other, id: "__proto__" }, c), /tidak valid/);
+  assert.equal(windowFor(baseSchedule, date).start - windowFor(baseSchedule, date).open, 15 * 60000);
+});
+async function fixture(t) {
+  let now = moment(`${date} 07:07`, "YYYY-MM-DD HH:mm").valueOf();
+  t.mock.method(Date, "now", () => now);
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "teacher-attendance-test-"));
+  const state = new JsonState({ initial: { [TEACHERS_PATH]: configuration(), [TEACHER_RECORDS_PATH]: { records: {}, tokens: {} }, "./lokasi.json": { latitude: -6.7, longitude: 108.5 } }, writeBatch: async () => {} });
+  let match = true, failCommit = false, verificationCount = 0;
+  const deps = {
+    loadJSON: (key, fallback) => state.read(key, fallback),
+    updateJSON: (key, fn) => state.update(key, fn),
+    parseImageDataUrl: (value) => value === "photo" ? { buffer: Buffer.from("photo-data"), mimetype: "image/jpeg" } : null,
+    validateImagePayload: async () => {}, validateImageBuffer: async () => {},
+    verifyFace: async () => { verificationCount++; return match; }, writePrivateFile,
+    photoRoot: temp,
+    requireWebAuth: (req, res, next) => { if (!req.headers["x-role"]) return res.sendStatus(401); req.webUser = { role: req.headers["x-role"], id: "admin" }; next(); },
+    requireWebAdmin: (req, res, next) => req.webUser.role === "admin" ? next() : res.sendStatus(403),
+    upload: { single: () => (_req, _res, next) => next() },
+    publicBaseUrl: () => "https://school.example", getClasses: () => ({}), getStudents: () => ({}), syncBots: async () => {},
+  };
+  state.writeBatch = async () => { if (failCommit) throw new Error("database unavailable"); };
+  let service = createTeacherAttendance(deps);
+  const app = express(); app.use(express.json());
+  service.registerCamera(app, (_req, _res, next) => next()); service.registerAdmin(app);
+  const server = app.listen(0, "127.0.0.1"); await once(server, "listening");
+  t.after(async () => { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); fs.rmSync(temp, { recursive: true, force: true }); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const request = async (url, body, role) => {
+    const response = await fetch(base + url, { method: body ? "POST" : "GET", headers: { ...(body ? { "Content-Type": "application/json" } : {}), ...(role ? { "x-role": role } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    const raw = await response.text(); let data; try { data = JSON.parse(raw); } catch { data = raw; } return { status: response.status, data };
+  };
+  async function command(body = "!masuk", sender = `${num}@c.us`, botKey = `tu:${tu}`) { let reply; const handled = await service.command({ body, sender, botKey, reply: async (text) => { reply = text; } }); return { reply, handled, token: reply?.match(/#([a-f0-9]{64})/)?.[1] }; }
+  return { state, command, request, temp, deps, service, setNow: (time) => { now = moment(`${date} ${time}`, "YYYY-MM-DD HH:mm").valueOf(); }, setMatch: (value) => { match = value; }, setFail: (value) => { failCommit = value; }, count: () => verificationCount };
+}
+const photo = { image: "photo", latitude: -6.7, longitude: 108.5, accuracy: 10 };
+test("one link persists arrival separately and resumes evidence after service recreation", async (t) => {
+  const f = await fixture(t); const { token } = await f.command(); assert.ok(token);
+  const url = `/api/teacher-camera/${token}`;
+  assert.equal((await f.request(`${url}/evidence`, { ...photo, material: "Aljabar" })).status, 400);
+  const arrival = await f.request(`${url}/arrival`, photo);
+  assert.equal(arrival.status, 200); assert.equal(arrival.data.record.lateMinutes, 7);
+  assert.equal(arrival.data.record.hasEvidence, false); assert.equal(arrival.data.record.selfie, undefined);
+  await f.request(`${url}/arrival`, photo); assert.equal(f.count(), 1);
+  const restarted = createTeacherAttendance(f.deps); assert.equal(restarted.report(date)[0].hasSelfie, true);
+  assert.ok((await f.request(url)).data.record.arrival);
+  const evidence = await f.request(`${url}/evidence`, { ...photo, material: "Persamaan linear" });
+  assert.equal(evidence.status, 200); assert.equal(evidence.data.record.review, "Belum ditinjau");
+  assert.equal(evidence.data.record.hasEvidence, true); assert.equal(f.count(), 1);
+  await f.request(`${url}/evidence`, { ...photo, material: "Penggantian tidak sah" });
+  assert.equal((await f.request(url)).data.record.material, "Persamaan linear");
+  assert.equal(fs.readdirSync(f.temp).length, 2);
+  assert.match((await f.command()).reply, /sudah lengkap/);
+});
+test("face mismatch, off-campus GPS, malformed images and tokens never create arrival", async (t) => {
+  const f = await fixture(t); const { token } = await f.command(); const url = `/api/teacher-camera/${token}`;
+  f.setMatch(false); assert.equal((await f.request(`${url}/arrival`, photo)).status, 400);
+  f.setMatch(true);
+  for (const payload of [{ ...photo, latitude: 0 }, { ...photo, accuracy: 101 }, { ...photo, latitude: null }, { ...photo, image: "invalid" }]) assert.equal((await f.request(`${url}/arrival`, payload)).status, 400);
+  assert.equal((await f.request("/api/teacher-camera/invalid")).status, 410);
+  assert.equal(f.service.report(date)[0].arrival, undefined); assert.equal(fs.readdirSync(f.temp).length, 0);
+});
+test("schedule opens fifteen minutes early; evidence waits until teaching starts; expiry blocks both", async (t) => {
+  const f = await fixture(t); f.setNow("06:44"); assert.equal((await f.command()).token, undefined);
+  f.setNow("06:45"); const { token } = await f.command(); const url = `/api/teacher-camera/${token}`;
+  assert.equal((await f.request(`${url}/arrival`, photo)).status, 200);
+  assert.equal((await f.request(`${url}/evidence`, { ...photo, material: "Materi" })).status, 400);
+  f.setNow("08:20"); assert.equal((await f.request(url)).status, 410); assert.equal((await f.command()).token, undefined);
+});
+test("admin access protects teacher data and photos; report includes missing sessions", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.request("/api/teachers")).status, 401);
+  assert.equal((await f.request("/api/teachers", undefined, "wali_kelas")).status, 403);
+  assert.equal((await f.request("/api/teachers/report?date=2026-02-30", undefined, "admin")).status, 400);
+  const { token } = await f.command(); await f.request(`/api/teacher-camera/${token}/arrival`, photo);
+  const key = f.service.report(date)[0].key;
+  assert.equal((await f.request(`/api/teachers/report/${key}/selfie`)).status, 401);
+  assert.equal((await f.request(`/api/teachers/report/${key}/selfie`, undefined, "wali_kelas")).status, 403);
+  assert.equal((await f.request(`/api/teachers/report/${key}/selfie`, undefined, "admin")).status, 200);
+  assert.equal((await f.request(`/api/teachers/report/${key}/review`, { review: "Sudah ditinjau" }, "admin")).status, 400);
+  await f.request(`/api/teacher-camera/${token}/evidence`, { ...photo, material: "Materi" });
+  assert.equal((await f.request(`/api/teachers/report/${key}/review`, { review: "Sudah ditinjau" }, "admin")).status, 200);
+});
+test("new link revokes previous link, teacher deactivation revokes access, and wali routing stays untouched", async (t) => {
+  const f = await fixture(t); const first = await f.command(); const second = await f.command();
+  assert.equal((await f.request(`/api/teacher-camera/${first.token}`)).status, 410);
+  assert.equal((await f.request(`/api/teacher-camera/${second.token}`)).status, 200);
+  assert.equal((await f.command("!masuk", `${num}@c.us`, `wali:${num}`)).handled, false);
+  assert.match((await f.command("!masuk", "628000000000@c.us")).reply, /belum terdaftar/);
+  await f.request("/api/teachers/person", { number: num, name: "Bu Ani", active: false }, "admin");
+  assert.equal((await f.request(`/api/teacher-camera/${second.token}`)).status, 400);
+});
+test("failed durable write rolls back photo and leaves attendance retryable", async (t) => {
+  const f = await fixture(t); const { token } = await f.command(); f.setFail(true);
+  assert.equal((await f.request(`/api/teacher-camera/${token}/arrival`, photo)).status, 400);
+  assert.equal(fs.readdirSync(f.temp).length, 0); assert.equal(f.service.report(date)[0].arrival, undefined);
+  f.setFail(false); assert.equal((await f.request(`/api/teacher-camera/${token}/arrival`, photo)).status, 200);
+});
