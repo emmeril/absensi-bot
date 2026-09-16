@@ -86,7 +86,7 @@ test("sidebar memisahkan absen siswa, absen guru, dan pengaturan umum", () => {
     "Bot Guru",
     "Admin",
   ]);
-  assert.deepEqual(Array.from(state.teacherTabs, (item) => item.label), ["Ringkasan", "Data Guru", "Jam Mengajar", "Izin", "Laporan Kehadiran Guru"]);
+  assert.deepEqual(Array.from(state.teacherTabs, (item) => item.label), ["Ringkasan", "Data Guru", "Mata Pelajaran", "Kelas", "Jam Mengajar", "Izin", "Laporan Kehadiran Guru"]);
   state.data.whatsappBots = [{ role: "tu", key: "tu:1" }, { role: "wali", key: "wali:2" }];
   state.tab = "bot-tu";
   assert.deepEqual(Array.from(state.visibleWhatsappBots, bot => bot.key), ["tu:1"]);
@@ -260,7 +260,7 @@ test("header aksi tidak menampilkan ikon dan tidak dapat diurutkan", () => {
     /<th class="text-center">Aksi<\/th>/g
   ) || [];
 
-  assert.equal(actionHeaders.length, 5);
+  assert.equal(actionHeaders.length, 7);
   assert.doesNotMatch(dashboardPage, /toggleSort\([^)]*['"]action['"]/);
   assert.match(
     dashboardPage,
@@ -279,4 +279,28 @@ test("data guru mengikuti pola tabel siswa dan memakai modal", () => {
   assert.match(teacherScript, /function renderTeachers\(\)/);
   assert.match(teacherScript, /teacherTable\.page/);
   assert.doesNotMatch(dashboardPage, /<th>Tindakan<\/th>/);
+});
+
+test("jadwal guru memakai dropdown data master mata pelajaran dan kelas", () => {
+  assert.match(dashboardPage, /id:"mapel-guru",label:"Mata Pelajaran"/);
+  assert.match(dashboardPage, /id:"kelas-guru",label:"Kelas"/);
+  assert.match(dashboardPage, /id="subjectsPanel"/);
+  assert.match(dashboardPage, /id="classesPanel"/);
+  assert.match(dashboardPage, /data-add-catalog="subjects"[^>]*>[^<]*<i[^>]*><\/i>Tambah Mata Pelajaran<\/button>/);
+  assert.match(dashboardPage, /data-add-catalog="classes"[^>]*>[^<]*<i[^>]*><\/i>Tambah Kelas<\/button>/);
+  assert.match(dashboardPage, /id="catalogModal"[^>]+role="dialog"[^>]+aria-modal="true"/);
+  for (const kind of ["subjects", "classes"]) {
+    assert.match(dashboardPage, new RegExp(`id="${kind}CatalogPageSize"`));
+    assert.match(dashboardPage, new RegExp(`id="${kind}CatalogSearch"`));
+    assert.match(dashboardPage, new RegExp(`data-catalog-sort="${kind}"`));
+  }
+  assert.match(dashboardPage, /<select id="subject"[^>]*required>/);
+  assert.match(dashboardPage, /<select id="className"[^>]*required>/);
+  assert.doesNotMatch(dashboardPage, /<input id="subject"/);
+  assert.doesNotMatch(dashboardPage, /<input id="className"/);
+  assert.match(teacherScript, /\/catalog\/\$\{kind\}/);
+  assert.match(teacherScript, /function renderCatalog\(kind\)/);
+  assert.match(teacherScript, /catalogTables\[kind\]/);
+  assert.match(teacherScript, /"mapel-guru": "subjectsPanel"/);
+  assert.match(teacherScript, /"kelas-guru": "classesPanel"/);
 });

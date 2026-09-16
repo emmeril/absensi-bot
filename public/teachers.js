@@ -3,6 +3,10 @@ const $ = (id) => root.querySelector(`#${id}`);
 const days = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
 let config, reportRows = [], summaryRows = [], permissionRows = [], teacherRows = [];
 const teacherTable = { search: "", statusFilter: "", photoFilter: "", sortKey: "", sortDirection: "asc", page: 1, size: 10 };
+const catalogTables = {
+  subjects: { search: "", sortDirection: "asc", page: 1, size: 10 },
+  classes: { search: "", sortDirection: "asc", page: 1, size: 10 },
+};
 const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 function message(text, error = false) {
   if (!root.isConnected) return;
@@ -79,12 +83,41 @@ function renderTeachers() {
     sortButton.querySelector("i").className = `fa-solid ${active ? (teacherTable.sortDirection === "asc" ? "fa-sort-up" : "fa-sort-down") : "fa-sort"}`;
   }
 }
+function option(select, value, label = value) { const item = document.createElement("option"); item.value = value; item.textContent = label; select.append(item); }
+function catalogDefinition(kind) { return kind === "subjects" ? { label: "Mata Pelajaran", singular: "mata pelajaran", placeholder: "Contoh: Matematika" } : { label: "Kelas", singular: "kelas", placeholder: "Contoh: VII A" }; }
+function closeCatalogModal() { $("catalogModal").hidden = true; $("catalogForm").reset(); delete $("catalogModal").dataset.kind; }
+function openCatalogModal(kind) { const definition = catalogDefinition(kind); $("catalogModal").dataset.kind = kind; $("catalogModalTitle").textContent = `Tambah ${definition.label}`; $("catalogNameLabel").textContent = `Nama ${definition.label}`; $("catalogName").placeholder = definition.placeholder; $("catalogModal").hidden = false; $("catalogName").focus(); }
+function filteredCatalog(kind) { const query = catalogTables[kind].search.toLocaleLowerCase("id"); return (config[kind] || []).filter((name) => name.toLocaleLowerCase("id").includes(query)); }
+function renderCatalog(kind) {
+  const table = catalogTables[kind]; const definition = catalogDefinition(kind);
+  const rows = [...filteredCatalog(kind)].sort((a, b) => a.localeCompare(b, "id", { numeric: true, sensitivity: "base" }) * (table.sortDirection === "desc" ? -1 : 1));
+  const pages = Math.max(1, Math.ceil(rows.length / table.size)); table.page = Math.min(table.page, pages);
+  const start = (table.page - 1) * table.size; const visible = rows.slice(start, start + table.size); const body = $(`${kind}CatalogRows`); body.replaceChildren();
+  for (const [index, name] of visible.entries()) {
+    const row = body.insertRow(); cell(row, start + index + 1); cell(row, name);
+    const actions = document.createElement("div"); actions.className = "flex justify-center"; cell(row, "").append(actions);
+    teacherAction(actions, `Hapus ${definition.label}`, "fa-trash", "bg-red-50 text-red-700", async () => {
+      if (!confirm(`Hapus ${definition.singular} ${name}?`)) return;
+      await api(`/catalog/${kind}/${encodeURIComponent(name)}`, undefined, "DELETE"); await reload(); message(`${definition.label} dihapus.`);
+    });
+  }
+  if (!visible.length) emptyRow(body, 3, "Data tidak ditemukan");
+  $(`${kind}CatalogCurrent`).textContent = table.page; $(`${kind}CatalogPrev`).disabled = table.page <= 1; $(`${kind}CatalogNext`).disabled = table.page >= pages;
+  $(`${kind}CatalogPageInfo`).textContent = rows.length ? `Menampilkan ${start + 1}-${Math.min(start + table.size, rows.length)} dari ${rows.length} data` : "Menampilkan 0 data";
+  $(`${kind}CatalogReset`).hidden = !table.search;
+  const sortButton = root.querySelector(`[data-catalog-sort="${kind}"]`); sortButton.closest("th").setAttribute("aria-sort", table.sortDirection === "asc" ? "ascending" : "descending"); sortButton.querySelector("i").className = `fa-solid ${table.sortDirection === "asc" ? "fa-sort-up" : "fa-sort-down"}`;
+}
 async function reload() {
   config = await api("");
   $("tuNumber").value = config.number;
   $("holidays").value = config.holidays.join("\n");
   teacherRows = Object.entries(config.teachers).map(([number, teacher]) => ({ number, ...teacher }));
   renderTeachers(); $("scheduleTeacher").replaceChildren(); $("permissionTeacher").replaceChildren();
+  $("subject").replaceChildren(); $("className").replaceChildren();
+  option($("subject"), "", "Pilih mata pelajaran"); option($("className"), "", "Pilih kelas");
+  for (const subject of config.subjects || []) option($("subject"), subject);
+  for (const className of config.classes || []) option($("className"), className);
+  renderCatalog("subjects"); renderCatalog("classes");
   for (const [number, t] of Object.entries(config.teachers)) {
     if (t.active) {
       for (const select of [$("scheduleTeacher"), $("permissionTeacher")]) { const option = document.createElement("option"); option.value = number; option.textContent = t.name; select.append(option); }
@@ -165,6 +198,23 @@ for (const sortButton of root.querySelectorAll("[data-teacher-sort]")) sortButto
   else { teacherTable.sortKey = key; teacherTable.sortDirection = "asc"; }
   teacherTable.page = 1; renderTeachers();
 };
+for (const addButton of root.querySelectorAll("[data-add-catalog]")) addButton.onclick = () => openCatalogModal(addButton.dataset.addCatalog);
+$("closeCatalogModal").onclick = closeCatalogModal; $("cancelCatalogModal").onclick = closeCatalogModal;
+$("catalogModal").onclick = (event) => { if (event.target === $("catalogModal")) closeCatalogModal(); };
+$("catalogModal").onkeydown = (event) => { if (event.key === "Escape") closeCatalogModal(); };
+$("catalogForm").onsubmit = (event) => {
+  event.preventDefault(); const submit = event.submitter; const kind = $("catalogModal").dataset.kind; const label = catalogDefinition(kind).label;
+  action(async () => { submit.disabled = true; try { await api(`/catalog/${kind}`, { name: $("catalogName").value }); closeCatalogModal(); await reload(); message(`${label} ditambahkan.`); } finally { submit.disabled = false; } });
+};
+for (const kind of ["subjects", "classes"]) {
+  const table = catalogTables[kind];
+  $(`${kind}CatalogSearch`).oninput = (event) => { table.search = event.target.value; table.page = 1; renderCatalog(kind); };
+  $(`${kind}CatalogPageSize`).onchange = (event) => { table.size = Number(event.target.value); table.page = 1; renderCatalog(kind); };
+  $(`${kind}CatalogReset`).onclick = () => { table.search = ""; table.page = 1; $(`${kind}CatalogSearch`).value = ""; renderCatalog(kind); };
+  $(`${kind}CatalogPrev`).onclick = () => { if (table.page > 1) { table.page--; renderCatalog(kind); } };
+  $(`${kind}CatalogNext`).onclick = () => { const pages = Math.ceil(filteredCatalog(kind).length / table.size); if (table.page < pages) { table.page++; renderCatalog(kind); } };
+  root.querySelector(`[data-catalog-sort="${kind}"]`).onclick = () => { table.sortDirection = table.sortDirection === "asc" ? "desc" : "asc"; table.page = 1; renderCatalog(kind); };
+}
 for (const id of ["settingsForm", "teacherForm", "scheduleForm"]) $(id).onsubmit = (event) => {
   event.preventDefault(); const submit = event.submitter;
   action(async () => {
@@ -207,7 +257,7 @@ let currentTab;
 root.setTeacherView = (tab) => {
   if (tab === currentTab) return;
   currentTab = tab;
-  showPanel(({ "ringkasan-guru": "teacherSummaryPanel", guru: "peoplePanel", "jam-guru": "schedulePanel", "izin-guru": "teacherPermissionPanel", "laporan-guru": "reportPanel", "bot-tu": "settingsPanel" })[tab] || "teacherSummaryPanel");
+  showPanel(({ "ringkasan-guru": "teacherSummaryPanel", guru: "peoplePanel", "mapel-guru": "subjectsPanel", "kelas-guru": "classesPanel", "jam-guru": "schedulePanel", "izin-guru": "teacherPermissionPanel", "laporan-guru": "reportPanel", "bot-tu": "settingsPanel" })[tab] || "teacherSummaryPanel");
 };
 root.setTeacherView(initialTab);
 async function initialize() {

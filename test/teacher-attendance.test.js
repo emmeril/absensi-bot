@@ -133,6 +133,21 @@ test("failed durable write rolls back photo and leaves attendance retryable", as
   assert.equal(fs.readdirSync(f.temp).length, 0); assert.equal(f.service.report(date)[0].arrival, undefined);
   f.setFail(false); assert.equal((await f.request(`/api/teacher-camera/${token}/arrival`, photo)).status, 200);
 });
+test("data master menyediakan dropdown jadwal dan melindungi nilai yang masih digunakan", async (t) => {
+  const f = await fixture(t);
+  const initial = await f.request("/api/teachers", undefined, "admin");
+  assert.deepEqual(initial.data.subjects, ["Matematika"]);
+  assert.deepEqual(initial.data.classes, ["VII A"]);
+  assert.equal((await f.request("/api/teachers/catalog/subjects", { name: "IPA" }, "admin")).status, 200);
+  assert.equal((await f.request("/api/teachers/catalog/subjects", { name: "ipa" }, "admin")).status, 400);
+  assert.equal((await f.request("/api/teachers/catalog/classes", { name: "VIII A" }, "admin")).status, 200);
+  const schedule = { ...baseSchedule, id: undefined, day: 2, subject: "IPA", className: "VIII A" };
+  assert.equal((await f.request("/api/teachers/schedules", schedule, "admin")).status, 200);
+  assert.equal((await f.request("/api/teachers/schedules", { ...schedule, day: 3, subject: "Belum Terdaftar" }, "admin")).status, 400);
+  assert.equal((await f.request("/api/teachers/catalog/subjects/IPA", undefined, "admin", "DELETE")).status, 400);
+  assert.equal((await f.request("/api/teachers/catalog/subjects", { name: "Seni Budaya" }, "admin")).status, 200);
+  assert.equal((await f.request("/api/teachers/catalog/subjects/Seni%20Budaya", undefined, "admin", "DELETE")).status, 200);
+});
 test("teacher permission covers scheduled sessions, revokes links, and blocks attendance", async (t) => {
   const f = await fixture(t); const issued = await f.command(); assert.ok(issued.token);
   const body = { number: num, date, type: "Sakit", reason: "Demam" };
