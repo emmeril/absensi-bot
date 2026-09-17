@@ -92,7 +92,7 @@
 
     <main class="mx-auto min-w-0 max-w-[1500px] px-3 py-5 sm:px-7 sm:py-6">
       <div class="mb-5 min-w-0 sm:mb-6"><h2 class="flex min-w-0 items-center text-xl font-bold text-slate-800 sm:text-2xl"><i class="mr-2 shrink-0 text-[#3c8dbc]" :class="currentTab.icon"></i><span class="truncate" x-text="currentTab.label"></span></h2><p class="mt-1 text-sm text-slate-500">Kelola data dan aktivitas absensi sekolah.</p></div>
-      <section x-show="!isTeacherPage" class="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <section x-show="!isTeacherPage && !isSettingsTab" class="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <template x-for="card in cards" :key="card.label">
           <div class="paper-edge rounded-lg p-5 shadow-card" :style="`--accent:${card.color}`">
             <p class="text-xs font-bold uppercase tracking-[.18em] text-ink/45" x-text="card.label"></p>
