@@ -169,14 +169,14 @@ async function reload() {
   }
   renderSchedules();
 }
-function scheduleRows() { return Object.values(config.schedules || {}).map((s) => ({ ...s, teacher: config.teachers[s.number]?.name || s.number, time: `${days[s.day]} ${s.start}–${s.end}` })); }
+function scheduleRows() { return Object.values(config.schedules || {}).map((s) => ({ ...s, teacher: config.teachers[s.number]?.name || s.number, dayLabel: days[s.day], time: `${s.start}–${s.end}` })); }
 function renderSchedules() {
   const query = scheduleTable.search.toLocaleLowerCase("id");
-  let rows = scheduleRows().filter((s) => `${s.teacher} ${s.number} ${s.className} ${s.subject} ${s.time}`.toLocaleLowerCase("id").includes(query) && (!scheduleTable.dayFilter || String(s.day) === scheduleTable.dayFilter));
-  rows = sortRows(rows, scheduleTable, { teacher: (s) => s.teacher, time: (s) => `${s.day}-${s.start}`, class: (s) => s.className, subject: (s) => s.subject });
+  let rows = scheduleRows().filter((s) => `${s.teacher} ${s.number} ${s.dayLabel} ${s.className} ${s.subject} ${s.time}`.toLocaleLowerCase("id").includes(query) && (!scheduleTable.dayFilter || String(s.day) === scheduleTable.dayFilter));
+  rows = sortRows(rows, scheduleTable, { teacher: (s) => s.teacher, day: (s) => s.day, time: (s) => s.start, class: (s) => s.className, subject: (s) => s.subject });
   const page = paginate(rows, scheduleTable); const body = $("schedules"); body.replaceChildren();
   for (const [index, s] of page.rows.entries()) {
-    const row = body.insertRow(); cell(row, page.start + index + 1); cell(row, s.teacher); cell(row, s.time); cell(row, s.className); cell(row, s.subject);
+    const row = body.insertRow(); cell(row, page.start + index + 1); cell(row, s.teacher); cell(row, s.dayLabel); cell(row, s.time); cell(row, s.className); cell(row, s.subject);
     const actions = document.createElement("div"); actions.className = "flex justify-center gap-1"; cell(row, "").append(actions);
     teacherAction(actions, "Edit jadwal", "fa-pen-to-square", "bg-amber-50 text-amber-700", () => openScheduleModal(s));
     teacherAction(actions, "Hapus jadwal", "fa-trash", "bg-red-50 text-red-700", async () => {
@@ -184,7 +184,7 @@ function renderSchedules() {
       await api(`/schedules/${encodeURIComponent(s.id)}`, undefined, "DELETE"); await reload(); await loadReport(); message("Jadwal dihapus. Riwayat absensi tetap tersedia.");
     });
   }
-  if (!page.rows.length) emptyRow(body, 6, "Belum ada jadwal mengajar.");
+  if (!page.rows.length) emptyRow(body, 7, "Belum ada jadwal mengajar.");
   updatePager("schedule", scheduleTable, rows.length, page.pages, page.start); $("resetScheduleFilters").hidden = !(scheduleTable.search || scheduleTable.dayFilter); updateSortButtons(scheduleTable, "schedule");
 }
 function attendanceStatus(r) { return r.permission ? `${r.permission.type}: ${r.permission.reason}` : !r.arrival ? "Belum hadir" : r.hasEvidence ? "Bukti lengkap" : "Hadir · bukti belum lengkap"; }

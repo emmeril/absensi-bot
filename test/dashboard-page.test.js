@@ -334,6 +334,8 @@ test("jadwal guru memakai dropdown data master mata pelajaran dan kelas", () => 
   assert.doesNotMatch(dashboardPage, /id="tolerance"/);
   assert.doesNotMatch(dashboardPage, /id="from"/);
   assert.doesNotMatch(dashboardPage, /id="until"/);
+  assert.match(dashboardPage, /data-schedule-sort="day">Hari/);
+  assert.match(dashboardPage, /data-schedule-sort="time">Jam/);
   assert.match(dashboardPage, /data-schedule-sort="class">Kelas/);
   assert.match(dashboardPage, /data-schedule-sort="subject">Pelajaran/);
   assert.match(teacherScript, /"Edit jadwal"/);
