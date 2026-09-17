@@ -119,6 +119,9 @@ function openScheduleModal(schedule) {
   if (schedule) {
     $("scheduleModal").dataset.id = schedule.id;
     $("scheduleModalTitle").textContent = "Edit Jadwal";
+    $("scheduleModalDescription").textContent = "Perbarui data pengajaran dan waktu jadwal ini.";
+    $("scheduleModalIcon").className = "fa-solid fa-pen-to-square";
+    $("scheduleSubmitLabel").textContent = "Simpan Perubahan";
     $("scheduleTeacher").value = schedule.number;
     $("day").value = schedule.day;
     $("subject").value = schedule.subject;
@@ -128,6 +131,9 @@ function openScheduleModal(schedule) {
   } else {
     delete $("scheduleModal").dataset.id;
     $("scheduleModalTitle").textContent = "Tambah Jadwal";
+    $("scheduleModalDescription").textContent = "Lengkapi data pengajaran untuk menyimpan jadwal.";
+    $("scheduleModalIcon").className = "fa-solid fa-calendar-plus";
+    $("scheduleSubmitLabel").textContent = "Simpan Jadwal";
   }
   $("scheduleModal").hidden = false; $("scheduleTeacher").focus();
 }
