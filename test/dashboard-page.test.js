@@ -84,7 +84,7 @@ test("sidebar memisahkan absen siswa, absen guru, dan pengaturan umum", () => {
     "Pengaturan Brand",
     "Bot Siswa",
     "Bot Guru",
-    "Admin",
+    "Management User",
   ]);
   assert.deepEqual(Array.from(state.teacherTabs, (item) => item.label), ["Ringkasan", "Data Guru", "Mata Pelajaran", "Kelas", "Jam Mengajar", "Izin", "Laporan Kehadiran Guru"]);
   state.data.whatsappBots = [{ role: "tu", key: "tu:1" }, { role: "wali", key: "wali:2" }];
