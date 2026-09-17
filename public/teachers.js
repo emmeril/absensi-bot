@@ -5,7 +5,7 @@ let config, reportRows = [], summaryRows = [], permissionRows = [], teacherRows 
 const teacherTable = { search: "", statusFilter: "", photoFilter: "", sortKey: "", sortDirection: "asc", page: 1, size: 10 };
 const summaryTable = { search: "", statusFilter: "", sortKey: "", sortDirection: "asc", page: 1, size: 10 };
 const reportTable = { search: "", statusFilter: "", reviewFilter: "", sortKey: "", sortDirection: "asc", page: 1, size: 10 };
-const scheduleTable = { search: "", dayFilter: "", sortKey: "", sortDirection: "asc", page: 1, size: 10 };
+const scheduleTable = { search: "", teacherFilter: "", dayFilter: "", sortKey: "", sortDirection: "asc", page: 1, size: 10 };
 const permissionTable = { search: "", typeFilter: "", sortKey: "", sortDirection: "asc", page: 1, size: 10 };
 const catalogTables = {
   subjects: { search: "", sortDirection: "asc", page: 1, size: 10 },
@@ -156,23 +156,27 @@ async function reload() {
   config = await api("");
   $("tuNumber").value = config.number;
   teacherRows = Object.entries(config.teachers).map(([number, teacher]) => ({ number, ...teacher }));
-  renderTeachers(); $("scheduleTeacher").replaceChildren(); $("permissionTeacher").replaceChildren();
+  renderTeachers(); $("scheduleTeacher").replaceChildren(); $("scheduleTeacherFilter").replaceChildren(); $("permissionTeacher").replaceChildren();
+  option($("scheduleTeacherFilter"), "", "Semua guru");
   $("subject").replaceChildren(); $("className").replaceChildren();
   option($("subject"), "", "Pilih mata pelajaran"); option($("className"), "", "Pilih kelas");
   for (const subject of config.subjects || []) option($("subject"), subject);
   for (const className of config.classes || []) option($("className"), className);
   renderCatalog("subjects"); renderCatalog("classes");
   for (const [number, t] of Object.entries(config.teachers)) {
+    option($("scheduleTeacherFilter"), number, t.name);
     if (t.active) {
       for (const select of [$("scheduleTeacher"), $("permissionTeacher")]) { const option = document.createElement("option"); option.value = number; option.textContent = t.name; select.append(option); }
     }
   }
+  if ([...$("scheduleTeacherFilter").options].some((item) => item.value === scheduleTable.teacherFilter)) $("scheduleTeacherFilter").value = scheduleTable.teacherFilter;
+  else scheduleTable.teacherFilter = "";
   renderSchedules();
 }
 function scheduleRows() { return Object.values(config.schedules || {}).map((s) => ({ ...s, teacher: config.teachers[s.number]?.name || s.number, dayLabel: days[s.day], time: `${s.start}–${s.end}` })); }
 function renderSchedules() {
   const query = scheduleTable.search.toLocaleLowerCase("id");
-  let rows = scheduleRows().filter((s) => `${s.teacher} ${s.number} ${s.dayLabel} ${s.className} ${s.subject} ${s.time}`.toLocaleLowerCase("id").includes(query) && (!scheduleTable.dayFilter || String(s.day) === scheduleTable.dayFilter));
+  let rows = scheduleRows().filter((s) => `${s.teacher} ${s.number} ${s.dayLabel} ${s.className} ${s.subject} ${s.time}`.toLocaleLowerCase("id").includes(query) && (!scheduleTable.teacherFilter || s.number === scheduleTable.teacherFilter) && (!scheduleTable.dayFilter || String(s.day) === scheduleTable.dayFilter));
   rows = sortRows(rows, scheduleTable, { teacher: (s) => s.teacher, day: (s) => s.day, time: (s) => s.start, class: (s) => s.className, subject: (s) => s.subject });
   const page = paginate(rows, scheduleTable); const body = $("schedules"); body.replaceChildren();
   for (const [index, s] of page.rows.entries()) {
@@ -185,7 +189,7 @@ function renderSchedules() {
     });
   }
   if (!page.rows.length) emptyRow(body, 7, "Belum ada jadwal mengajar.");
-  updatePager("schedule", scheduleTable, rows.length, page.pages, page.start); $("resetScheduleFilters").hidden = !(scheduleTable.search || scheduleTable.dayFilter); updateSortButtons(scheduleTable, "schedule");
+  updatePager("schedule", scheduleTable, rows.length, page.pages, page.start); $("resetScheduleFilters").hidden = !(scheduleTable.search || scheduleTable.teacherFilter || scheduleTable.dayFilter); updateSortButtons(scheduleTable, "schedule");
 }
 function attendanceStatus(r) { return r.permission ? `${r.permission.type}: ${r.permission.reason}` : !r.arrival ? "Belum hadir" : r.hasEvidence ? "Bukti lengkap" : "Hadir · bukti belum lengkap"; }
 async function loadReport() {
@@ -302,7 +306,7 @@ for (const kind of ["subjects", "classes"]) {
 }
 bindTableControls("summary", summaryTable, { Search: "search", StatusFilter: "statusFilter" }, renderSummary, "summary");
 bindTableControls("report", reportTable, { Search: "search", StatusFilter: "statusFilter", ReviewFilter: "reviewFilter" }, renderReport, "report");
-bindTableControls("schedule", scheduleTable, { Search: "search", DayFilter: "dayFilter" }, renderSchedules, "schedule");
+bindTableControls("schedule", scheduleTable, { Search: "search", TeacherFilter: "teacherFilter", DayFilter: "dayFilter" }, renderSchedules, "schedule");
 bindTableControls("permission", permissionTable, { Search: "search", TypeFilter: "typeFilter" }, renderPermissions, "permission");
 for (const id of ["settingsForm", "teacherForm", "scheduleForm"]) $(id).onsubmit = (event) => {
   event.preventDefault(); const submit = event.submitter;

@@ -331,6 +331,7 @@ test("jadwal guru memakai dropdown data master mata pelajaran dan kelas", () => 
   assert.match(teacherScript, /"kelas-guru": "classesPanel"/);
   assert.match(dashboardPage, /id="scheduleModal"[^>]+role="dialog"[^>]+aria-modal="true"/);
   assert.match(dashboardPage, /id="addSchedule"/);
+  assert.match(dashboardPage, /id="scheduleTeacherFilter"/);
   assert.doesNotMatch(dashboardPage, /id="tolerance"/);
   assert.doesNotMatch(dashboardPage, /id="from"/);
   assert.doesNotMatch(dashboardPage, /id="until"/);
