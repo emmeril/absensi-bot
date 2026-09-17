@@ -31,6 +31,11 @@ test("dashboard login memakai username dan password tanpa OTP", () => {
   assert.doesNotMatch(dashboardPage, /request-otp|Kode OTP|verifyOtp/);
 });
 
+test("halaman login mencakup pengelolaan absensi guru", () => {
+  assert.match(dashboardPage, /Pantau kehadiran siswa dan guru dalam satu panel/);
+  assert.match(dashboardPage, /Kelola siswa, guru, kelas, jadwal mengajar, izin, dan laporan harian/);
+});
+
 test("form management user mengelola akun admin dan wali kelas", () => {
   assert.match(dashboardPage, /Tambah User/);
   assert.match(dashboardPage, /adminForm\.role/);
