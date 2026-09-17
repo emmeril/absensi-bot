@@ -111,7 +111,7 @@
             <strong>Verifikasi wajah belum siap.</strong>
             Pastikan dependensi sudah terpasang dan file model face-api tersedia di folder <code class="font-bold">models</code>.
           </div>
-          <div data-bot-alert="student" x-show="!loading && !isTeacherPage && data.whatsappBots?.some(bot => bot.role !== 'tu' && !bot.ready)" x-cloak class="mb-5 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+          <div data-bot-alert="student" x-show="!loading && !isTeacherPage && !isSettingsTab && data.whatsappBots?.some(bot => bot.role !== 'tu' && !bot.ready)" x-cloak class="mb-5 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
             <strong>Ada Bot Siswa yang belum terhubung.</strong>
             <button @click="changeTab('whatsapp')" class="font-bold underline">Buka Bot Siswa</button> untuk memindai QR.
           </div>

@@ -132,6 +132,10 @@ test("kartu ringkasan siswa tidak tampil pada menu pengaturan", () => {
   assert.match(dashboardPage, /x-show="!isTeacherPage && !isSettingsTab"/);
 });
 
+test("notifikasi Bot Siswa tidak tampil pada menu pengaturan", () => {
+  assert.match(dashboardPage, /data-bot-alert="student"[^>]+!isTeacherPage && !isSettingsTab/);
+});
+
 test("pemberitahuan bot pada menu guru hanya mengarah ke Bot Guru", () => {
   assert.match(dashboardPage, /data-bot-alert="teacher"[^>]+isTeacherTab/);
   assert.match(dashboardPage, /Bot Guru belum siap atau belum terhubung/);
