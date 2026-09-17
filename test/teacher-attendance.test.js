@@ -109,6 +109,7 @@ test("admin access protects teacher data and photos; report includes missing ses
   assert.equal((await f.request("/api/teachers")).status, 401);
   assert.equal((await f.request("/api/teachers", undefined, "wali_kelas")).status, 403);
   assert.equal((await f.request("/api/teachers/report?date=2026-02-30", undefined, "admin")).status, 400);
+  assert.equal((await f.request(`/api/teachers/report/export?date=${date}`, undefined, "admin")).status, 200);
   const { token } = await f.command(); await f.request(`/api/teacher-camera/${token}/arrival`, photo);
   const key = f.service.report(date)[0].key;
   assert.equal((await f.request(`/api/teachers/report/${key}/selfie`)).status, 401);

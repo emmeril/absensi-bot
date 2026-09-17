@@ -342,3 +342,9 @@ test("jadwal guru memakai dropdown data master mata pelajaran dan kelas", () => 
   assert.match(teacherScript, /"Edit jadwal"/);
   assert.match(teacherScript, /"Hapus jadwal"/);
 });
+
+test("laporan kehadiran guru dapat diunduh sebagai Excel", () => {
+  assert.match(dashboardPage, /id="exportReport"[^>]*>[^<]*<i[^>]*fa-file-excel[^>]*><\/i>Unduh Excel<\/button>/);
+  assert.match(teacherScript, /\/report\/export\?date=/);
+  assert.doesNotMatch(dashboardPage, /Unduh CSV/);
+});

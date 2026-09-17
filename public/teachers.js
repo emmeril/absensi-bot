@@ -344,11 +344,7 @@ $("teacherReportDate").value = today; $("teacherSummaryDate").value = today; $("
 $("teacherReportDate").onchange = () => action(loadReport); $("refreshReport").onclick = () => action(loadReport);
 $("teacherSummaryDate").onchange = () => action(loadSummary);
 $("teacherPermissionDate").onchange = () => action(loadPermissions);
-$("exportReport").onclick = () => {
-  const values = [["Tanggal", "Guru", "Nomor", "Kelas", "Pelajaran", "Mulai", "Selesai", "Hadir", "Terlambat (menit)", "Status", "Materi", "Tinjauan", "Catatan"], ...reportRows.map((r) => [r.date, r.name, r.number, r.schedule.className, r.schedule.subject, r.schedule.start, r.schedule.end, r.arrival ? new Date(r.arrival).toLocaleTimeString("id-ID", { timeZone: "Asia/Jakarta" }) : "", r.lateMinutes || 0, attendanceStatus(r), r.material, r.review, r.reviewNote])];
-  const csv = values.map((row) => row.map((v) => { let value = String(v ?? ""); if (/^[\s]*[=+@-]/.test(value)) value = `'${value}`; return `"${value.replace(/"/g, '""')}"`; }).join(",")).join("\r\n");
-  const url = URL.createObjectURL(new Blob(["\ufeff", csv], { type: "text/csv;charset=utf-8" })); const a = document.createElement("a"); a.href = url; a.download = `absensi-guru-${$("teacherReportDate").value}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-};
+$("exportReport").onclick = () => { window.location.assign(`/api/teachers/report/export?date=${encodeURIComponent($("teacherReportDate").value)}`); };
 function showPanel(id) {
   for (const panel of root.querySelectorAll("[data-teacher-panel]")) panel.hidden = panel.id !== id;
 }
