@@ -44,6 +44,7 @@ async function fixture(t) {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "teacher-attendance-test-"));
   const state = new JsonState({ initial: { [TEACHERS_PATH]: configuration(), [TEACHER_RECORDS_PATH]: { records: {}, tokens: {} }, "./lokasi.json": { latitude: -6.7, longitude: 108.5 } }, writeBatch: async () => {} });
   let match = true, failCommit = false, verificationCount = 0;
+  const notifications = [];
   const deps = {
     loadJSON: (key, fallback) => state.read(key, fallback),
     updateJSON: (key, fn) => state.update(key, fn),
@@ -53,8 +54,10 @@ async function fixture(t) {
     photoRoot: temp,
     requireWebAuth: (req, res, next) => { if (!req.headers["x-role"]) return res.sendStatus(401); req.webUser = { role: req.headers["x-role"], id: "admin" }; next(); },
     requireWebAdmin: (req, res, next) => req.webUser.role === "admin" ? next() : res.sendStatus(403),
+    requireWebTeacherManager: (req, res, next) => ["admin", "tu"].includes(req.webUser.role) ? next() : res.sendStatus(403),
     upload: { single: () => (_req, _res, next) => next() },
     publicBaseUrl: () => "https://school.example", getClasses: () => ({}), getStudents: () => ({}), syncBots: async () => {},
+    notifyTeacherAttendance: async (record) => notifications.push(record),
   };
   state.writeBatch = async () => { if (failCommit) throw new Error("database unavailable"); };
   let service = createTeacherAttendance(deps);
@@ -68,7 +71,7 @@ async function fixture(t) {
     const raw = await response.text(); let data; try { data = JSON.parse(raw); } catch { data = raw; } return { status: response.status, data };
   };
   async function command(body = "!masuk", sender = `${num}@c.us`, botKey = `tu:${tu}`) { let reply; const handled = await service.command({ body, sender, botKey, reply: async (text) => { reply = text; } }); return { reply, handled, token: reply?.match(/#([a-f0-9]{64})/)?.[1] }; }
-  return { state, command, request, temp, deps, service, setNow: (time) => { now = moment(`${date} ${time}`, "YYYY-MM-DD HH:mm").valueOf(); }, setMatch: (value) => { match = value; }, setFail: (value) => { failCommit = value; }, count: () => verificationCount };
+  return { state, command, request, temp, deps, service, notifications, setNow: (time) => { now = moment(`${date} ${time}`, "YYYY-MM-DD HH:mm").valueOf(); }, setMatch: (value) => { match = value; }, setFail: (value) => { failCommit = value; }, count: () => verificationCount };
 }
 const photo = { image: "photo", latitude: -6.7, longitude: 108.5, accuracy: 10 };
 test("one link persists arrival separately and resumes evidence after service recreation", async (t) => {
@@ -77,6 +80,7 @@ test("one link persists arrival separately and resumes evidence after service re
   assert.equal((await f.request(`${url}/evidence`, { ...photo, material: "Aljabar" })).status, 400);
   const arrival = await f.request(`${url}/arrival`, photo);
   assert.equal(arrival.status, 200); assert.equal(arrival.data.record.lateMinutes, 7);
+  assert.equal(f.notifications.length, 1);
   assert.equal(arrival.data.record.hasEvidence, false); assert.equal(arrival.data.record.selfie, undefined);
   await f.request(`${url}/arrival`, photo); assert.equal(f.count(), 1);
   const restarted = createTeacherAttendance(f.deps); assert.equal(restarted.report(date)[0].hasSelfie, true);
@@ -108,6 +112,7 @@ test("admin access protects teacher data and photos; report includes missing ses
   const f = await fixture(t);
   assert.equal((await f.request("/api/teachers")).status, 401);
   assert.equal((await f.request("/api/teachers", undefined, "wali_kelas")).status, 403);
+  assert.equal((await f.request("/api/teachers", undefined, "tu")).status, 200);
   assert.equal((await f.request("/api/teachers/report?date=2026-02-30", undefined, "admin")).status, 400);
   assert.equal((await f.request(`/api/teachers/report/export?date=${date}`, undefined, "admin")).status, 200);
   const { token } = await f.command(); await f.request(`/api/teacher-camera/${token}/arrival`, photo);

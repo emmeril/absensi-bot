@@ -35,6 +35,7 @@ test("form management user mengelola akun admin dan wali kelas", () => {
   assert.match(dashboardPage, /Tambah User/);
   assert.match(dashboardPage, /adminForm\.role/);
   assert.match(dashboardPage, /adminForm\.className/);
+  assert.match(dashboardPage, /value="tu">Tata Usaha/);
   assert.match(dashboardPage, /adminForm\.username/);
   assert.match(dashboardPage, /adminForm\.password/);
 });
@@ -100,6 +101,11 @@ test("sidebar memisahkan absen siswa, absen guru, dan pengaturan umum", () => {
   ]);
   assert.deepEqual(Array.from(state.settingsTabs, (item) => item.label), ["Bot Siswa"]);
   assert.deepEqual(Array.from(state.teacherTabs), []);
+
+  state.user = { role: "tu" };
+  assert.deepEqual(Array.from(state.mainTabs), []);
+  assert.deepEqual(Array.from(state.teacherTabs, (item) => item.label), ["Ringkasan", "Data Guru", "Mata Pelajaran", "Kelas", "Jam Mengajar", "Izin", "Laporan Kehadiran Guru"]);
+  assert.deepEqual(Array.from(state.settingsTabs, (item) => item.label), ["Bot Guru"]);
 });
 
 test("pemberitahuan bot pada menu guru hanya mengarah ke Bot Guru", () => {

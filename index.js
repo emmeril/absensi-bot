@@ -717,7 +717,7 @@ function dashboardUserName(id, role) {
     if (wali?.namaWali) return wali.namaWali;
   }
 
-  return role === "admin" ? "Administrator" : "Wali Kelas";
+  return ({ admin: "Administrator", tu: "Tata Usaha", wali_kelas: "Wali Kelas" })[role] || "Pengguna";
 }
 
 function teksBantuan(role, terdaftar) {
@@ -742,6 +742,18 @@ function teksBantuan(role, terdaftar) {
       "• *!bantuan* - Menampilkan daftar perintah yang tersedia untuk role kamu.",
       "",
       `Data siswa dan foto referensi kelas dikelola melalui dashboard: ${publicBaseUrl()}`
+    );
+    return lines.join("\n");
+  }
+
+  if (role === "tu") {
+    lines.push(
+      "",
+      "Akses: Tata Usaha",
+      "• *!lokasi* - Mengatur titik lokasi sekolah melalui Bot Guru. Setelah perintah ini, bagikan lokasi sekolah melalui fitur Lokasi WhatsApp.",
+      "• *!bantuan* - Menampilkan daftar perintah yang tersedia untuk role kamu.",
+      "",
+      `Absensi guru dan Bot Guru dikelola melalui dashboard: ${publicBaseUrl()}`
     );
     return lines.join("\n");
   }
@@ -1117,7 +1129,8 @@ whatsapp.on("message", safeAsyncListener(async ({
     return replyCommand("✅ Lokasi sekolah disimpan.");
   }
   if (body === "!lokasi" || body === "!setlokasi") {
-    if (role !== "admin") return replyCommand("❌ Hanya admin.");
+    const tuCanSetLocation = role === "tu" && botKey === `tu:${teacherAttendance.config().number}`;
+    if (role !== "admin" && !tuCanSetLocation) return replyCommand("❌ Hanya admin atau Tata Usaha melalui Bot Guru.");
     pendingLokasi.set(pendingLocationKey, Date.now() + LOCATION_REQUEST_TTL_MS);
     return replyCommand("📍 Bagikan lokasi sekolah sekarang melalui fitur Lokasi WhatsApp.");
   }
@@ -1131,7 +1144,7 @@ whatsapp.on("message", safeAsyncListener(async ({
     classNames.includes(kelasSiswa.namaKelas);
 
   if (body === "!bantuan") {
-    if (role === "admin" || role === "wali_kelas") {
+    if (["admin", "tu", "wali_kelas"].includes(role)) {
       return replyCommand(teksBantuan(role, beradaDiBotWali));
     }
     return replyCommand(
@@ -1251,7 +1264,7 @@ function webUser(req) {
   const currentAccount = loadDashboardAccounts()[session.username];
   if (
     currentRole !== session.role ||
-    !["admin", "wali_kelas"].includes(currentRole) ||
+    !["admin", "tu", "wali_kelas"].includes(currentRole) ||
     currentAccount?.userId !== session.id
   ) {
     webSessions.delete(token);
@@ -1274,6 +1287,13 @@ function requireWebAdmin(req, res, next) {
   next();
 }
 
+function requireWebTeacherManager(req, res, next) {
+  if (!["admin", "tu"].includes(req.webUser?.role)) {
+    return res.status(403).json({ error: "Fitur ini hanya tersedia untuk admin atau Tata Usaha." });
+  }
+  next();
+}
+
 function requireWhatsappBotAccess(req, res, next) {
   const bot = whatsapp.statuses().find((status) => status.key === req.params.key);
   if (!bot) {
@@ -1282,7 +1302,8 @@ function requireWhatsappBotAccess(req, res, next) {
   const ownsBot =
     req.webUser?.role === "wali_kelas" &&
     bot.expectedNumber === req.webUser.nomor;
-  if (req.webUser?.role !== "admin" && !ownsBot) {
+  const managesTeacherBot = req.webUser?.role === "tu" && bot.role === "tu";
+  if (req.webUser?.role !== "admin" && !ownsBot && !managesTeacherBot) {
     return res.status(403).json({
       error: "Wali kelas hanya dapat mengelola sesi WhatsApp miliknya.",
     });
@@ -1322,9 +1343,26 @@ function removeUnusedWaliRole(userId, kelas, roles) {
 const teacherAttendance = createTeacherAttendance({
   loadJSON, updateJSON, parseImageDataUrl, validateImagePayload, validateImageBuffer,
   verifyFace: (userId, buffer) => antreVerifikasiWajah(userId, buffer).promise,
-  writePrivateFile, requireWebAuth, requireWebAdmin, upload, publicBaseUrl,
+  writePrivateFile, requireWebAuth, requireWebAdmin, requireWebTeacherManager, upload, publicBaseUrl,
   getClasses: loadKelas, getStudents: () => loadJSON(KONTAK_PATH),
   syncBots: () => whatsapp.sync(loadKelas()),
+  notifyTeacherAttendance: async (record) => {
+    const botNumber = teacherAttendance.config().number;
+    if (!botNumber) return;
+    const recipients = Object.entries(loadRoles())
+      .filter(([, role]) => role === "tu")
+      .map(([id]) => id);
+    if (!recipients.length) return;
+    const time = new Date(record.arrival).toLocaleTimeString("id-ID", { timeZone: "Asia/Jakarta" });
+    const status = record.lateMinutes ? `Terlambat ${record.lateMinutes} menit` : "Tepat waktu";
+    await enqueueNotifications(recipients.map((recipientId) => textNotification(
+      `tu:${botNumber}`,
+      recipientId,
+      `*${record.name}* telah absen mengajar.\nJadwal: ${record.schedule.start}–${record.schedule.end} · ${record.schedule.className} · ${record.schedule.subject}\nJam: ${time}\nStatus: ${status}`,
+      { priority: 10, dedupeKey: `teacher-attendance:${record.key}:${recipientId}` }
+    )));
+    notificationOutboxProcessor?.wake();
+  },
 });
 whatsapp.getTuConfig = () => {
   const config = teacherAttendance.config();
@@ -1597,7 +1635,7 @@ app.post("/api/auth/login", async (req, res) => {
   );
   const id = account?.userId;
   const role = id ? loadRoles()[id] : null;
-  if (!account || !passwordValid || !["admin", "wali_kelas"].includes(role)) {
+  if (!account || !passwordValid || !["admin", "tu", "wali_kelas"].includes(role)) {
     return res.status(401).json({ error: "Username atau password salah." });
   }
 
@@ -1697,7 +1735,7 @@ async function dashboardData(user) {
     };
   });
   const whatsappBots = whatsapp.statuses().filter(
-    (bot) => user.role === "admin" || bot.expectedNumber === user.nomor
+    (bot) => user.role === "admin" || (user.role === "tu" && bot.role === "tu") || bot.expectedNumber === user.nomor
   );
 
   return {
@@ -1717,7 +1755,7 @@ async function dashboardData(user) {
       jumlahSiswa: Object.keys(data.siswa || {}).length,
     })),
     admins: user.role === "admin" ? Object.entries(roles)
-      .filter(([, role]) => ["admin", "wali_kelas"].includes(role))
+      .filter(([, role]) => ["admin", "tu", "wali_kelas"].includes(role))
       .map(([id, role]) => ({
         nomor: id.replace("@c.us", ""),
         nama: dashboardUserName(id, role),
@@ -1763,7 +1801,7 @@ app.post("/api/admins", requireWebAdmin, async (req, res) => {
       error: "Username harus 3-32 karakter: huruf kecil, angka, titik, garis bawah, atau tanda hubung.",
     });
   }
-  if (!["admin", "wali_kelas"].includes(role)) {
+  if (!["admin", "tu", "wali_kelas"].includes(role)) {
     return res.status(400).json({ error: "Role pengguna tidak valid." });
   }
 
@@ -1786,7 +1824,7 @@ app.post("/api/admins", requireWebAdmin, async (req, res) => {
         error.code = "ALREADY_EXISTS";
         throw error;
       }
-      if (editing && !["admin", "wali_kelas"].includes(currentRole)) {
+      if (editing && !["admin", "tu", "wali_kelas"].includes(currentRole)) {
         const error = new Error("Pengguna yang diedit tidak ditemukan.");
         error.code = "NOT_FOUND";
         throw error;
@@ -1847,7 +1885,7 @@ app.delete("/api/admins/:number", requireWebAdmin, async (req, res) => {
 
   let found = false;
   await updateJSON([ROLE_PATH, USER_NAMES_PATH, DASHBOARD_ACCOUNTS_PATH, KELAS_PATH], (draft) => {
-    if (["admin", "wali_kelas"].includes(draft[ROLE_PATH][id])) {
+    if (["admin", "tu", "wali_kelas"].includes(draft[ROLE_PATH][id])) {
       found = true;
       for (const data of Object.values(draft[KELAS_PATH])) if (data.waliKelas === id) { data.waliKelas = ""; data.namaWali = ""; }
       delete draft[ROLE_PATH][id]; delete draft[USER_NAMES_PATH][id]; removeDashboardAccount(draft[DASHBOARD_ACCOUNTS_PATH], id);

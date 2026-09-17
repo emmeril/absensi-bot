@@ -105,6 +105,7 @@ test("QR dan reset WhatsApp dibatasi sesuai kepemilikan bot wali", () => {
   const bots = [
     { key: "wali:62111", expectedNumber: "62111", qr: "own" },
     { key: "wali:62222", expectedNumber: "62222", qr: "other" },
+    { key: "tu:62333", expectedNumber: "62333", role: "tu", qr: "teacher" },
   ];
   const context = { whatsapp: { statuses: () => bots } };
   vm.runInNewContext(
@@ -140,6 +141,12 @@ test("QR dan reset WhatsApp dibatasi sesuai kepemilikan bot wali", () => {
   }, response(), () => { nextCalls += 1; });
   assert.equal(nextCalls, 2);
 
+  context.requireWhatsappBotAccess({
+    params: { key: "tu:62333" },
+    webUser: { role: "tu", nomor: "62444" },
+  }, response(), () => { nextCalls += 1; });
+  assert.equal(nextCalls, 3);
+
   res = response();
   context.requireWhatsappBotAccess({
     params: { key: "wali:missing" },
@@ -154,7 +161,7 @@ test("QR dan reset WhatsApp dibatasi sesuai kepemilikan bot wali", () => {
     source,
     /app\.post\("\/api\/whatsapp\/:key\/reset", requireWhatsappBotAccess/
   );
-  assert.match(source, /user\.role === "admin" \|\| bot\.expectedNumber === user\.nomor/);
+  assert.match(source, /user\.role === "admin" \|\| \(user\.role === "tu" && bot\.role === "tu"\) \|\| bot\.expectedNumber === user\.nomor/);
   assert.match(source, /hasQr: Boolean\(qr\)/);
   assert.doesNotMatch(source, /QR_ACCESS_TOKEN|requireQrAccess|QR_RESET_TOKEN/);
 });
