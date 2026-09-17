@@ -1717,11 +1717,13 @@ async function dashboardData(user) {
       jumlahSiswa: Object.keys(data.siswa || {}).length,
     })),
     admins: user.role === "admin" ? Object.entries(roles)
-      .filter(([, role]) => role === "admin")
-      .map(([id]) => ({
+      .filter(([, role]) => ["admin", "wali_kelas"].includes(role))
+      .map(([id, role]) => ({
         nomor: id.replace("@c.us", ""),
-        nama: dashboardUserName(id, "admin"),
+        nama: dashboardUserName(id, role),
         username: dashboardAccountForUser(accounts, id)?.username || "",
+        role,
+        className: Object.entries(kelas).find(([, data]) => data.waliKelas === id)?.[0] || "",
       })) : [],
     currentUser: {
       nomor: user.nomor,
@@ -1744,20 +1746,25 @@ app.post("/api/admins", requireWebAdmin, async (req, res) => {
   const nama = toTitleCase(String(req.body.nama || "").trim());
   const username = normalizeUsername(req.body.username);
   const password = String(req.body.password || "");
+  const role = req.body.role;
+  const className = String(req.body.className || "").trim().toUpperCase();
   const editing = Boolean(originalNomor);
   if (!/^62\d{8,14}$/.test(nomor)) {
-    return res.status(400).json({ error: "Nomor WhatsApp admin belum valid." });
+    return res.status(400).json({ error: "Nomor WhatsApp pengguna belum valid." });
   }
   if (editing && originalNomor !== nomor) {
-    return res.status(400).json({ error: "Nomor admin tidak dapat diubah dari form akun." });
+    return res.status(400).json({ error: "Nomor pengguna tidak dapat diubah dari form akun." });
   }
   if (nama.length < 3) {
-    return res.status(400).json({ error: "Nama admin minimal 3 karakter." });
+    return res.status(400).json({ error: "Nama pengguna minimal 3 karakter." });
   }
   if (!isValidUsername(username)) {
     return res.status(400).json({
       error: "Username harus 3-32 karakter: huruf kecil, angka, titik, garis bawah, atau tanda hubung.",
     });
+  }
+  if (!["admin", "wali_kelas"].includes(role)) {
+    return res.status(400).json({ error: "Role pengguna tidak valid." });
   }
 
   const id = `${nomor}@c.us`;
@@ -1772,18 +1779,42 @@ app.post("/api/admins", requireWebAdmin, async (req, res) => {
     ? await hashPassword(password)
     : currentAccount.passwordHash;
   try {
-    await updateJSON([ROLE_PATH, USER_NAMES_PATH, DASHBOARD_ACCOUNTS_PATH], (draft) => {
-      if (!editing && draft[ROLE_PATH][id] === "admin") {
-        const error = new Error("Nomor tersebut sudah menjadi admin.");
+    await updateJSON([ROLE_PATH, USER_NAMES_PATH, DASHBOARD_ACCOUNTS_PATH, KELAS_PATH], (draft) => {
+      const currentRole = draft[ROLE_PATH][id];
+      if (!editing && currentRole) {
+        const error = new Error("Nomor tersebut sudah terdaftar sebagai pengguna.");
         error.code = "ALREADY_EXISTS";
         throw error;
       }
-      if (editing && draft[ROLE_PATH][id] !== "admin") {
-        const error = new Error("Admin yang diedit tidak ditemukan.");
+      if (editing && !["admin", "wali_kelas"].includes(currentRole)) {
+        const error = new Error("Pengguna yang diedit tidak ditemukan.");
         error.code = "NOT_FOUND";
         throw error;
       }
-      draft[ROLE_PATH][id] = "admin";
+      if (editing && currentRole !== role) {
+        const error = new Error("Role pengguna tidak dapat diubah. Buat pengguna baru untuk role lain.");
+        error.code = "ROLE_CHANGE";
+        throw error;
+      }
+      if (role === "wali_kelas") {
+        const assignedClass = draft[KELAS_PATH][className];
+        if (!className || !assignedClass) {
+          const error = new Error("Pilih kelas yang akan diampu wali kelas.");
+          error.code = "CLASS_REQUIRED";
+          throw error;
+        }
+        if (assignedClass.waliKelas && assignedClass.waliKelas !== id) {
+          const error = new Error("Kelas tersebut sudah memiliki wali kelas.");
+          error.code = "CLASS_ASSIGNED";
+          throw error;
+        }
+        for (const data of Object.values(draft[KELAS_PATH])) {
+          if (data.waliKelas === id) { data.waliKelas = ""; data.namaWali = ""; }
+        }
+        assignedClass.waliKelas = id;
+        assignedClass.namaWali = nama;
+      }
+      draft[ROLE_PATH][id] = role;
       draft[USER_NAMES_PATH][id] = nama;
       setDashboardAccount(draft[DASHBOARD_ACCOUNTS_PATH], {
         username,
@@ -1795,10 +1826,12 @@ app.post("/api/admins", requireWebAdmin, async (req, res) => {
     if (error.code === "ALREADY_EXISTS") return res.status(409).json({ error: error.message });
     if (error.code === "USERNAME_EXISTS") return res.status(409).json({ error: error.message });
     if (error.code === "NOT_FOUND") return res.status(404).json({ error: error.message });
+    if (["ROLE_CHANGE", "CLASS_REQUIRED", "CLASS_ASSIGNED"].includes(error.code)) return res.status(400).json({ error: error.message });
     throw error;
   }
   if (id === req.webUser.id) req.webUser.username = username;
-  res.status(editing ? 200 : 201).json({ ok: true, nomor, nama, username, role: "admin" });
+  if (role === "wali_kelas") void whatsapp.sync(loadKelas()).catch((error) => console.error("[Baileys] Gagal menyelaraskan bot wali:", error.message));
+  res.status(editing ? 200 : 201).json({ ok: true, nomor, nama, username, role, className });
 });
 
 app.delete("/api/admins/:number", requireWebAdmin, async (req, res) => {
@@ -1808,65 +1841,30 @@ app.delete("/api/admins/:number", requireWebAdmin, async (req, res) => {
   }
 
   const id = `${nomor}@c.us`;
-  if (id === req.webUser.id) {
+  if (id === req.webUser.id && loadRoles()[id] === "admin") {
     return res.status(400).json({ error: "Anda tidak dapat menghapus akun admin sendiri." });
   }
 
   let found = false;
-  await updateJSON([ROLE_PATH, DASHBOARD_ACCOUNTS_PATH, KELAS_PATH], (draft) => {
-    if (draft[ROLE_PATH][id] === "admin") {
+  await updateJSON([ROLE_PATH, USER_NAMES_PATH, DASHBOARD_ACCOUNTS_PATH, KELAS_PATH], (draft) => {
+    if (["admin", "wali_kelas"].includes(draft[ROLE_PATH][id])) {
       found = true;
-      const masihMenjadiWali = Object.values(draft[KELAS_PATH]).some(
-        (data) => data.waliKelas === id
-      );
-      if (masihMenjadiWali) draft[ROLE_PATH][id] = "wali_kelas";
-      else {
-        delete draft[ROLE_PATH][id];
-        removeDashboardAccount(draft[DASHBOARD_ACCOUNTS_PATH], id);
-      }
+      for (const data of Object.values(draft[KELAS_PATH])) if (data.waliKelas === id) { data.waliKelas = ""; data.namaWali = ""; }
+      delete draft[ROLE_PATH][id]; delete draft[USER_NAMES_PATH][id]; removeDashboardAccount(draft[DASHBOARD_ACCOUNTS_PATH], id);
     }
   });
-  if (!found) return res.status(404).json({ error: "Admin tidak ditemukan." });
+  if (!found) return res.status(404).json({ error: "Pengguna tidak ditemukan." });
+  void whatsapp.sync(loadKelas()).catch((error) => console.error("[Baileys] Gagal menyelaraskan bot wali:", error.message));
   res.json({ ok: true, nomor });
 });
 
 app.post("/api/classes", requireWebAdmin, async (req, res) => {
   const nama = String(req.body.nama || "").trim().toUpperCase();
   const originalNama = String(req.body.originalNama || "").trim().toUpperCase();
-  const waliKelas = normalizeNomor(req.body.waliKelas);
-  if (waliKelas && waliKelas === teacherAttendance.config().number) {
-    return res.status(400).json({ error: "Nomor Bot Guru tidak boleh digunakan sebagai Bot Siswa." });
-  }
-  const namaWali = toTitleCase(String(req.body.namaWali || "").trim());
-  const requestedUsername = normalizeUsername(req.body.username);
-  const password = String(req.body.password || "");
-  if (!nama || !/^62\d{8,14}$/.test(waliKelas) || !namaWali) {
-    return res.status(400).json({ error: "Data kelas dan wali kelas belum valid." });
-  }
-  const waliId = `${waliKelas}@c.us`;
-  const currentAccount = dashboardAccountForUser(loadDashboardAccounts(), waliId);
-  const username = requestedUsername || currentAccount?.username || "";
-  if (!isValidUsername(username)) {
-    return res.status(400).json({
-      error: "Username wali harus 3-32 karakter: huruf kecil, angka, titik, garis bawah, atau tanda hubung.",
-    });
-  }
-  if (!password && !currentAccount) {
-    return res.status(400).json({ error: "Password wajib diisi untuk akun wali baru." });
-  }
-  if (password && !isValidPassword(password)) {
-    return res.status(400).json({ error: "Password harus 10-128 karakter." });
-  }
-  const passwordHash = password
-    ? await hashPassword(password)
-    : currentAccount.passwordHash;
+  if (!nama) return res.status(400).json({ error: "Nama kelas belum valid." });
   try {
-    await updateJSON(
-      [KELAS_PATH, ROLE_PATH, USER_NAMES_PATH, DASHBOARD_ACCOUNTS_PATH],
-      (draft) => {
-      if (waliKelas === teacherAttendance.config().number) throw new Error("Nomor Bot Guru tidak boleh digunakan sebagai Bot Siswa.");
+    await updateJSON([KELAS_PATH], (draft) => {
       const kelas = draft[KELAS_PATH];
-      const roles = draft[ROLE_PATH];
       if (originalNama) {
         if (!kelas[originalNama]) {
           const error = new Error("Kelas yang diedit tidak ditemukan.");
@@ -1888,21 +1886,7 @@ app.post("/api/classes", requireWebAdmin, async (req, res) => {
         throw error;
       }
 
-      const waliSebelumnya = kelas[nama]?.waliKelas;
-      kelas[nama] ||= { siswa: {} };
-      kelas[nama].waliKelas = waliId;
-      kelas[nama].namaWali = namaWali;
-      if (roles[waliId] !== "admin") roles[waliId] = "wali_kelas";
-      draft[USER_NAMES_PATH][waliId] = namaWali;
-      removeUnusedWaliRole(waliSebelumnya, kelas, roles);
-      if (waliSebelumnya && !roles[waliSebelumnya]) {
-        removeDashboardAccount(draft[DASHBOARD_ACCOUNTS_PATH], waliSebelumnya);
-      }
-      setDashboardAccount(draft[DASHBOARD_ACCOUNTS_PATH], {
-        username,
-        userId: waliId,
-        passwordHash,
-      });
+      kelas[nama] ||= { siswa: {}, waliKelas: "", namaWali: "" };
     });
   } catch (error) {
     if (error.code === "NOT_FOUND") return res.status(404).json({ error: error.message });
@@ -1910,16 +1894,13 @@ app.post("/api/classes", requireWebAdmin, async (req, res) => {
     if (error.code === "USERNAME_EXISTS") return res.status(409).json({ error: error.message });
     throw error;
   }
-  void whatsapp.sync(loadKelas()).catch((error) => {
-    console.error("[Baileys] Gagal menyelaraskan bot wali:", error.message);
-  });
   res.json({ ok: true });
 });
 
 app.delete("/api/classes/:name", requireWebAdmin, async (req, res) => {
   const nama = String(req.params.name || "").toUpperCase();
   try {
-    await updateJSON([KELAS_PATH, ROLE_PATH, DASHBOARD_ACCOUNTS_PATH], (draft) => {
+    await updateJSON([KELAS_PATH], (draft) => {
       const kelas = draft[KELAS_PATH];
       if (!kelas[nama]) {
         const error = new Error("Kelas tidak ditemukan.");
@@ -1931,12 +1912,7 @@ app.delete("/api/classes/:name", requireWebAdmin, async (req, res) => {
         error.code = "NOT_EMPTY";
         throw error;
       }
-      const waliKelas = kelas[nama].waliKelas;
       delete kelas[nama];
-      removeUnusedWaliRole(waliKelas, kelas, draft[ROLE_PATH]);
-      if (!draft[ROLE_PATH][waliKelas]) {
-        removeDashboardAccount(draft[DASHBOARD_ACCOUNTS_PATH], waliKelas);
-      }
     });
   } catch (error) {
     if (error.code === "NOT_FOUND") return res.status(404).json({ error: error.message });

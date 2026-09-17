@@ -31,9 +31,10 @@ test("dashboard login memakai username dan password tanpa OTP", () => {
   assert.doesNotMatch(dashboardPage, /request-otp|Kode OTP|verifyOtp/);
 });
 
-test("form admin dan wali kelas mengelola akun dashboard", () => {
-  assert.match(dashboardPage, /classForm\.username/);
-  assert.match(dashboardPage, /classForm\.password/);
+test("form management user mengelola akun admin dan wali kelas", () => {
+  assert.match(dashboardPage, /Tambah User/);
+  assert.match(dashboardPage, /adminForm\.role/);
+  assert.match(dashboardPage, /adminForm\.className/);
   assert.match(dashboardPage, /adminForm\.username/);
   assert.match(dashboardPage, /adminForm\.password/);
 });
@@ -42,7 +43,6 @@ test("semua input password memiliki placeholder dan tombol tampilkan password", 
   assert.match(dashboardPage, /placeholder="Masukkan password"/);
   assert.match(dashboardPage, /Minimal 10 karakter/);
   assert.match(dashboardPage, /showLoginPassword \? 'text' : 'password'/);
-  assert.match(dashboardPage, /showClassPassword \? 'text' : 'password'/);
   assert.match(dashboardPage, /showAdminPassword \? 'text' : 'password'/);
   assert.match(dashboardPage, /fa-eye-slash/);
   assert.match(dashboardPage, /aria-label/);
@@ -167,12 +167,11 @@ test("semua tabel data memiliki filter dan tombol reset", () => {
     "report.statusFilter",
     "students.classFilter",
     "students.photoFilter",
-    "classes.accountFilter",
     "classes.studentFilter",
     "permissions.classFilter",
     "permissions.evidenceFilter",
     "admins.accountFilter",
-    "admins.ownerFilter",
+    "admins.roleFilter",
   ]) {
     assert.match(dashboardPage, new RegExp(`tables\\.${filter}`));
   }
@@ -208,16 +207,15 @@ test("filter tabel dapat dikombinasikan dan direset", () => {
     { nama: "7A", namaWali: "Wati", waliKelas: "6283", username: "wali.7a", jumlahSiswa: 2 },
     { nama: "7B", namaWali: "Dodi", waliKelas: "6284", username: "", jumlahSiswa: 0 },
   ];
-  state.tables.classes.accountFilter = "missing";
   state.tables.classes.studentFilter = "empty";
   assert.deepEqual(Array.from(state.filteredClasses, (row) => row.nama), ["7B"]);
 
   state.data.admins = [
-    { nama: "Admin Utama", nomor: "6281", username: "admin" },
-    { nama: "Admin Lama", nomor: "6282", username: "" },
+    { nama: "Admin Utama", nomor: "6281", username: "admin", role: "admin" },
+    { nama: "Wali 7B", nomor: "6282", username: "", role: "wali_kelas", className: "7B" },
   ];
   state.tables.admins.accountFilter = "available";
-  state.tables.admins.ownerFilter = "current";
+  state.tables.admins.roleFilter = "admin";
   assert.deepEqual(Array.from(state.filteredAdmins, (row) => row.nama), ["Admin Utama"]);
 
   state.resetTableFilters("students");
