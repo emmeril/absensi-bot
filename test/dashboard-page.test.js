@@ -40,6 +40,12 @@ test("form management user mengelola akun admin dan wali kelas", () => {
   assert.match(dashboardPage, /adminForm\.password/);
 });
 
+test("notifikasi absensi guru dikirim ke admin dan tata usaha", () => {
+  const server = fs.readFileSync(path.join(__dirname, "..", "index.js"), "utf8");
+  assert.match(server, /\["admin", "tu"\]\.includes\(role\)/);
+  assert.match(server, /teacher-attendance:\$\{record\.key\}/);
+});
+
 test("semua input password memiliki placeholder dan tombol tampilkan password", () => {
   assert.match(dashboardPage, /placeholder="Masukkan password"/);
   assert.match(dashboardPage, /Minimal 10 karakter/);

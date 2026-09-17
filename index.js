@@ -1350,7 +1350,7 @@ const teacherAttendance = createTeacherAttendance({
     const botNumber = teacherAttendance.config().number;
     if (!botNumber) return;
     const recipients = Object.entries(loadRoles())
-      .filter(([, role]) => role === "tu")
+      .filter(([, role]) => ["admin", "tu"].includes(role))
       .map(([id]) => id);
     if (!recipients.length) return;
     const time = new Date(record.arrival).toLocaleTimeString("id-ID", { timeZone: "Asia/Jakarta" });
