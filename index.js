@@ -720,6 +720,30 @@ function dashboardUserName(id, role) {
   return ({ admin: "Administrator", tu: "Tata Usaha", wali_kelas: "Wali Kelas" })[role] || "Pengguna";
 }
 
+async function syncWaliKelasToTeachers() {
+  const roles = loadRoles();
+  const names = loadJSON(USER_NAMES_PATH, {});
+  const kelas = loadKelas();
+  let synced = 0;
+  await updateJSON([TEACHERS_PATH], (draft) => {
+    const teacherConfig = draft[TEACHERS_PATH];
+    teacherConfig.teachers ||= {};
+    for (const [id, role] of Object.entries(roles)) {
+      if (role !== "wali_kelas") continue;
+      const nomor = id.replace("@c.us", "");
+      if (teacherConfig.number === nomor) continue;
+      const name = names[id] || Object.values(kelas).find((data) => data.waliKelas === id)?.namaWali;
+      if (!name) continue;
+      const current = teacherConfig.teachers[nomor];
+      if (!current || current.name !== name) {
+        teacherConfig.teachers[nomor] = { ...(current || {}), name, active: current?.active !== false };
+        synced += 1;
+      }
+    }
+  });
+  return synced;
+}
+
 function teksBantuan(role, terdaftar) {
   const lines = [`*Perintah WhatsApp ${loadBrandSettings().name}*`];
 
@@ -1817,7 +1841,7 @@ app.post("/api/admins", requireWebAdmin, async (req, res) => {
     ? await hashPassword(password)
     : currentAccount.passwordHash;
   try {
-    await updateJSON([ROLE_PATH, USER_NAMES_PATH, DASHBOARD_ACCOUNTS_PATH, KELAS_PATH], (draft) => {
+    await updateJSON([ROLE_PATH, USER_NAMES_PATH, DASHBOARD_ACCOUNTS_PATH, KELAS_PATH, KONTAK_PATH, TEACHERS_PATH], (draft) => {
       const currentRole = draft[ROLE_PATH][id];
       if (!editing && currentRole) {
         const error = new Error("Nomor tersebut sudah terdaftar sebagai pengguna.");
@@ -1846,11 +1870,19 @@ app.post("/api/admins", requireWebAdmin, async (req, res) => {
           error.code = "CLASS_ASSIGNED";
           throw error;
         }
+        const teacherConfig = draft[TEACHERS_PATH];
+        if (teacherConfig.number === nomor || draft[KONTAK_PATH][id]) {
+          const error = new Error("Nomor wali kelas tidak boleh sama dengan nomor Bot Guru atau siswa.");
+          error.code = "TEACHER_NUMBER_UNAVAILABLE";
+          throw error;
+        }
         for (const data of Object.values(draft[KELAS_PATH])) {
           if (data.waliKelas === id) { data.waliKelas = ""; data.namaWali = ""; }
         }
         assignedClass.waliKelas = id;
         assignedClass.namaWali = nama;
+        teacherConfig.teachers ||= {};
+        teacherConfig.teachers[nomor] = { ...teacherConfig.teachers[nomor], name: nama, active: true };
       }
       draft[ROLE_PATH][id] = role;
       draft[USER_NAMES_PATH][id] = nama;
@@ -1864,7 +1896,7 @@ app.post("/api/admins", requireWebAdmin, async (req, res) => {
     if (error.code === "ALREADY_EXISTS") return res.status(409).json({ error: error.message });
     if (error.code === "USERNAME_EXISTS") return res.status(409).json({ error: error.message });
     if (error.code === "NOT_FOUND") return res.status(404).json({ error: error.message });
-    if (["ROLE_CHANGE", "CLASS_REQUIRED", "CLASS_ASSIGNED"].includes(error.code)) return res.status(400).json({ error: error.message });
+    if (["ROLE_CHANGE", "CLASS_REQUIRED", "CLASS_ASSIGNED", "TEACHER_NUMBER_UNAVAILABLE"].includes(error.code)) return res.status(400).json({ error: error.message });
     throw error;
   }
   if (id === req.webUser.id) req.webUser.username = username;
@@ -2470,6 +2502,8 @@ async function startBot() {
   try {
     jsonState.replace(await initJsonStore(JSON_STORES));
     console.log(`Database Sequelize siap: ${DB_PATH}`);
+    const syncedWaliTeachers = await syncWaliKelasToTeachers();
+    if (syncedWaliTeachers) console.log(`[Sinkronisasi Guru] ${syncedWaliTeachers} wali kelas ditambahkan atau diperbarui.`);
     if (!Object.keys(loadDashboardAccounts()).length) {
       console.warn(
         "⚠️ Belum ada akun dashboard. Atur INITIAL_ADMIN_USERNAME dan INITIAL_ADMIN_PASSWORD, lalu gunakan database baru atau buat akun melalui data akun."

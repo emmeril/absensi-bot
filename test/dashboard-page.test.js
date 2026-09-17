@@ -46,6 +46,13 @@ test("notifikasi absensi guru dikirim ke admin dan tata usaha", () => {
   assert.match(server, /teacher-attendance:\$\{record\.key\}/);
 });
 
+test("wali kelas disinkronkan ke data guru", () => {
+  const server = fs.readFileSync(path.join(__dirname, "..", "index.js"), "utf8");
+  assert.match(server, /KELAS_PATH, KONTAK_PATH, TEACHERS_PATH/);
+  assert.match(server, /teacherConfig\.teachers\[nomor\] = \{ \.\.\.teacherConfig\.teachers\[nomor\], name: nama, active: true \}/);
+  assert.match(server, /async function syncWaliKelasToTeachers\(\)/);
+});
+
 test("semua input password memiliki placeholder dan tombol tampilkan password", () => {
   assert.match(dashboardPage, /placeholder="Masukkan password"/);
   assert.match(dashboardPage, /Minimal 10 karakter/);
