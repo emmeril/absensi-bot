@@ -148,6 +148,42 @@ test("data master menyediakan dropdown jadwal dan melindungi nilai yang masih di
   assert.equal((await f.request("/api/teachers/catalog/subjects", { name: "Seni Budaya" }, "admin")).status, 200);
   assert.equal((await f.request("/api/teachers/catalog/subjects/Seni%20Budaya", undefined, "admin", "DELETE")).status, 200);
 });
+test("mengedit data master memperbarui nama pada jadwal mengajar", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.request("/api/teachers/catalog/subjects/Matematika", { name: "Aljabar" }, "admin", "PATCH")).status, 200);
+  assert.equal((await f.request("/api/teachers/catalog/classes/VII%20A", { name: "VII B" }, "admin", "PATCH")).status, 200);
+  const c = f.service.config();
+  assert.deepEqual(c.subjects, ["Aljabar"]);
+  assert.deepEqual(c.classes, ["VII B"]);
+  assert.equal(c.schedules[id].subject, "Aljabar");
+  assert.equal(c.schedules[id].className, "VII B");
+});
+test("menghapus guru menghapus jadwal aktif dan mencabut tautan", async (t) => {
+  const f = await fixture(t);
+  const { token } = await f.command();
+  assert.equal((await f.request(`/api/teachers/person/${num}`, undefined, "admin", "DELETE")).status, 200);
+  assert.equal((await f.request(`/api/teacher-camera/${token}`)).status, 410);
+  assert.deepEqual(f.service.config().teachers, {});
+  assert.equal(f.service.config().schedules[id], undefined);
+  assert.equal(f.service.report(date).length, 0);
+  assert.equal((await f.request(`/api/teachers/person/${num}`, undefined, "admin", "DELETE")).status, 404);
+});
+test("mengubah nomor guru memindahkan jadwal, izin, token, dan identitas riwayat", async (t) => {
+  const f = await fixture(t);
+  const newNum = "6281111111111";
+  const { token } = await f.command();
+  await f.state.update(TEACHER_RECORDS_PATH, (draft) => { draft[TEACHER_RECORDS_PATH].permissions ||= {}; draft[TEACHER_RECORDS_PATH].permissions[`${date}_${num}`] = { key: `${date}_${num}`, date, number: num, name: "Bu Ani", type: "Izin", reason: "Rapat" }; });
+  const result = await f.request("/api/teachers/person", { originalNumber: num, number: newNum, name: "Bu Budi", active: true }, "admin");
+  assert.equal(result.status, 200);
+  const c = f.service.config();
+  assert.equal(c.teachers[num], undefined);
+  assert.equal(c.teachers[newNum].name, "Bu Budi");
+  assert.equal(c.schedules[id].number, newNum);
+  assert.equal(f.state.read(TEACHER_RECORDS_PATH).tokens[Object.keys(f.state.read(TEACHER_RECORDS_PATH).tokens)[0]].number, newNum);
+  assert.equal(f.state.read(TEACHER_RECORDS_PATH).permissions[`${date}_${newNum}`].number, newNum);
+  await f.state.update(TEACHER_RECORDS_PATH, (draft) => { delete draft[TEACHER_RECORDS_PATH].permissions[`${date}_${newNum}`]; });
+  assert.equal((await f.request(`/api/teacher-camera/${token}`)).status, 200);
+});
 test("pengaturan nomor bot guru tidak mewajibkan atau menghapus hari libur lama", async (t) => {
   const f = await fixture(t);
   await f.state.update(TEACHERS_PATH, (draft) => { draft[TEACHERS_PATH].holidays = [date]; });

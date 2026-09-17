@@ -115,6 +115,11 @@ test("pengaturan Bot Guru tidak menampilkan formulir tanggal libur", () => {
   assert.match(teacherScript, /api\("\/settings", \{ number: \$\("tuNumber"\)\.value \}\)/);
 });
 
+test("tombol simpan Bot Guru berada di samping form nomor pada layar lebar", () => {
+  assert.match(dashboardPage, /id="settingsForm" class="flex max-w-xl flex-col gap-4 sm:flex-row sm:items-end"/);
+  assert.match(dashboardPage, /id="tuNumber"[\s\S]*?<\/div>\s*<button class="teacher-button-primary w-fit shrink-0 whitespace-nowrap px-3 py-2 sm:mb-5"/);
+});
+
 test("pengaturan brand mengubah nama dan mengunggah logo aplikasi", () => {
   assert.match(dashboardPage, /tab === 'brand'/);
   assert.match(dashboardPage, /@submit\.prevent="saveBrand"/);
@@ -284,6 +289,10 @@ test("data guru mengikuti pola tabel siswa dan memakai modal", () => {
   for (const key of ["name", "number", "status", "photo"]) assert.match(dashboardPage, new RegExp(`data-teacher-sort="${key}"`));
   assert.match(teacherScript, /function renderTeachers\(\)/);
   assert.match(teacherScript, /teacherTable\.page/);
+  assert.doesNotMatch(dashboardPage, /id="teacherNumber"[^>]*\sdisabled(?:\s|=|>)/);
+  assert.match(teacherScript, /originalNumber: \$\("teacherNumber"\)\.dataset\.original/);
+  assert.match(teacherScript, /api\(`\/person\/\$\{encodeURIComponent\(teacher\.number\)\}`, undefined, "DELETE"\)/);
+  assert.match(teacherScript, /fa-trash/);
   assert.doesNotMatch(dashboardPage, /<th>Tindakan<\/th>/);
 });
 
@@ -303,6 +312,8 @@ test("jadwal guru memakai dropdown data master mata pelajaran dan kelas", () => 
   assert.match(dashboardPage, /id="classesPanel"/);
   assert.match(dashboardPage, /data-add-catalog="subjects"[^>]*>[^<]*<i[^>]*><\/i>Tambah Mata Pelajaran<\/button>/);
   assert.match(dashboardPage, /data-add-catalog="classes"[^>]*>[^<]*<i[^>]*><\/i>Tambah Kelas<\/button>/);
+  assert.match(teacherScript, /openCatalogModal\(kind, name\)/);
+  assert.match(teacherScript, /original \? `\/catalog\/\$\{kind\}\/\$\{encodeURIComponent\(original\)\}`/);
   assert.match(dashboardPage, /id="catalogModal"[^>]+role="dialog"[^>]+aria-modal="true"/);
   for (const kind of ["subjects", "classes"]) {
     assert.match(dashboardPage, new RegExp(`id="${kind}CatalogPageSize"`));

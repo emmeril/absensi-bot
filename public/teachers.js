@@ -48,13 +48,14 @@ function bindTableControls(prefix, table, fields, render, sortSelector) {
 }
 function updateSortButtons(table, selector) { for (const sortButton of root.querySelectorAll(`[data-${selector}-sort]`)) { const active = table.sortKey === sortButton.dataset[`${selector}Sort`]; sortButton.closest("th").setAttribute("aria-sort", active ? (table.sortDirection === "asc" ? "ascending" : "descending") : "none"); sortButton.querySelector("i").className = `fa-solid ${active ? (table.sortDirection === "asc" ? "fa-sort-up" : "fa-sort-down") : "fa-sort"}`; } }
 function photoLink(parent, key, kind, label) { const a = document.createElement("a"); a.href = `/api/teachers/report/${encodeURIComponent(key)}/${kind}`; a.target = "_blank"; a.rel = "noopener"; a.textContent = label; a.className = "block text-[#3c8dbc] hover:underline"; parent.append(a); }
-function closeTeacherModal() { $("teacherModal").hidden = true; $("teacherForm").reset(); $("teacherNumber").disabled = false; }
+function closeTeacherModal() { $("teacherModal").hidden = true; $("teacherForm").reset(); $("teacherNumber").disabled = false; delete $("teacherNumber").dataset.original; }
 function openTeacherModal(number = "") {
   const teacher = number ? config.teachers[number] : null;
   $("teacherModalTitle").textContent = teacher ? "Edit Guru" : "Tambah Guru";
   $("teacherName").value = teacher?.name || "";
   $("teacherNumber").value = number;
-  $("teacherNumber").disabled = Boolean(teacher);
+  if (teacher) $("teacherNumber").dataset.original = number; else delete $("teacherNumber").dataset.original;
+  $("teacherNumber").disabled = false;
   $("teacherActive").value = String(teacher?.active ?? true);
   $("teacherModal").hidden = false;
   $("teacherName").focus();
@@ -90,6 +91,11 @@ function renderTeachers() {
     actions.append(input);
     teacherAction(actions, "Unggah foto", "fa-camera", "bg-emerald-50 text-emerald-700", () => input.click());
     teacherAction(actions, "Edit", "fa-pen-to-square", "bg-amber-50 text-amber-700", () => openTeacherModal(teacher.number));
+    teacherAction(actions, "Hapus", "fa-trash", "bg-red-50 text-red-700", async () => {
+      if (!confirm(`Hapus guru ${teacher.name}? Jadwal mengajar aktif guru ini juga akan dihapus, sedangkan riwayat absensinya tetap disimpan.`)) return;
+      await api(`/person/${encodeURIComponent(teacher.number)}`, undefined, "DELETE");
+      await reload(); await Promise.all([loadReport(), loadSummary(), loadPermissions()]); message("Guru dan jadwal aktifnya dihapus.");
+    });
   }
   if (!visible.length) emptyRow($("teachers"), 6, "Data tidak ditemukan");
   $("teacherCurrentPage").textContent = teacherTable.page;
@@ -105,8 +111,8 @@ function renderTeachers() {
 }
 function option(select, value, label = value) { const item = document.createElement("option"); item.value = value; item.textContent = label; select.append(item); }
 function catalogDefinition(kind) { return kind === "subjects" ? { label: "Mata Pelajaran", singular: "mata pelajaran", placeholder: "Contoh: Matematika" } : { label: "Kelas", singular: "kelas", placeholder: "Contoh: VII A" }; }
-function closeCatalogModal() { $("catalogModal").hidden = true; $("catalogForm").reset(); delete $("catalogModal").dataset.kind; }
-function openCatalogModal(kind) { const definition = catalogDefinition(kind); $("catalogModal").dataset.kind = kind; $("catalogModalTitle").textContent = `Tambah ${definition.label}`; $("catalogNameLabel").textContent = `Nama ${definition.label}`; $("catalogName").placeholder = definition.placeholder; $("catalogModal").hidden = false; $("catalogName").focus(); }
+function closeCatalogModal() { $("catalogModal").hidden = true; $("catalogForm").reset(); delete $("catalogModal").dataset.kind; delete $("catalogModal").dataset.original; }
+function openCatalogModal(kind, original = "") { const definition = catalogDefinition(kind); $("catalogModal").dataset.kind = kind; if (original) $("catalogModal").dataset.original = original; else delete $("catalogModal").dataset.original; $("catalogModalTitle").textContent = `${original ? "Edit" : "Tambah"} ${definition.label}`; $("catalogNameLabel").textContent = `Nama ${definition.label}`; $("catalogName").placeholder = definition.placeholder; $("catalogName").value = original; $("catalogModal").hidden = false; $("catalogName").focus(); }
 function filteredCatalog(kind) { const query = catalogTables[kind].search.toLocaleLowerCase("id"); return (config[kind] || []).filter((name) => name.toLocaleLowerCase("id").includes(query)); }
 function renderCatalog(kind) {
   const table = catalogTables[kind]; const definition = catalogDefinition(kind);
@@ -115,7 +121,8 @@ function renderCatalog(kind) {
   const start = (table.page - 1) * table.size; const visible = rows.slice(start, start + table.size); const body = $(`${kind}CatalogRows`); body.replaceChildren();
   for (const [index, name] of visible.entries()) {
     const row = body.insertRow(); cell(row, start + index + 1); cell(row, name);
-    const actions = document.createElement("div"); actions.className = "flex justify-center"; cell(row, "").append(actions);
+    const actions = document.createElement("div"); actions.className = "flex justify-center gap-1"; cell(row, "").append(actions);
+    teacherAction(actions, `Edit ${definition.label}`, "fa-pen-to-square", "bg-amber-50 text-amber-700", () => openCatalogModal(kind, name));
     teacherAction(actions, `Hapus ${definition.label}`, "fa-trash", "bg-red-50 text-red-700", async () => {
       if (!confirm(`Hapus ${definition.singular} ${name}?`)) return;
       await api(`/catalog/${kind}/${encodeURIComponent(name)}`, undefined, "DELETE"); await reload(); message(`${definition.label} dihapus.`);
@@ -252,7 +259,8 @@ $("catalogModal").onclick = (event) => { if (event.target === $("catalogModal"))
 $("catalogModal").onkeydown = (event) => { if (event.key === "Escape") closeCatalogModal(); };
 $("catalogForm").onsubmit = (event) => {
   event.preventDefault(); const submit = event.submitter; const kind = $("catalogModal").dataset.kind; const label = catalogDefinition(kind).label;
-  action(async () => { submit.disabled = true; try { await api(`/catalog/${kind}`, { name: $("catalogName").value }); closeCatalogModal(); await reload(); message(`${label} ditambahkan.`); } finally { submit.disabled = false; } });
+  const original = $("catalogModal").dataset.original;
+  action(async () => { submit.disabled = true; try { await api(original ? `/catalog/${kind}/${encodeURIComponent(original)}` : `/catalog/${kind}`, { name: $("catalogName").value }, original ? "PATCH" : "POST"); closeCatalogModal(); await reload(); message(`${label} ${original ? "diperbarui" : "ditambahkan"}.`); } finally { submit.disabled = false; } });
 };
 for (const kind of ["subjects", "classes"]) {
   const table = catalogTables[kind];
@@ -273,7 +281,7 @@ for (const id of ["settingsForm", "teacherForm", "scheduleForm"]) $(id).onsubmit
     submit.disabled = true;
     try {
       if (id === "settingsForm") await api("/settings", { number: $("tuNumber").value });
-      if (id === "teacherForm") await api("/person", { number: $("teacherNumber").value, name: $("teacherName").value, active: $("teacherActive").value === "true" });
+      if (id === "teacherForm") await api("/person", { originalNumber: $("teacherNumber").dataset.original || "", number: $("teacherNumber").value, name: $("teacherName").value, active: $("teacherActive").value === "true" });
       if (id === "scheduleForm") await api("/schedules", { number: $("scheduleTeacher").value, day: Number($("day").value), subject: $("subject").value, className: $("className").value, start: $("start").value, end: $("end").value, tolerance: Number($("tolerance").value), from: $("from").value, until: $("until").value });
       await reload(); await loadReport(); message(id === "settingsForm" ? "Pengaturan disimpan. Hubungkan nomor melalui menu Bot Guru." : "Data tersimpan.");
       if (id === "settingsForm") await refreshWhatsapp();
