@@ -148,6 +148,17 @@ test("data master menyediakan dropdown jadwal dan melindungi nilai yang masih di
   assert.equal((await f.request("/api/teachers/catalog/subjects", { name: "Seni Budaya" }, "admin")).status, 200);
   assert.equal((await f.request("/api/teachers/catalog/subjects/Seni%20Budaya", undefined, "admin", "DELETE")).status, 200);
 });
+test("jadwal dapat diedit dan dihapus tanpa mengubah masa berlaku yang tersimpan", async (t) => {
+  const f = await fixture(t);
+  const edited = await f.request(`/api/teachers/schedules/${id}`, { number: num, day: 1, subject: "Matematika", className: "VII A", start: "08:30", end: "09:50" }, "admin", "PATCH");
+  assert.equal(edited.status, 200);
+  assert.equal(f.service.config().schedules[id].start, "08:30");
+  assert.equal(f.service.config().schedules[id].tolerance, 5);
+  assert.equal(f.service.config().schedules[id].from, "2026-09-01");
+  assert.equal((await f.request(`/api/teachers/schedules/${id}`, undefined, "admin", "DELETE")).status, 200);
+  assert.equal(f.service.config().schedules[id], undefined);
+  assert.equal((await f.request(`/api/teachers/schedules/${id}`, undefined, "admin", "DELETE")).status, 404);
+});
 test("mengedit data master memperbarui nama pada jadwal mengajar", async (t) => {
   const f = await fixture(t);
   assert.equal((await f.request("/api/teachers/catalog/subjects/Matematika", { name: "Aljabar" }, "admin", "PATCH")).status, 200);

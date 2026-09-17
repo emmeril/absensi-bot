@@ -113,6 +113,24 @@ function option(select, value, label = value) { const item = document.createElem
 function catalogDefinition(kind) { return kind === "subjects" ? { label: "Mata Pelajaran", singular: "mata pelajaran", placeholder: "Contoh: Matematika" } : { label: "Kelas", singular: "kelas", placeholder: "Contoh: VII A" }; }
 function closeCatalogModal() { $("catalogModal").hidden = true; $("catalogForm").reset(); delete $("catalogModal").dataset.kind; delete $("catalogModal").dataset.original; }
 function openCatalogModal(kind, original = "") { const definition = catalogDefinition(kind); $("catalogModal").dataset.kind = kind; if (original) $("catalogModal").dataset.original = original; else delete $("catalogModal").dataset.original; $("catalogModalTitle").textContent = `${original ? "Edit" : "Tambah"} ${definition.label}`; $("catalogNameLabel").textContent = `Nama ${definition.label}`; $("catalogName").placeholder = definition.placeholder; $("catalogName").value = original; $("catalogModal").hidden = false; $("catalogName").focus(); }
+function closeScheduleModal() { $("scheduleModal").hidden = true; $("scheduleForm").reset(); delete $("scheduleModal").dataset.id; }
+function openScheduleModal(schedule) {
+  $("scheduleForm").reset();
+  if (schedule) {
+    $("scheduleModal").dataset.id = schedule.id;
+    $("scheduleModalTitle").textContent = "Edit Jadwal";
+    $("scheduleTeacher").value = schedule.number;
+    $("day").value = schedule.day;
+    $("subject").value = schedule.subject;
+    $("className").value = schedule.className;
+    $("start").value = schedule.start;
+    $("end").value = schedule.end;
+  } else {
+    delete $("scheduleModal").dataset.id;
+    $("scheduleModalTitle").textContent = "Tambah Jadwal";
+  }
+  $("scheduleModal").hidden = false; $("scheduleTeacher").focus();
+}
 function filteredCatalog(kind) { const query = catalogTables[kind].search.toLocaleLowerCase("id"); return (config[kind] || []).filter((name) => name.toLocaleLowerCase("id").includes(query)); }
 function renderCatalog(kind) {
   const table = catalogTables[kind]; const definition = catalogDefinition(kind);
@@ -151,13 +169,21 @@ async function reload() {
   }
   renderSchedules();
 }
-function scheduleRows() { return Object.values(config.schedules || {}).map((s) => ({ ...s, teacher: config.teachers[s.number]?.name || s.number, time: `${days[s.day]} ${s.start}–${s.end}`, classLabel: `${s.className} · ${s.subject}` })); }
+function scheduleRows() { return Object.values(config.schedules || {}).map((s) => ({ ...s, teacher: config.teachers[s.number]?.name || s.number, time: `${days[s.day]} ${s.start}–${s.end}` })); }
 function renderSchedules() {
   const query = scheduleTable.search.toLocaleLowerCase("id");
-  let rows = scheduleRows().filter((s) => `${s.teacher} ${s.number} ${s.classLabel} ${s.time}`.toLocaleLowerCase("id").includes(query) && (!scheduleTable.dayFilter || String(s.day) === scheduleTable.dayFilter));
-  rows = sortRows(rows, scheduleTable, { teacher: (s) => s.teacher, time: (s) => `${s.day}-${s.start}`, class: (s) => s.classLabel });
+  let rows = scheduleRows().filter((s) => `${s.teacher} ${s.number} ${s.className} ${s.subject} ${s.time}`.toLocaleLowerCase("id").includes(query) && (!scheduleTable.dayFilter || String(s.day) === scheduleTable.dayFilter));
+  rows = sortRows(rows, scheduleTable, { teacher: (s) => s.teacher, time: (s) => `${s.day}-${s.start}`, class: (s) => s.className, subject: (s) => s.subject });
   const page = paginate(rows, scheduleTable); const body = $("schedules"); body.replaceChildren();
-  for (const [index, s] of page.rows.entries()) { const row = body.insertRow(); cell(row, page.start + index + 1); cell(row, s.teacher); cell(row, s.time); cell(row, s.classLabel); cell(row, `${s.from} → ${s.until || "seterusnya"}`); const actions = cell(row, ""); if (!s.until || s.until >= today) button(actions, "Akhiri jadwal", async () => { const until = prompt("Tanggal terakhir jadwal berlaku (YYYY-MM-DD), minimal hari ini:", today); if (!until) return; await api(`/schedules/${encodeURIComponent(s.id)}/end`, { until }); await reload(); await loadReport(); message("Tanggal akhir jadwal disimpan. Riwayat absensi tetap tersedia."); }); }
+  for (const [index, s] of page.rows.entries()) {
+    const row = body.insertRow(); cell(row, page.start + index + 1); cell(row, s.teacher); cell(row, s.time); cell(row, s.className); cell(row, s.subject);
+    const actions = document.createElement("div"); actions.className = "flex justify-center gap-1"; cell(row, "").append(actions);
+    teacherAction(actions, "Edit jadwal", "fa-pen-to-square", "bg-amber-50 text-amber-700", () => openScheduleModal(s));
+    teacherAction(actions, "Hapus jadwal", "fa-trash", "bg-red-50 text-red-700", async () => {
+      if (!confirm(`Hapus jadwal ${s.teacher} pada ${s.time}?`)) return;
+      await api(`/schedules/${encodeURIComponent(s.id)}`, undefined, "DELETE"); await reload(); await loadReport(); message("Jadwal dihapus. Riwayat absensi tetap tersedia.");
+    });
+  }
   if (!page.rows.length) emptyRow(body, 6, "Belum ada jadwal mengajar.");
   updatePager("schedule", scheduleTable, rows.length, page.pages, page.start); $("resetScheduleFilters").hidden = !(scheduleTable.search || scheduleTable.dayFilter); updateSortButtons(scheduleTable, "schedule");
 }
@@ -257,6 +283,9 @@ for (const addButton of root.querySelectorAll("[data-add-catalog]")) addButton.o
 $("closeCatalogModal").onclick = closeCatalogModal; $("cancelCatalogModal").onclick = closeCatalogModal;
 $("catalogModal").onclick = (event) => { if (event.target === $("catalogModal")) closeCatalogModal(); };
 $("catalogModal").onkeydown = (event) => { if (event.key === "Escape") closeCatalogModal(); };
+$("addSchedule").onclick = () => openScheduleModal(); $("closeScheduleModal").onclick = closeScheduleModal; $("cancelScheduleModal").onclick = closeScheduleModal;
+$("scheduleModal").onclick = (event) => { if (event.target === $("scheduleModal")) closeScheduleModal(); };
+$("scheduleModal").onkeydown = (event) => { if (event.key === "Escape") closeScheduleModal(); };
 $("catalogForm").onsubmit = (event) => {
   event.preventDefault(); const submit = event.submitter; const kind = $("catalogModal").dataset.kind; const label = catalogDefinition(kind).label;
   const original = $("catalogModal").dataset.original;
@@ -282,11 +311,11 @@ for (const id of ["settingsForm", "teacherForm", "scheduleForm"]) $(id).onsubmit
     try {
       if (id === "settingsForm") await api("/settings", { number: $("tuNumber").value });
       if (id === "teacherForm") await api("/person", { originalNumber: $("teacherNumber").dataset.original || "", number: $("teacherNumber").value, name: $("teacherName").value, active: $("teacherActive").value === "true" });
-      if (id === "scheduleForm") await api("/schedules", { number: $("scheduleTeacher").value, day: Number($("day").value), subject: $("subject").value, className: $("className").value, start: $("start").value, end: $("end").value, tolerance: Number($("tolerance").value), from: $("from").value, until: $("until").value });
+      if (id === "scheduleForm") { const schedule = { number: $("scheduleTeacher").value, day: Number($("day").value), subject: $("subject").value, className: $("className").value, start: $("start").value, end: $("end").value }; const scheduleId = $("scheduleModal").dataset.id; await api(scheduleId ? `/schedules/${encodeURIComponent(scheduleId)}` : "/schedules", schedule, scheduleId ? "PATCH" : "POST"); }
       await reload(); await loadReport(); message(id === "settingsForm" ? "Pengaturan disimpan. Hubungkan nomor melalui menu Bot Guru." : "Data tersimpan.");
       if (id === "settingsForm") await refreshWhatsapp();
       if (id === "teacherForm") closeTeacherModal();
-      if (id === "scheduleForm") $("scheduleEditor").open = false;
+      if (id === "scheduleForm") closeScheduleModal();
     } finally { submit.disabled = false; }
   });
 };
@@ -301,7 +330,7 @@ $("teacherPermissionForm").onsubmit = (event) => {
     } finally { submit.disabled = false; }
   });
 };
-$("teacherReportDate").value = today; $("teacherSummaryDate").value = today; $("teacherPermissionDate").value = today; $("from").value = today;
+$("teacherReportDate").value = today; $("teacherSummaryDate").value = today; $("teacherPermissionDate").value = today;
 $("teacherReportDate").onchange = () => action(loadReport); $("refreshReport").onclick = () => action(loadReport);
 $("teacherSummaryDate").onchange = () => action(loadSummary);
 $("teacherPermissionDate").onchange = () => action(loadPermissions);

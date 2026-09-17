@@ -271,7 +271,7 @@ test("header aksi tidak menampilkan ikon dan tidak dapat diurutkan", () => {
     /<th class="text-center">Aksi<\/th>/g
   ) || [];
 
-  assert.equal(actionHeaders.length, 7);
+  assert.equal(actionHeaders.length, 8);
   assert.doesNotMatch(dashboardPage, /toggleSort\([^)]*['"]action['"]/);
   assert.match(
     dashboardPage,
@@ -329,4 +329,13 @@ test("jadwal guru memakai dropdown data master mata pelajaran dan kelas", () => 
   assert.match(teacherScript, /catalogTables\[kind\]/);
   assert.match(teacherScript, /"mapel-guru": "subjectsPanel"/);
   assert.match(teacherScript, /"kelas-guru": "classesPanel"/);
+  assert.match(dashboardPage, /id="scheduleModal"[^>]+role="dialog"[^>]+aria-modal="true"/);
+  assert.match(dashboardPage, /id="addSchedule"/);
+  assert.doesNotMatch(dashboardPage, /id="tolerance"/);
+  assert.doesNotMatch(dashboardPage, /id="from"/);
+  assert.doesNotMatch(dashboardPage, /id="until"/);
+  assert.match(dashboardPage, /data-schedule-sort="class">Kelas/);
+  assert.match(dashboardPage, /data-schedule-sort="subject">Pelajaran/);
+  assert.match(teacherScript, /"Edit jadwal"/);
+  assert.match(teacherScript, /"Hapus jadwal"/);
 });
