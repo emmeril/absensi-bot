@@ -45,6 +45,7 @@ async function fixture(t) {
   const state = new JsonState({ initial: { [TEACHERS_PATH]: configuration(), [TEACHER_RECORDS_PATH]: { records: {}, tokens: {} }, "./lokasi.json": { latitude: -6.7, longitude: 108.5 } }, writeBatch: async () => {} });
   let match = true, failCommit = false, verificationCount = 0;
   const notifications = [];
+  const classSync = [];
   const deps = {
     loadJSON: (key, fallback) => state.read(key, fallback),
     updateJSON: (key, fn) => state.update(key, fn),
@@ -57,6 +58,7 @@ async function fixture(t) {
     requireWebTeacherManager: (req, res, next) => ["admin", "tu"].includes(req.webUser.role) ? next() : res.sendStatus(403),
     upload: { single: () => (_req, _res, next) => next() },
     publicBaseUrl: () => "https://school.example", getClasses: () => ({}), getStudents: () => ({}), syncBots: async () => {},
+    syncStudentClassCatalog: async (change) => classSync.push(change),
     notifyTeacherAttendance: async (record) => notifications.push(record),
   };
   state.writeBatch = async () => { if (failCommit) throw new Error("database unavailable"); };
@@ -71,7 +73,7 @@ async function fixture(t) {
     const raw = await response.text(); let data; try { data = JSON.parse(raw); } catch { data = raw; } return { status: response.status, data };
   };
   async function command(body = "!masuk", sender = `${num}@c.us`, botKey = `tu:${tu}`) { let reply; const handled = await service.command({ body, sender, botKey, reply: async (text) => { reply = text; } }); return { reply, handled, token: reply?.match(/#([a-f0-9]{64})/)?.[1] }; }
-  return { state, command, request, temp, deps, service, notifications, setNow: (time) => { now = moment(`${date} ${time}`, "YYYY-MM-DD HH:mm").valueOf(); }, setMatch: (value) => { match = value; }, setFail: (value) => { failCommit = value; }, count: () => verificationCount };
+  return { state, command, request, temp, deps, service, notifications, classSync, setNow: (time) => { now = moment(`${date} ${time}`, "YYYY-MM-DD HH:mm").valueOf(); }, setMatch: (value) => { match = value; }, setFail: (value) => { failCommit = value; }, count: () => verificationCount };
 }
 const photo = { image: "photo", latitude: -6.7, longitude: 108.5, accuracy: 10 };
 test("one link persists arrival separately and resumes evidence after service recreation", async (t) => {
@@ -147,6 +149,7 @@ test("data master menyediakan dropdown jadwal dan melindungi nilai yang masih di
   assert.equal((await f.request("/api/teachers/catalog/subjects", { name: "IPA" }, "admin")).status, 200);
   assert.equal((await f.request("/api/teachers/catalog/subjects", { name: "ipa" }, "admin")).status, 400);
   assert.equal((await f.request("/api/teachers/catalog/classes", { name: "VIII A" }, "admin")).status, 200);
+  assert.deepEqual(f.classSync.at(-1), { type: "add", name: "VIII A" });
   const schedule = { ...baseSchedule, id: undefined, day: 2, subject: "IPA", className: "VIII A" };
   assert.equal((await f.request("/api/teachers/schedules", schedule, "admin")).status, 200);
   assert.equal((await f.request("/api/teachers/schedules", { ...schedule, day: 3, subject: "Belum Terdaftar" }, "admin")).status, 400);
@@ -174,6 +177,7 @@ test("mengedit data master memperbarui nama pada jadwal mengajar", async (t) => 
   assert.deepEqual(c.classes, ["VII B"]);
   assert.equal(c.schedules[id].subject, "Aljabar");
   assert.equal(c.schedules[id].className, "VII B");
+  assert.deepEqual(f.classSync.at(-1), { type: "rename", originalName: "VII A", name: "VII B" });
 });
 test("menghapus guru menghapus jadwal aktif dan mencabut tautan", async (t) => {
   const f = await fixture(t);

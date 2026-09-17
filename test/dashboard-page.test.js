@@ -53,6 +53,13 @@ test("wali kelas disinkronkan ke data guru", () => {
   assert.match(server, /async function syncWaliKelasToTeachers\(\)/);
 });
 
+test("master kelas siswa dan guru disinkronkan", () => {
+  const server = fs.readFileSync(path.join(__dirname, "..", "index.js"), "utf8");
+  assert.match(server, /async function syncClassCatalogs\(\)/);
+  assert.match(server, /KELAS_PATH, TEACHERS_PATH/);
+  assert.match(server, /Kelas masih digunakan pada jadwal mengajar/);
+});
+
 test("semua input password memiliki placeholder dan tombol tampilkan password", () => {
   assert.match(dashboardPage, /placeholder="Masukkan password"/);
   assert.match(dashboardPage, /Minimal 10 karakter/);
