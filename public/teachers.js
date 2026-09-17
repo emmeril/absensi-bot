@@ -137,6 +137,21 @@ function openScheduleModal(schedule) {
   }
   $("scheduleModal").hidden = false; $("scheduleTeacher").focus();
 }
+function closePermissionModal() { $("permissionModal").hidden = true; $("teacherPermissionForm").reset(); delete $("permissionModal").dataset.originalDate; delete $("permissionModal").dataset.originalNumber; }
+function openPermissionModal(permission) {
+  $("teacherPermissionForm").reset();
+  if (permission) {
+    $("permissionModal").dataset.originalDate = permission.date; $("permissionModal").dataset.originalNumber = permission.number;
+    if (![...$("permissionTeacher").options].some((item) => item.value === permission.number)) option($("permissionTeacher"), permission.number, permission.name);
+    $("permissionModalTitle").textContent = "Edit Izin Guru"; $("permissionModalDescription").textContent = "Perbarui data izin guru ini."; $("permissionModalIcon").className = "fa-solid fa-pen-to-square"; $("permissionSubmitLabel").textContent = "Simpan Perubahan";
+    $("permissionTeacher").value = permission.number; $("permissionDate").value = permission.date; $("permissionType").value = permission.type; $("permissionReason").value = permission.reason;
+  } else {
+    delete $("permissionModal").dataset.originalDate; delete $("permissionModal").dataset.originalNumber;
+    $("permissionModalTitle").textContent = "Tambah Izin Guru"; $("permissionModalDescription").textContent = "Catat izin untuk seluruh sesi mengajar guru."; $("permissionModalIcon").className = "fa-solid fa-file-circle-plus"; $("permissionSubmitLabel").textContent = "Simpan Izin";
+    $("permissionDate").value = $("teacherPermissionDate").value || today;
+  }
+  $("permissionModal").hidden = false; $("permissionTeacher").focus();
+}
 function filteredCatalog(kind) { const query = catalogTables[kind].search.toLocaleLowerCase("id"); return (config[kind] || []).filter((name) => name.toLocaleLowerCase("id").includes(query)); }
 function renderCatalog(kind) {
   const table = catalogTables[kind]; const definition = catalogDefinition(kind);
@@ -258,12 +273,13 @@ function renderPermissions() {
   const page = paginate(rows, permissionTable); const body = $("teacherPermissions"); body.replaceChildren();
   for (const [index, item] of page.rows.entries()) {
     const row = body.insertRow(); cell(row, page.start + index + 1); cell(row, item.name); cell(row, item.type); cell(row, item.reason); cell(row, item.date);
-    const actions = cell(row, "");
-    button(actions, "Hapus", async () => {
+    const actions = document.createElement("div"); actions.className = "flex justify-center gap-1"; cell(row, "").append(actions);
+    teacherAction(actions, "Edit izin guru", "fa-pen-to-square", "bg-amber-50 text-amber-700", () => openPermissionModal(item));
+    teacherAction(actions, "Hapus izin guru", "fa-trash", "bg-red-50 text-red-700", async () => {
       if (!confirm(`Hapus ${item.type.toLowerCase()} ${item.name}?`)) return;
       await api(`/permissions/${encodeURIComponent(item.date)}/${encodeURIComponent(item.number)}`, undefined, "DELETE");
       await Promise.all([loadPermissions(), loadSummary(), loadReport()]); message("Izin guru dihapus.");
-    }, "warning");
+    });
   }
   if (!page.rows.length) emptyRow(body, 6, "Belum ada izin guru pada tanggal ini.");
   updatePager("permission", permissionTable, rows.length, page.pages, page.start); $("resetPermissionFilters").hidden = !(permissionTable.search || permissionTable.typeFilter); updateSortButtons(permissionTable, "permission");
@@ -296,6 +312,9 @@ $("catalogModal").onkeydown = (event) => { if (event.key === "Escape") closeCata
 $("addSchedule").onclick = () => openScheduleModal(); $("closeScheduleModal").onclick = closeScheduleModal; $("cancelScheduleModal").onclick = closeScheduleModal;
 $("scheduleModal").onclick = (event) => { if (event.target === $("scheduleModal")) closeScheduleModal(); };
 $("scheduleModal").onkeydown = (event) => { if (event.key === "Escape") closeScheduleModal(); };
+$("addPermission").onclick = () => openPermissionModal(); $("closePermissionModal").onclick = closePermissionModal; $("cancelPermissionModal").onclick = closePermissionModal;
+$("permissionModal").onclick = (event) => { if (event.target === $("permissionModal")) closePermissionModal(); };
+$("permissionModal").onkeydown = (event) => { if (event.key === "Escape") closePermissionModal(); };
 $("catalogForm").onsubmit = (event) => {
   event.preventDefault(); const submit = event.submitter; const kind = $("catalogModal").dataset.kind; const label = catalogDefinition(kind).label;
   const original = $("catalogModal").dataset.original;
@@ -334,8 +353,10 @@ $("teacherPermissionForm").onsubmit = (event) => {
   action(async () => {
     submit.disabled = true;
     try {
-      await api("/permissions", { number: $("permissionTeacher").value, date: $("teacherPermissionDate").value, type: $("permissionType").value, reason: $("permissionReason").value });
-      $("permissionEditor").open = false; $("permissionReason").value = "";
+      const permission = { number: $("permissionTeacher").value, date: $("permissionDate").value, type: $("permissionType").value, reason: $("permissionReason").value };
+      const originalDate = $("permissionModal").dataset.originalDate; const originalNumber = $("permissionModal").dataset.originalNumber;
+      await api(originalDate ? `/permissions/${encodeURIComponent(originalDate)}/${encodeURIComponent(originalNumber)}` : "/permissions", permission, originalDate ? "PATCH" : "POST");
+      $("teacherPermissionDate").value = permission.date; closePermissionModal();
       await Promise.all([loadPermissions(), loadSummary(), loadReport()]); message("Izin guru tersimpan.");
     } finally { submit.disabled = false; }
   });

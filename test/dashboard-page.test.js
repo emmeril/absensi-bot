@@ -348,3 +348,11 @@ test("laporan kehadiran guru dapat diunduh sebagai Excel", () => {
   assert.match(teacherScript, /\/report\/export\?date=/);
   assert.doesNotMatch(dashboardPage, /Unduh CSV/);
 });
+
+test("izin guru memakai modal serta aksi edit dan hapus", () => {
+  assert.match(dashboardPage, /id="addPermission"/);
+  assert.match(dashboardPage, /id="permissionModal"[^>]+role="dialog"[^>]+aria-modal="true"/);
+  assert.match(teacherScript, /openPermissionModal\(item\)/);
+  assert.match(teacherScript, /"Edit izin guru"/);
+  assert.match(teacherScript, /"Hapus izin guru"/);
+});

@@ -213,6 +213,8 @@ test("teacher permission covers scheduled sessions, revokes links, and blocks at
   const rows = f.service.report(date); assert.equal(rows.length, 1); assert.equal(rows[0].permission.reason, "Demam");
   const listed = await f.request(`/api/teachers/permissions?date=${date}`, undefined, "admin");
   assert.equal(listed.status, 200); assert.equal(listed.data.rows[0].type, "Sakit");
+  assert.equal((await f.request(`/api/teachers/permissions/${date}/${num}`, { ...body, type: "Izin", reason: "Keperluan keluarga" }, "admin", "PATCH")).status, 200);
+  assert.equal(f.service.report(date)[0].permission.type, "Izin");
   assert.equal((await f.request(`/api/teachers/permissions/${date}/${num}`, undefined, "admin", "DELETE")).status, 200);
   assert.equal(f.service.report(date)[0].permission, null);
 });
