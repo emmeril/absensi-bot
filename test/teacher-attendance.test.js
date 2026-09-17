@@ -148,6 +148,12 @@ test("data master menyediakan dropdown jadwal dan melindungi nilai yang masih di
   assert.equal((await f.request("/api/teachers/catalog/subjects", { name: "Seni Budaya" }, "admin")).status, 200);
   assert.equal((await f.request("/api/teachers/catalog/subjects/Seni%20Budaya", undefined, "admin", "DELETE")).status, 200);
 });
+test("pengaturan nomor bot guru tidak mewajibkan atau menghapus hari libur lama", async (t) => {
+  const f = await fixture(t);
+  await f.state.update(TEACHERS_PATH, (draft) => { draft[TEACHERS_PATH].holidays = [date]; });
+  assert.equal((await f.request("/api/teachers/settings", { number: tu }, "admin")).status, 200);
+  assert.deepEqual(f.state.read(TEACHERS_PATH).holidays, [date]);
+});
 test("teacher permission covers scheduled sessions, revokes links, and blocks attendance", async (t) => {
   const f = await fixture(t); const issued = await f.command(); assert.ok(issued.token);
   const body = { number: num, date, type: "Sakit", reason: "Demam" };

@@ -3,6 +3,10 @@ const $ = (id) => root.querySelector(`#${id}`);
 const days = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
 let config, reportRows = [], summaryRows = [], permissionRows = [], teacherRows = [];
 const teacherTable = { search: "", statusFilter: "", photoFilter: "", sortKey: "", sortDirection: "asc", page: 1, size: 10 };
+const summaryTable = { search: "", statusFilter: "", sortKey: "", sortDirection: "asc", page: 1, size: 10 };
+const reportTable = { search: "", statusFilter: "", reviewFilter: "", sortKey: "", sortDirection: "asc", page: 1, size: 10 };
+const scheduleTable = { search: "", dayFilter: "", sortKey: "", sortDirection: "asc", page: 1, size: 10 };
+const permissionTable = { search: "", typeFilter: "", sortKey: "", sortDirection: "asc", page: 1, size: 10 };
 const catalogTables = {
   subjects: { search: "", sortDirection: "asc", page: 1, size: 10 },
   classes: { search: "", sortDirection: "asc", page: 1, size: 10 },
@@ -27,6 +31,22 @@ function cell(row, value) { const td = document.createElement("td"); td.textCont
 function button(parent, label, fn, style = "primary") { const b = document.createElement("button"); b.type = "button"; b.className = style === "warning" ? "rounded bg-amber-50 px-2.5 py-1.5 text-xs text-amber-700 disabled:opacity-50" : "rounded bg-blue-50 px-2.5 py-1.5 text-xs text-blue-700 disabled:opacity-50"; b.textContent = label; b.onclick = () => action(async () => { b.disabled = true; try { await fn(); } finally { b.disabled = false; } }); parent.append(b); return b; }
 function teacherAction(parent, label, icon, className, fn) { const b = document.createElement("button"); b.type = "button"; b.title = label; b.setAttribute("aria-label", label); b.className = `rounded px-2.5 py-1.5 disabled:opacity-50 ${className}`; b.innerHTML = `<i class="fa-solid ${icon}"></i>`; b.onclick = () => action(async () => { b.disabled = true; try { await fn(); } finally { b.disabled = false; } }); parent.append(b); return b; }
 function emptyRow(body, columns, text) { const row = body.insertRow(); const td = cell(row, text); td.colSpan = columns; td.className = "py-10 text-center text-slate-400"; }
+function paginate(rows, table) { const pages = Math.max(1, Math.ceil(rows.length / table.size)); table.page = Math.min(table.page, pages); const start = (table.page - 1) * table.size; return { rows: rows.slice(start, start + table.size), pages, start }; }
+function updatePager(prefix, table, total, pages, start) { $(`${prefix}Current`).textContent = table.page; $(`${prefix}Prev`).disabled = table.page <= 1; $(`${prefix}Next`).disabled = table.page >= pages; $(`${prefix}PageInfo`).textContent = total ? `Menampilkan ${start + 1}-${Math.min(start + table.size, total)} dari ${total} data` : "Menampilkan 0 data"; }
+function sortRows(rows, table, getters) { if (!table.sortKey) return rows; const getter = getters[table.sortKey]; const direction = table.sortDirection === "desc" ? -1 : 1; return [...rows].sort((a, b) => String(getter(a)).localeCompare(String(getter(b)), "id", { numeric: true, sensitivity: "base" }) * direction); }
+function bindTableControls(prefix, table, fields, render, sortSelector) {
+  for (const [id, key] of Object.entries(fields)) {
+    const element = $(`${prefix}${id}`); if (!element) continue;
+    const event = element.tagName === "SELECT" ? "onchange" : "oninput";
+    element[event] = (e) => { table[key] = e.target.value; table.page = 1; render(); };
+  }
+  $(`${prefix}PageSize`).onchange = (e) => { table.size = Number(e.target.value); table.page = 1; render(); };
+  $(`reset${prefix[0].toUpperCase()}${prefix.slice(1)}Filters`).onclick = () => { for (const [id, key] of Object.entries(fields)) { table[key] = ""; $(`${prefix}${id}`).value = ""; } table.page = 1; render(); };
+  $(`${prefix}Prev`).onclick = () => { if (table.page > 1) { table.page--; render(); } };
+  $(`${prefix}Next`).onclick = () => { table.page++; render(); };
+  for (const sortButton of root.querySelectorAll(`[data-${sortSelector}-sort]`)) sortButton.onclick = () => { const key = sortButton.dataset[`${sortSelector}Sort`]; if (table.sortKey === key) table.sortDirection = table.sortDirection === "asc" ? "desc" : "asc"; else { table.sortKey = key; table.sortDirection = "asc"; } table.page = 1; render(); };
+}
+function updateSortButtons(table, selector) { for (const sortButton of root.querySelectorAll(`[data-${selector}-sort]`)) { const active = table.sortKey === sortButton.dataset[`${selector}Sort`]; sortButton.closest("th").setAttribute("aria-sort", active ? (table.sortDirection === "asc" ? "ascending" : "descending") : "none"); sortButton.querySelector("i").className = `fa-solid ${active ? (table.sortDirection === "asc" ? "fa-sort-up" : "fa-sort-down") : "fa-sort"}`; } }
 function photoLink(parent, key, kind, label) { const a = document.createElement("a"); a.href = `/api/teachers/report/${encodeURIComponent(key)}/${kind}`; a.target = "_blank"; a.rel = "noopener"; a.textContent = label; a.className = "block text-[#3c8dbc] hover:underline"; parent.append(a); }
 function closeTeacherModal() { $("teacherModal").hidden = true; $("teacherForm").reset(); $("teacherNumber").disabled = false; }
 function openTeacherModal(number = "") {
@@ -110,7 +130,6 @@ function renderCatalog(kind) {
 async function reload() {
   config = await api("");
   $("tuNumber").value = config.number;
-  $("holidays").value = config.holidays.join("\n");
   teacherRows = Object.entries(config.teachers).map(([number, teacher]) => ({ number, ...teacher }));
   renderTeachers(); $("scheduleTeacher").replaceChildren(); $("permissionTeacher").replaceChildren();
   $("subject").replaceChildren(); $("className").replaceChildren();
@@ -123,20 +142,34 @@ async function reload() {
       for (const select of [$("scheduleTeacher"), $("permissionTeacher")]) { const option = document.createElement("option"); option.value = number; option.textContent = t.name; select.append(option); }
     }
   }
-  $("schedules").replaceChildren();
-  for (const s of Object.values(config.schedules).sort((a, b) => a.day - b.day || a.start.localeCompare(b.start))) {
-    const row = $("schedules").insertRow(); cell(row, config.teachers[s.number]?.name || s.number); cell(row, `${days[s.day]} ${s.start}–${s.end}`); cell(row, `${s.className} · ${s.subject}`); cell(row, `${s.from} → ${s.until || "seterusnya"}`);
-    const actions = cell(row, "");
-    if (!s.until || s.until >= today) button(actions, "Akhiri jadwal", async () => { const until = prompt("Tanggal terakhir jadwal berlaku (YYYY-MM-DD), minimal hari ini:", today); if (!until) return; await api(`/schedules/${encodeURIComponent(s.id)}/end`, { until }); await reload(); await loadReport(); message("Tanggal akhir jadwal disimpan. Riwayat absensi tetap tersedia."); });
-  }
-  if (!Object.keys(config.schedules).length) emptyRow($("schedules"), 5, "Belum ada jadwal mengajar.");
+  renderSchedules();
+}
+function scheduleRows() { return Object.values(config.schedules || {}).map((s) => ({ ...s, teacher: config.teachers[s.number]?.name || s.number, time: `${days[s.day]} ${s.start}–${s.end}`, classLabel: `${s.className} · ${s.subject}` })); }
+function renderSchedules() {
+  const query = scheduleTable.search.toLocaleLowerCase("id");
+  let rows = scheduleRows().filter((s) => `${s.teacher} ${s.number} ${s.classLabel} ${s.time}`.toLocaleLowerCase("id").includes(query) && (!scheduleTable.dayFilter || String(s.day) === scheduleTable.dayFilter));
+  rows = sortRows(rows, scheduleTable, { teacher: (s) => s.teacher, time: (s) => `${s.day}-${s.start}`, class: (s) => s.classLabel });
+  const page = paginate(rows, scheduleTable); const body = $("schedules"); body.replaceChildren();
+  for (const [index, s] of page.rows.entries()) { const row = body.insertRow(); cell(row, page.start + index + 1); cell(row, s.teacher); cell(row, s.time); cell(row, s.classLabel); cell(row, `${s.from} → ${s.until || "seterusnya"}`); const actions = cell(row, ""); if (!s.until || s.until >= today) button(actions, "Akhiri jadwal", async () => { const until = prompt("Tanggal terakhir jadwal berlaku (YYYY-MM-DD), minimal hari ini:", today); if (!until) return; await api(`/schedules/${encodeURIComponent(s.id)}/end`, { until }); await reload(); await loadReport(); message("Tanggal akhir jadwal disimpan. Riwayat absensi tetap tersedia."); }); }
+  if (!page.rows.length) emptyRow(body, 6, "Belum ada jadwal mengajar.");
+  updatePager("schedule", scheduleTable, rows.length, page.pages, page.start); $("resetScheduleFilters").hidden = !(scheduleTable.search || scheduleTable.dayFilter); updateSortButtons(scheduleTable, "schedule");
 }
 function attendanceStatus(r) { return r.permission ? `${r.permission.type}: ${r.permission.reason}` : !r.arrival ? "Belum hadir" : r.hasEvidence ? "Bukti lengkap" : "Hadir · bukti belum lengkap"; }
 async function loadReport() {
   reportRows = (await api(`/report?date=${encodeURIComponent($("teacherReportDate").value)}`)).rows;
-  $("teacherReport").replaceChildren();
-  for (const r of reportRows) {
-    const row = $("teacherReport").insertRow(); cell(row, r.name); cell(row, `${r.schedule.start}–${r.schedule.end} · ${r.schedule.className} · ${r.schedule.subject}`);
+  renderReport();
+}
+function renderReport() {
+  const query = reportTable.search.toLocaleLowerCase("id");
+  let rows = reportRows.filter((r) => {
+    const status = r.permission ? "permission" : !r.arrival ? "absent" : r.hasEvidence ? "present" : "incomplete";
+    const review = r.review === "Sudah ditinjau" ? "reviewed" : r.review === "Perlu perbaikan" ? "needs-review" : "pending";
+    return `${r.name} ${r.number} ${r.schedule.className} ${r.schedule.subject} ${r.material || ""}`.toLocaleLowerCase("id").includes(query) && (!reportTable.statusFilter || reportTable.statusFilter === status) && (!reportTable.reviewFilter || reportTable.reviewFilter === review);
+  });
+  rows = sortRows(rows, reportTable, { name: (r) => r.name, session: (r) => `${r.schedule.className} ${r.schedule.subject}`, arrival: (r) => r.arrival || "", status: (r) => attendanceStatus(r) });
+  const page = paginate(rows, reportTable); const body = $("teacherReport"); body.replaceChildren();
+  for (const [index, r] of page.rows.entries()) {
+    const row = body.insertRow(); cell(row, page.start + index + 1); cell(row, r.name); cell(row, `${r.schedule.start}–${r.schedule.end} · ${r.schedule.className} · ${r.schedule.subject}`);
     cell(row, r.arrival ? `${new Date(r.arrival).toLocaleTimeString("id-ID", { timeZone: "Asia/Jakarta" })}${r.lateMinutes ? ` (terlambat ${r.lateMinutes} menit)` : ""}` : "—");
     cell(row, attendanceStatus(r)); cell(row, r.material);
     const photos = cell(row, ""); if (r.hasSelfie) photoLink(photos, r.key, "selfie", "Selfie"); if (r.hasEvidence) photoLink(photos, r.key, "evidence", "Kegiatan");
@@ -148,7 +181,8 @@ async function loadReport() {
       button(controls, "Catat perbaikan", async () => { const note = prompt("Catatan perbaikan untuk tindak lanjut TU:"); if (!note) return; await api(`/report/${encodeURIComponent(r.key)}/review`, { review: "Perlu perbaikan", note }); await loadReport(); message("Catatan tersimpan. Sampaikan tindak lanjut kepada guru."); }, "warning");
     }
   }
-  if (!reportRows.length) emptyRow($("teacherReport"), 7, "Tidak ada jadwal atau catatan absensi pada tanggal ini.");
+  if (!page.rows.length) emptyRow(body, 8, "Tidak ada jadwal atau catatan absensi pada tanggal ini.");
+  updatePager("report", reportTable, rows.length, page.pages, page.start); $("resetReportFilters").hidden = !(reportTable.search || reportTable.statusFilter || reportTable.reviewFilter); updateSortButtons(reportTable, "report");
 }
 async function loadSummary() {
   summaryRows = (await api(`/report?date=${encodeURIComponent($("teacherSummaryDate").value)}`)).rows;
@@ -156,18 +190,31 @@ async function loadSummary() {
   $("summaryScheduled").textContent = summaryRows.length;
   $("summaryPresent").textContent = summaryRows.filter((row) => row.arrival).length;
   $("summaryPermissions").textContent = new Set(summaryRows.filter((row) => row.permission).map((row) => row.number)).size;
-  $("teacherSummary").replaceChildren();
-  for (const item of summaryRows) {
-    const row = $("teacherSummary").insertRow(); cell(row, item.name); cell(row, `${item.schedule.start}–${item.schedule.end}`);
+  renderSummary();
+}
+function renderSummary() {
+  const query = summaryTable.search.toLocaleLowerCase("id");
+  let rows = summaryRows.filter((r) => { const status = r.permission ? "permission" : r.arrival ? "present" : "absent"; return `${r.name} ${r.number} ${r.schedule.className} ${r.schedule.subject}`.toLocaleLowerCase("id").includes(query) && (!summaryTable.statusFilter || summaryTable.statusFilter === status); });
+  rows = sortRows(rows, summaryTable, { name: (r) => r.name, time: (r) => r.schedule.start, class: (r) => `${r.schedule.className} ${r.schedule.subject}`, status: (r) => attendanceStatus(r) });
+  const page = paginate(rows, summaryTable); const body = $("teacherSummary"); body.replaceChildren();
+  for (const [index, item] of page.rows.entries()) {
+    const row = body.insertRow(); cell(row, page.start + index + 1); cell(row, item.name); cell(row, `${item.schedule.start}–${item.schedule.end}`);
     cell(row, `${item.schedule.className} · ${item.schedule.subject}`); cell(row, attendanceStatus(item));
   }
-  if (!summaryRows.length) emptyRow($("teacherSummary"), 4, "Tidak ada sesi mengajar pada tanggal ini.");
+  if (!page.rows.length) emptyRow(body, 5, "Tidak ada sesi mengajar pada tanggal ini.");
+  updatePager("summary", summaryTable, rows.length, page.pages, page.start); $("resetSummaryFilters").hidden = !(summaryTable.search || summaryTable.statusFilter); updateSortButtons(summaryTable, "summary");
 }
 async function loadPermissions() {
   permissionRows = (await api(`/permissions?date=${encodeURIComponent($("teacherPermissionDate").value)}`)).rows;
-  $("teacherPermissions").replaceChildren();
-  for (const item of permissionRows) {
-    const row = $("teacherPermissions").insertRow(); cell(row, item.name); cell(row, item.type); cell(row, item.reason); cell(row, item.date);
+  renderPermissions();
+}
+function renderPermissions() {
+  const query = permissionTable.search.toLocaleLowerCase("id");
+  let rows = permissionRows.filter((r) => `${r.name} ${r.number} ${r.reason}`.toLocaleLowerCase("id").includes(query) && (!permissionTable.typeFilter || permissionTable.typeFilter === r.type));
+  rows = sortRows(rows, permissionTable, { name: (r) => r.name, type: (r) => r.type, date: (r) => r.date });
+  const page = paginate(rows, permissionTable); const body = $("teacherPermissions"); body.replaceChildren();
+  for (const [index, item] of page.rows.entries()) {
+    const row = body.insertRow(); cell(row, page.start + index + 1); cell(row, item.name); cell(row, item.type); cell(row, item.reason); cell(row, item.date);
     const actions = cell(row, "");
     button(actions, "Hapus", async () => {
       if (!confirm(`Hapus ${item.type.toLowerCase()} ${item.name}?`)) return;
@@ -175,7 +222,8 @@ async function loadPermissions() {
       await Promise.all([loadPermissions(), loadSummary(), loadReport()]); message("Izin guru dihapus.");
     }, "warning");
   }
-  if (!permissionRows.length) emptyRow($("teacherPermissions"), 5, "Belum ada izin guru pada tanggal ini.");
+  if (!page.rows.length) emptyRow(body, 6, "Belum ada izin guru pada tanggal ini.");
+  updatePager("permission", permissionTable, rows.length, page.pages, page.start); $("resetPermissionFilters").hidden = !(permissionTable.search || permissionTable.typeFilter); updateSortButtons(permissionTable, "permission");
 }
 $("addTeacher").onclick = () => openTeacherModal();
 $("closeTeacherModal").onclick = closeTeacherModal;
@@ -215,12 +263,16 @@ for (const kind of ["subjects", "classes"]) {
   $(`${kind}CatalogNext`).onclick = () => { const pages = Math.ceil(filteredCatalog(kind).length / table.size); if (table.page < pages) { table.page++; renderCatalog(kind); } };
   root.querySelector(`[data-catalog-sort="${kind}"]`).onclick = () => { table.sortDirection = table.sortDirection === "asc" ? "desc" : "asc"; table.page = 1; renderCatalog(kind); };
 }
+bindTableControls("summary", summaryTable, { Search: "search", StatusFilter: "statusFilter" }, renderSummary, "summary");
+bindTableControls("report", reportTable, { Search: "search", StatusFilter: "statusFilter", ReviewFilter: "reviewFilter" }, renderReport, "report");
+bindTableControls("schedule", scheduleTable, { Search: "search", DayFilter: "dayFilter" }, renderSchedules, "schedule");
+bindTableControls("permission", permissionTable, { Search: "search", TypeFilter: "typeFilter" }, renderPermissions, "permission");
 for (const id of ["settingsForm", "teacherForm", "scheduleForm"]) $(id).onsubmit = (event) => {
   event.preventDefault(); const submit = event.submitter;
   action(async () => {
     submit.disabled = true;
     try {
-      if (id === "settingsForm") await api("/settings", { number: $("tuNumber").value, holidays: $("holidays").value.split(/\s+/).filter(Boolean) });
+      if (id === "settingsForm") await api("/settings", { number: $("tuNumber").value });
       if (id === "teacherForm") await api("/person", { number: $("teacherNumber").value, name: $("teacherName").value, active: $("teacherActive").value === "true" });
       if (id === "scheduleForm") await api("/schedules", { number: $("scheduleTeacher").value, day: Number($("day").value), subject: $("subject").value, className: $("className").value, start: $("start").value, end: $("end").value, tolerance: Number($("tolerance").value), from: $("from").value, until: $("until").value });
       await reload(); await loadReport(); message(id === "settingsForm" ? "Pengaturan disimpan. Hubungkan nomor melalui menu Bot Guru." : "Data tersimpan.");

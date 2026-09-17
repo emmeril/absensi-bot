@@ -26,7 +26,7 @@ Admin membuka kelompok menu **Absen Guru**, yang berisi **Ringkasan**, **Data Gu
 
 1. Mengatur nomor WhatsApp khusus bot guru, berbeda dari nomor guru dan bot siswa. Hubungkan nomor tersebut dengan memindai QR di **Pengaturan > Bot Guru**.
 2. Menambahkan nama dan nomor guru, termasuk guru yang juga menjadi wali kelas, lalu mengunggah foto referensi wajah.
-3. Mengisi data master mata pelajaran dan kelas, lalu menambahkan jadwal mingguan melalui pilihan dropdown: guru, hari, kelas, mata pelajaran, jam mulai/selesai, toleransi terlambat, dan tanggal berlaku. Data master yang masih dipakai jadwal tidak dapat dihapus. Jam pelajaran berurutan di kelas yang sama dibuat sebagai satu sesi. Jadwal guru yang bertabrakan ditolak. Akhiri jadwal lama sebelum menggantinya, dan masukkan tanggal libur sekolah pada pengaturan guru.
+3. Mengisi data master mata pelajaran dan kelas, lalu menambahkan jadwal mingguan melalui pilihan dropdown: guru, hari, kelas, mata pelajaran, jam mulai/selesai, toleransi terlambat, dan tanggal berlaku. Data master yang masih dipakai jadwal tidak dapat dihapus. Jam pelajaran berurutan di kelas yang sama dibuat sebagai satu sesi. Jadwal guru yang bertabrakan ditolak. Akhiri jadwal lama sebelum menggantinya.
 
 Guru mengirim **`!masuk` ke Bot Guru**, lalu membuka satu tautan pribadi:
 

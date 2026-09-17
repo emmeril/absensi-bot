@@ -109,6 +109,12 @@ test("pemberitahuan bot pada menu guru hanya mengarah ke Bot Guru", () => {
   assert.doesNotMatch(dashboardPage, /currentTeacherDescription/);
 });
 
+test("pengaturan Bot Guru tidak menampilkan formulir tanggal libur", () => {
+  assert.match(dashboardPage, /<h4 class="font-bold text-slate-700">Bot Guru<\/h4>/);
+  assert.doesNotMatch(dashboardPage, /id="holidays"|Tanggal libur|Bot Guru & Hari Libur/);
+  assert.match(teacherScript, /api\("\/settings", \{ number: \$\("tuNumber"\)\.value \}\)/);
+});
+
 test("pengaturan brand mengubah nama dan mengunggah logo aplikasi", () => {
   assert.match(dashboardPage, /tab === 'brand'/);
   assert.match(dashboardPage, /@submit\.prevent="saveBrand"/);
@@ -279,6 +285,15 @@ test("data guru mengikuti pola tabel siswa dan memakai modal", () => {
   assert.match(teacherScript, /function renderTeachers\(\)/);
   assert.match(teacherScript, /teacherTable\.page/);
   assert.doesNotMatch(dashboardPage, /<th>Tindakan<\/th>/);
+});
+
+test("kontrol tabel guru memakai ID elemen yang tersedia", () => {
+  for (const prefix of ["summary", "report", "schedule", "permission"]) {
+    const title = prefix[0].toUpperCase() + prefix.slice(1);
+    assert.match(dashboardPage, new RegExp(`id="reset${title}Filters"`));
+    assert.match(teacherScript, /reset\$\{prefix\[0\]\.toUpperCase\(\)\}\$\{prefix\.slice\(1\)\}Filters/);
+  }
+  assert.doesNotMatch(teacherScript, /\$\{prefix\}ResetFilters/);
 });
 
 test("jadwal guru memakai dropdown data master mata pelajaran dan kelas", () => {
