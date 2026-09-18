@@ -1,5 +1,5 @@
 window.mountTeacherPanel = function mountTeacherPanel(root, notify, initialTab = "guru", refreshWhatsapp = async () => {}) {
-const $ = (id) => root.querySelector(`#${id}`);
+const $ = (id) => root.querySelector(`#${id}`) || document.getElementById(id);
 const days = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
 let config, reportRows = [], summaryRows = [], permissionRows = [], teacherRows = [];
 const teacherTable = { search: "", statusFilter: "", photoFilter: "", sortKey: "", sortDirection: "asc", page: 1, size: 10 };
