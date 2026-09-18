@@ -156,7 +156,7 @@ test("pengaturan Bot Guru tidak menampilkan formulir tanggal libur", () => {
 
 test("tombol simpan Bot Guru berada di samping form nomor pada layar lebar", () => {
   assert.match(dashboardPage, /id="settingsForm" class="flex max-w-xl flex-col gap-4 sm:flex-row sm:items-end"/);
-  assert.match(dashboardPage, /id="tuNumber"[\s\S]*?<\/div>\s*<button class="teacher-button-primary w-fit shrink-0 whitespace-nowrap px-3 py-2 sm:mb-5"/);
+  assert.match(dashboardPage, /id="tuNumber"[\s\S]*?<\/div>\s*<button class="teacher-button-primary w-fit shrink-0 whitespace-nowrap px-3 py-2\.5 sm:mb-6"/);
 });
 
 test("pengaturan brand mengubah nama dan mengunggah logo aplikasi", () => {
