@@ -45,10 +45,24 @@ test("form management user mengelola akun admin dan wali kelas", () => {
   assert.match(dashboardPage, /adminForm\.password/);
 });
 
-test("notifikasi absensi guru dikirim ke admin dan tata usaha", () => {
+test("notifikasi absensi guru mengikuti cakupan admin dan tetap dikirim ke tata usaha", () => {
   const server = fs.readFileSync(path.join(__dirname, "..", "index.js"), "utf8");
-  assert.match(server, /\["admin", "tu"\]\.includes\(role\)/);
+  assert.match(server, /adminNotificationRecipients\("teacher"\)/);
+  assert.match(server, /role === "tu"/);
   assert.match(server, /teacher-attendance:\$\{record\.key\}/);
+});
+
+test("Administrator dapat memilih cakupan Notifikasi Absensi dari dropdown", () => {
+  const server = fs.readFileSync(path.join(__dirname, "..", "index.js"), "utf8");
+  assert.match(dashboardPage, />Notifikasi Absensi<select/);
+  assert.match(dashboardPage, /x-model="adminForm\.notificationScope"/);
+  assert.match(dashboardPage, /value="all">Semua Unit/);
+  assert.match(dashboardPage, /value="student">Absensi Siswa/);
+  assert.match(dashboardPage, /value="teacher">Absensi Guru/);
+  assert.match(dashboardPage, /value="none" :disabled="!canDisableAdminNotifications"/);
+  assert.match(dashboardPage, /notificationLabel\(admin\.notificationScope\)/);
+  assert.match(server, /adminNotificationRecipients\("student"\)/);
+  assert.match(server, /NOTIFICATION_PREFERENCES_PATH/);
 });
 
 test("wali kelas disinkronkan ke data guru", () => {
