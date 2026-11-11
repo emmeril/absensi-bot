@@ -572,3 +572,49 @@ test("document captions wrapped by Baileys are readable as commands", async () =
   }, { sendMessage: async () => {} }, new Map());
   assert.equal(message.body, "!bantuan");
 });
+
+test("reconnect waits for pending credential writes before loading auth", async (t) => {
+  const { EventEmitter } = require("node:events");
+  const { BaileysManager } = require("../lib/baileys-manager");
+  const manager = new BaileysManager();
+  t.after(async () => manager.close());
+  manager.waVersion = [2, 3000, 1];
+  manager.versionResolvedAt = Date.now();
+  let releaseWrite;
+  const pendingWrite = new Promise((resolve) => { releaseWrite = resolve; });
+  let authReads = 0;
+  const sockets = [];
+  manager.library = {
+    default: () => {
+      const socket = {
+        ev: new EventEmitter(),
+        user: { id: "628111@s.whatsapp.net" },
+        end() {},
+      };
+      sockets.push(socket);
+      return socket;
+    },
+    Browsers: { ubuntu: () => ["Ubuntu", "Chrome", "1"] },
+    DisconnectReason: { loggedOut: 401 },
+    makeCacheableSignalKeyStore: (keys) => keys,
+    useMultiFileAuthState: async () => {
+      authReads++;
+      return {
+        state: { creds: {}, keys: {} },
+        saveCreds: async () => { await pendingWrite; },
+      };
+    },
+  };
+  await manager.sync({ "7A": { waliKelas: "628111@c.us", siswa: {} } });
+  const first = sockets[0];
+  first.ev.emit("connection.update", { connection: "open" });
+  first.ev.emit("creds.update", {});
+  await new Promise((resolve) => setImmediate(resolve));
+  const reconnecting = manager.connect(manager.sessions.get("wali:628111"));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(authReads, 1);
+  releaseWrite();
+  await reconnecting;
+  assert.equal(authReads, 2);
+  assert.equal(sockets.length, 2);
+});
