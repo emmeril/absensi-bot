@@ -321,6 +321,7 @@ test("reset an active session after pending auth writes and create a fresh QR", 
       const socket = {
         ev: new EventEmitter(),
         user: { id: "628111:2@s.whatsapp.net" },
+        logout: async () => { socket.loggedOut = true; },
         end: () => { socket.ended = true; },
       };
       sockets.push(socket);
@@ -353,8 +354,10 @@ test("reset an active session after pending auth writes and create a fresh QR", 
   const firstReset = manager.reset(sessionKey);
   const secondReset = manager.reset(sessionKey);
   assert.equal(manager.statuses()[0].state, "resetting");
-  assert.equal(activeSocket.ended, true);
   await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(activeSocket.loggedOut, true);
+  assert.equal(activeSocket.ended, true);
+  assert.equal(activeSocket.ev.listenerCount("messages.upsert"), 0);
   assert.equal(sockets.length, 1);
   releaseWrite();
   await Promise.all([firstReset, secondReset]);
@@ -421,4 +424,197 @@ test("reset only deletes the selected bot while other active bots stay connected
   assert.equal(fs.readFileSync(otherCredentials, "utf8"), originalOther);
   assert.equal(manager.isReady("wali:628222"), true);
   assert.equal(sockets.length, 3);
+});
+
+test("command replies remain bound to their socket and stop after reset", async (t) => {
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const { EventEmitter } = require("node:events");
+  const { BaileysManager } = require("../lib/baileys-manager");
+  const authRoot = fs.mkdtempSync(path.join(os.tmpdir(), "baileys-command-reply-"));
+  const manager = new BaileysManager({ authRoot });
+  t.after(async () => {
+    await manager.close();
+    fs.rmSync(authRoot, { recursive: true, force: true });
+  });
+  manager.waVersion = [2, 3000, 1];
+  manager.versionResolvedAt = Date.now();
+  const sockets = [];
+  manager.library = {
+    default: () => {
+      const socket = {
+        ev: new EventEmitter(),
+        user: { id: "628111@s.whatsapp.net" },
+        sent: [],
+        end() {},
+        async logout() {},
+        async sendMessage(jid, data) {
+          this.sent.push({ jid, data });
+          return { key: { id: String(this.sent.length) }, message: data };
+        },
+      };
+      sockets.push(socket);
+      return socket;
+    },
+    Browsers: { ubuntu: () => ["Ubuntu", "Chrome", "1"] },
+    DisconnectReason: { loggedOut: 401 },
+    makeCacheableSignalKeyStore: (keys) => keys,
+    useMultiFileAuthState: async () => ({ state: { creds: {}, keys: {} }, saveCreds: async () => {} }),
+  };
+  const received = [];
+  manager.on("message", ({ message }) => received.push(message));
+  await manager.sync({ "7A": { waliKelas: "628111@c.us", siswa: {} } });
+  const first = sockets[0];
+  first.ev.emit("connection.update", { connection: "open" });
+  first.ev.emit("messages.upsert", {
+    type: "notify",
+    messages: [{
+      key: { id: "command-1", remoteJid: "12345@lid", remoteJidAlt: "628222@s.whatsapp.net" },
+      message: { conversation: "!bantuan" },
+    }],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(received.length, 1);
+  assert.ok(manager.statuses()[0].lastCommandAt);
+  await received[0].reply("Panduan");
+  assert.deepEqual(first.sent[0], { jid: "12345@lid", data: { text: "Panduan" } });
+
+  await manager.reset("wali:628111");
+  assert.equal(first.ev.listenerCount("messages.upsert"), 0);
+  await assert.rejects(received[0].reply("Balasan lama"), { code: "WA_SESSION_NOT_READY" });
+  assert.equal(first.sent.length, 1);
+  sockets[1].ev.emit("connection.update", { qr: "QR-baru" });
+  assert.equal(manager.statuses()[0].state, "qr");
+  assert.equal(manager.statuses()[0].lastCommandAt, null);
+});
+
+test("failed remote logout does not prevent generating a new WhatsApp session", async (t) => {
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const { EventEmitter } = require("node:events");
+  const { BaileysManager } = require("../lib/baileys-manager");
+  const authRoot = fs.mkdtempSync(path.join(os.tmpdir(), "baileys-logout-fallback-"));
+  const manager = new BaileysManager({ authRoot });
+  t.after(async () => {
+    await manager.close();
+    fs.rmSync(authRoot, { recursive: true, force: true });
+  });
+  manager.waVersion = [2, 3000, 1];
+  manager.versionResolvedAt = Date.now();
+  const sockets = [];
+  manager.library = {
+    default: () => {
+      const socket = {
+        ev: new EventEmitter(),
+        user: { id: "628111@s.whatsapp.net" },
+        end() {},
+        async logout() { throw new Error("offline"); },
+      };
+      sockets.push(socket);
+      return socket;
+    },
+    Browsers: { ubuntu: () => ["Ubuntu", "Chrome", "1"] },
+    DisconnectReason: { loggedOut: 401 },
+    makeCacheableSignalKeyStore: (keys) => keys,
+    useMultiFileAuthState: async () => ({ state: { creds: {}, keys: {} }, saveCreds: async () => {} }),
+  };
+  await manager.sync({ "7A": { waliKelas: "628111@c.us", siswa: {} } });
+  sockets[0].ev.emit("connection.update", { connection: "open" });
+  const warn = t.mock.method(console, "warn", () => {});
+  await manager.reset("wali:628111");
+  assert.equal(sockets.length, 2);
+  assert.equal(manager.statuses()[0].ready, false);
+  assert.ok(warn.mock.calls.some((call) => call.arguments.join(" ").includes("Logout perangkat tertaut gagal")));
+});
+
+test("parallel connection attempts use one Baileys socket for the same bot", async (t) => {
+  const { EventEmitter } = require("node:events");
+  const { BaileysManager } = require("../lib/baileys-manager");
+  const manager = new BaileysManager();
+  t.after(async () => manager.close());
+  manager.waVersion = [2, 3000, 1];
+  manager.versionResolvedAt = Date.now();
+  const sockets = [];
+  manager.library = {
+    default: () => {
+      const socket = {
+        ev: new EventEmitter(),
+        user: { id: "628111@s.whatsapp.net" },
+        end() {},
+      };
+      sockets.push(socket);
+      return socket;
+    },
+    Browsers: { ubuntu: () => ["Ubuntu", "Chrome", "1"] },
+    DisconnectReason: { loggedOut: 401 },
+    makeCacheableSignalKeyStore: (keys) => keys,
+    useMultiFileAuthState: async () => ({ state: { creds: {}, keys: {} }, saveCreds: async () => {} }),
+  };
+  await manager.sync({ "7A": { waliKelas: "628111@c.us", siswa: {} } });
+  const first = sockets[0];
+  first.ev.emit("connection.update", { connection: "open" });
+  const session = manager.sessions.get("wali:628111");
+  await Promise.all([manager.connect(session), manager.connect(session)]);
+  assert.equal(sockets.length, 2);
+  assert.equal(first.ev.listenerCount("messages.upsert"), 0);
+});
+
+test("document captions wrapped by Baileys are readable as commands", async () => {
+  const message = await adaptIncomingMessage({
+    key: { id: "wrapped-command", remoteJid: "628222@s.whatsapp.net" },
+    message: {
+      documentWithCaptionMessage: {
+        message: { documentMessage: { caption: "!bantuan" } },
+      },
+    },
+  }, { sendMessage: async () => {} }, new Map());
+  assert.equal(message.body, "!bantuan");
+});
+
+test("reconnect waits for pending credential writes before loading auth", async (t) => {
+  const { EventEmitter } = require("node:events");
+  const { BaileysManager } = require("../lib/baileys-manager");
+  const manager = new BaileysManager();
+  t.after(async () => manager.close());
+  manager.waVersion = [2, 3000, 1];
+  manager.versionResolvedAt = Date.now();
+  let releaseWrite;
+  const pendingWrite = new Promise((resolve) => { releaseWrite = resolve; });
+  let authReads = 0;
+  const sockets = [];
+  manager.library = {
+    default: () => {
+      const socket = {
+        ev: new EventEmitter(),
+        user: { id: "628111@s.whatsapp.net" },
+        end() {},
+      };
+      sockets.push(socket);
+      return socket;
+    },
+    Browsers: { ubuntu: () => ["Ubuntu", "Chrome", "1"] },
+    DisconnectReason: { loggedOut: 401 },
+    makeCacheableSignalKeyStore: (keys) => keys,
+    useMultiFileAuthState: async () => {
+      authReads++;
+      return {
+        state: { creds: {}, keys: {} },
+        saveCreds: async () => { await pendingWrite; },
+      };
+    },
+  };
+  await manager.sync({ "7A": { waliKelas: "628111@c.us", siswa: {} } });
+  const first = sockets[0];
+  first.ev.emit("connection.update", { connection: "open" });
+  first.ev.emit("creds.update", {});
+  await new Promise((resolve) => setImmediate(resolve));
+  const reconnecting = manager.connect(manager.sessions.get("wali:628111"));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(authReads, 1);
+  releaseWrite();
+  await reconnecting;
+  assert.equal(authReads, 2);
+  assert.equal(sockets.length, 2);
 });

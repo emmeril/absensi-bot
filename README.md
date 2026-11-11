@@ -237,6 +237,8 @@ Browser mengirim gambar dan koordinat yang dapat dimanipulasi. Pencocokan wajah 
 - Bukti pengiriman yang mengembalikan ID WhatsApp dicatat di tabel `notification_receipts`.
 - Gunakan **satu proses PM2** untuk setiap database dan direktori autentikasi; dua instance yang berbagi sesi dan database tidak didukung.
 - Untuk akun aktif, direktori `.baileys_auth` masih menggunakan `useMultiFileAuthState`. Jangan menghapus folder ini atau mengganti auth store tanpa migrasi dan backup kredensial yang benar.
+- Tombol **Hapus sesi dan buat QR baru** tersedia pada sesi Bot Siswa dan Bot Guru yang terhubung maupun terputus. Aplikasi akan mencoba logout perangkat tertaut terlebih dahulu, lalu membersihkan autentikasi bot yang dipilih dan menyiapkan QR baru. Jika logout jaringan gagal, penghapusan lokal tetap dilanjutkan; cabut perangkat lama secara manual di WhatsApp > Perangkat tertaut bila masih terlihat.
+- Informasi **Perintah terakhir diterima** pada kartu bot menunjukkan waktu command mencapai handler Baileys. Ini tidak berarti balasan sudah terkirim. Periksa log jika waktu berubah tetapi bot tidak menjawab; jika waktu tidak berubah, periksa penerimaan pesan atau identitas LID.
 - Pengujian tanpa jaringan dapat dijalankan dengan `npm test`. Tetap lakukan smoke test koneksi QR, LID, reconnect, dan restart pada akun uji sebelum deployment produksi.
 
 ### Troubleshooting: WhatsApp terhubung tetapi command tidak dijawab
