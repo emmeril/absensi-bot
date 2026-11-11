@@ -189,3 +189,17 @@ test("pesan prioritas didahulukan dari notifikasi yang masih mengantre", async (
 
   assert.deepEqual(order, ["pertama", "prioritas", "normal"]);
 });
+
+test("noRetry prevents duplicate sends even if the first attempt times out", async () => {
+  let attempts = 0;
+  const sender = createWhatsappSender({
+    safetyMode: "off",
+    maxRetries: 3,
+    sleep: async () => {},
+  });
+  await assert.rejects(sender(async () => {
+    attempts += 1;
+    throw new Error("ambiguous timeout");
+  }, { noRetry: true }), /ambiguous timeout/);
+  assert.equal(attempts, 1);
+});

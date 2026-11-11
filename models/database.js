@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const { createHash } = require("node:crypto");
 const { Sequelize, DataTypes, Op } = require("sequelize");
 
 const DATA_DIR = path.join(__dirname, "..", "data");
@@ -92,6 +93,28 @@ const NotificationOutbox = sequelize.define(
     ],
   }
 );
+
+// A unique, durable record avoids executing the same WhatsApp command twice
+// after a reconnect or process restart. No message content is stored here.
+const InboundWhatsappMessage = sequelize.define("InboundWhatsappMessage", {
+  id: { type: DataTypes.STRING(64), primaryKey: true },
+}, { tableName: "inbound_whatsapp_messages", indexes: [{ fields: ["createdAt"] }] });
+
+const NotificationReceipt = sequelize.define("NotificationReceipt", {
+  outboxId: { type: DataTypes.UUID, primaryKey: true },
+  whatsappMessageId: { type: DataTypes.STRING, allowNull: true },
+}, { tableName: "notification_receipts" });
+
+async function claimIncomingWhatsappMessage(botKey, chatJid, messageId) {
+  if (!botKey || !chatJid || !messageId) return true;
+  const id = createHash("sha256").update(JSON.stringify([botKey, chatJid, messageId])).digest("hex");
+  const [record, created] = await InboundWhatsappMessage.findOrCreate({ where: { id }, defaults: { id } });
+  return created;
+}
+
+async function purgeIncomingWhatsappMessages(before) {
+  return InboundWhatsappMessage.destroy({ where: { createdAt: { [Op.lt]: before } } });
+}
 
 function readJsonFile(filePath, fallback) {
   if (!fs.existsSync(filePath)) return fallback;
@@ -301,9 +324,31 @@ async function enqueueNotifications(jobs, options = {}) {
 }
 
 async function recoverNotificationOutbox() {
+  // "processing" has not begun a send. "sending" may have reached WhatsApp.
+  await sequelize.transaction(async (transaction) => {
+    await NotificationOutbox.update(
+      { status: "pending", availableAt: new Date() },
+      { where: { status: "processing" }, transaction }
+    );
+    await NotificationOutbox.update(
+      { status: "uncertain", lastError: "Server restarted during WhatsApp send; manual review required." },
+      { where: { status: "sending" }, transaction }
+    );
+  });
+}
+
+async function markNotificationSending(id) {
+  const [updated] = await NotificationOutbox.update(
+    { status: "sending" },
+    { where: { id, status: "processing" } }
+  );
+  if (!updated) throw new Error("Outbox job no longer claimed for sending.");
+}
+
+async function markNotificationUncertain(id, error) {
   await NotificationOutbox.update(
-    { status: "pending", availableAt: new Date() },
-    { where: { status: "processing" } }
+    { status: "uncertain", lastError: String(error?.message || error || "Delivery result unknown").slice(0, 2000) },
+    { where: { id, status: { [Op.in]: ["processing", "sending"] } } }
   );
 }
 
@@ -326,11 +371,17 @@ async function claimNextNotification() {
   });
 }
 
-async function markNotificationSent(id) {
-  await NotificationOutbox.update(
-    { status: "sent", lastError: null },
-    { where: { id } }
-  );
+async function markNotificationSent(id, messageId = null) {
+  await sequelize.transaction(async (transaction) => {
+    await NotificationReceipt.upsert(
+      { outboxId: id, whatsappMessageId: messageId ? String(messageId) : null },
+      { transaction }
+    );
+    await NotificationOutbox.update(
+      { status: "sent", lastError: null },
+      { where: { id }, transaction }
+    );
+  });
 }
 
 async function rescheduleNotification(id, { error, availableAt, failed = false }) {
@@ -396,6 +447,12 @@ module.exports = {
   Attendance,
   JsonStore,
   NotificationOutbox,
+  NotificationReceipt,
+  InboundWhatsappMessage,
+  claimIncomingWhatsappMessage,
+  purgeIncomingWhatsappMessages,
+  markNotificationSending,
+  markNotificationUncertain,
   attendanceForDate,
   attendanceStatus,
   cancelNotificationsForMediaPaths,
