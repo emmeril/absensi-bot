@@ -1220,7 +1220,7 @@ whatsapp.on("message", safeAsyncListener(async ({
   const commandStartedAt = Date.now();
   const sender = msg.author || msg.from;
   const body = String(msg.body || "").trim().toLowerCase();
-  const command = body.split(/\s+/, 1)[0];
+  const command = body.match(/^![a-z][a-z0-9_-]{0,31}/)?.[0] || "";
   const diagnostics = process.env.WA_DIAGNOSTICS === "1";
   if (diagnostics && command.startsWith("!")) {
     console.log(`[WhatsApp Command] diterima bot=${botKey} perintah=${command} identitas=${sender.endsWith("@lid") ? "lid" : "phone"}`);

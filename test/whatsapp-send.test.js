@@ -226,6 +226,7 @@ test("a hung send releases the queue and is never retried automatically", async 
 });
 
 test("sendTimeoutMs is not counted from rate-limit waiting time", async () => {
+  const waited = [];
   const send = createWhatsappSender({
     safetyMode: "automatic",
     minIntervalMs: 200,
@@ -233,7 +234,9 @@ test("sendTimeoutMs is not counted from rate-limit waiting time", async () => {
     recipientIntervalMs: 0,
     maxPerMinute: 0,
     sendTimeoutMs: 20,
-    sleep: async () => {},
+    now: () => 0,
+    sleep: async (ms) => waited.push(ms),
   });
   assert.equal(await send(async () => "ok"), "ok");
+  assert.deepEqual(waited, [200]);
 });
