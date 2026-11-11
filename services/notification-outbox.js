@@ -107,11 +107,15 @@ class NotificationOutboxProcessor {
   }
 
   async #process(job) {
+    let deliveryAcknowledged = false;
     try {
       const result = await this.deliver(job);
+      deliveryAcknowledged = true;
       await this.store.markSent(job.id, result?.key?.id || null);
     } catch (error) {
-      if (error?.code === "WA_DELIVERY_UNCERTAIN") {
+      // A successful WhatsApp send followed by a failed DB write must NEVER
+      // be rescheduled as another outbound send.
+      if (deliveryAcknowledged || error?.code === "WA_DELIVERY_UNCERTAIN") {
         await this.store.markUncertain(job.id, error);
         this.onError?.({ job, error, failed: true, uncertain: true, delayMs: 0 });
         return;

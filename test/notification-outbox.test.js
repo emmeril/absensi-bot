@@ -100,3 +100,26 @@ test("successful delivery passes Baileys message id to receipt storage", async (
   await processor.stop();
   assert.deepEqual(saved, [["ok-1", "WA-123"]]);
 });
+
+test("a failed DB receipt write after successful WhatsApp send is not retried", async () => {
+  const pending = [{ id: "already-sent", attempts: 1 }];
+  const uncertain = [], rescheduled = [];
+  const processor = new NotificationOutboxProcessor({
+    concurrency: 1,
+    pollIntervalMs: 250,
+    store: {
+      recover: async () => {},
+      purgeSent: async () => {},
+      claim: async () => pending.shift() || null,
+      markSent: async () => { throw new Error("SQLite busy"); },
+      markUncertain: async (id) => uncertain.push(id),
+      reschedule: async (id) => rescheduled.push(id),
+    },
+    deliver: async () => ({ key: { id: "already-delivered" } }),
+  });
+  await processor.start();
+  await waitFor(() => uncertain.length === 1);
+  await processor.stop();
+  assert.deepEqual(uncertain, ["already-sent"]);
+  assert.deepEqual(rescheduled, []);
+});

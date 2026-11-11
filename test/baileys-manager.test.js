@@ -149,3 +149,18 @@ test("resolves inbound LID using Baileys signal repository when alt JID is absen
   assert.equal(message.chatJid, "1234@lid");
   assert.equal(map.get("1234@lid"), "628111@s.whatsapp.net");
 });
+
+test("retry counter cache expires entries and caps memory", () => {
+  const { RetryCounterCache } = require("../lib/baileys-manager");
+  let now = 0;
+  const cache = new RetryCounterCache({ maxEntries: 2, ttlMs: 20, now: () => now });
+  cache.set("a", 1);
+  cache.set("b", 2);
+  cache.set("c", 3);
+  assert.equal(cache.get("a"), undefined);
+  assert.equal(cache.get("c"), 3);
+  now += 21;
+  assert.equal(cache.get("b"), undefined);
+  cache.flushAll();
+  assert.equal(cache.get("c"), undefined);
+});

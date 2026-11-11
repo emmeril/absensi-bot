@@ -1212,8 +1212,8 @@ whatsapp.on("message", safeAsyncListener(async ({
   message: msg,
 }) => {
   const commandStartedAt = Date.now();
-  if (!await claimIncomingWhatsappMessage(botKey, msg.chatJid, msg.messageId)) return;
   const sender = msg.author || msg.from;
+  if (!await claimIncomingWhatsappMessage(botKey, sender, msg.messageId)) return;
   const body = String(msg.body || "").trim().toLowerCase();
   const kontak = loadJSON(KONTAK_PATH);
   const roles = loadJSON(ROLE_PATH);
@@ -1237,6 +1237,8 @@ whatsapp.on("message", safeAsyncListener(async ({
         recipientId: `${botKey}:${sender}`,
         priority: "high",
         senderKey: botKey,
+        // A command response may already have been accepted before a timeout.
+        noRetry: true,
       });
     } finally {
       if (body.startsWith("!")) {
