@@ -164,3 +164,62 @@ test("retry counter cache expires entries and caps memory", () => {
   cache.flushAll();
   assert.equal(cache.get("c"), undefined);
 });
+
+test("ignores events from a closed socket and stops reconnect timers on shutdown", async () => {
+  const { EventEmitter } = require("node:events");
+  const { BaileysManager } = require("../lib/baileys-manager");
+  const sockets = [];
+  const manager = new BaileysManager();
+  manager.waVersion = [2, 3000, 1];
+  manager.versionResolvedAt = Date.now();
+  manager.library = {
+    default: () => {
+      const socket = {
+        ev: new EventEmitter(),
+        user: { id: "628111:1@s.whatsapp.net" },
+        end: () => {},
+      };
+      sockets.push(socket);
+      return socket;
+    },
+    Browsers: { ubuntu: () => ["Ubuntu", "Chrome", "1"] },
+    DisconnectReason: { loggedOut: 401 },
+    makeCacheableSignalKeyStore: (keys) => keys,
+    useMultiFileAuthState: async () => ({
+      state: { creds: {}, keys: {} },
+      saveCreds: async () => {},
+    }),
+  };
+  const received = [];
+  manager.on("message", ({ message }) => received.push(message.body));
+  await manager.sync({
+    "7A": { waliKelas: "628111@c.us", siswa: {} },
+  });
+  const socket = sockets[0];
+  socket.ev.emit("connection.update", { connection: "open" });
+  socket.ev.emit("messages.upsert", {
+    type: "notify",
+    messages: [{
+      key: { id: "first", remoteJid: "628222@s.whatsapp.net" },
+      message: { conversation: "!masuk" },
+    }],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(received, ["!masuk"]);
+
+  socket.ev.emit("connection.update", {
+    connection: "close",
+    lastDisconnect: { error: new Error("network disconnected") },
+  });
+  socket.ev.emit("messages.upsert", {
+    type: "notify",
+    messages: [{
+      key: { id: "late", remoteJid: "628222@s.whatsapp.net" },
+      message: { conversation: "!izin" },
+    }],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(received, ["!masuk"]);
+  await manager.close();
+  assert.equal(manager.sessions.size, 0);
+});
