@@ -294,3 +294,77 @@ test("nested Baileys message wrappers are unwrapped", async () => {
   }, { sendMessage: async () => {} }, new Map());
   assert.equal(msg.body, "!bantuan");
 });
+
+test("reset an active session after pending auth writes and create a fresh QR", async (t) => {
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const { EventEmitter } = require("node:events");
+  const { BaileysManager } = require("../lib/baileys-manager");
+  const authRoot = fs.mkdtempSync(path.join(os.tmpdir(), "baileys-reset-active-"));
+  t.after(() => fs.rmSync(authRoot, { recursive: true, force: true }));
+
+  const manager = new BaileysManager({ authRoot });
+  t.after(async () => manager.close());
+  manager.waVersion = [2, 3000, 1];
+  manager.versionResolvedAt = Date.now();
+
+  const sockets = [];
+  let releaseWrite;
+  const writeGate = new Promise((resolve) => { releaseWrite = resolve; });
+  let writingStarted;
+  const started = new Promise((resolve) => { writingStarted = resolve; });
+  const sessionKey = "wali:628111";
+  const credentialFile = path.join(manager.sessionFolder(sessionKey), "creds.json");
+  manager.library = {
+    default: () => {
+      const socket = {
+        ev: new EventEmitter(),
+        user: { id: "628111:2@s.whatsapp.net" },
+        end: () => { socket.ended = true; },
+      };
+      sockets.push(socket);
+      return socket;
+    },
+    Browsers: { ubuntu: () => ["Ubuntu", "Chrome", "1"] },
+    DisconnectReason: { loggedOut: 401 },
+    makeCacheableSignalKeyStore: (keys) => keys,
+    useMultiFileAuthState: async (folder) => {
+      fs.mkdirSync(folder, { recursive: true });
+      return {
+        state: { creds: {}, keys: {} },
+        saveCreds: async () => {
+          if (sockets.length !== 1) return;
+          writingStarted();
+          await writeGate;
+          fs.writeFileSync(credentialFile, "old-credentials");
+        },
+      };
+    },
+  };
+
+  await manager.sync({ "7A": { waliKelas: "628111@c.us", siswa: {} } });
+  const activeSocket = sockets[0];
+  activeSocket.ev.emit("connection.update", { connection: "open" });
+  assert.equal(manager.isReady(sessionKey), true);
+  activeSocket.ev.emit("creds.update", {});
+  await started;
+
+  const firstReset = manager.reset(sessionKey);
+  const secondReset = manager.reset(sessionKey);
+  assert.equal(manager.statuses()[0].state, "resetting");
+  assert.equal(activeSocket.ended, true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(sockets.length, 1);
+  releaseWrite();
+  await Promise.all([firstReset, secondReset]);
+  assert.equal(sockets.length, 2);
+  assert.equal(fs.existsSync(credentialFile), false);
+  assert.equal(manager.isReady(sessionKey), false);
+
+  sockets[1].ev.emit("connection.update", { qr: "QR-baru" });
+  assert.equal(manager.statuses()[0].state, "qr");
+  assert.equal(manager.statuses()[0].qr, "QR-baru");
+  activeSocket.ev.emit("connection.update", { connection: "open" });
+  assert.equal(manager.statuses()[0].state, "qr");
+});
