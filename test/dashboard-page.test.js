@@ -428,7 +428,9 @@ test("izin guru memakai modal serta aksi edit dan hapus", () => {
 });
 
 test("reset WhatsApp tersedia saat terhubung, dengan konfirmasi dan busy state", async () => {
-  assert.match(dashboardPage, /x-show="bot\.ready \|\| \['mismatch','logged_out','error'\]\.includes\(bot\.state\)"/);
+  assert.match(dashboardPage, /x-show="bot\.ready \|\| \['closed','recovering','mismatch','logged_out','error'\]\.includes\(bot\.state\)"/);
+  assert.match(dashboardPage, /Perintah terakhir diterima/);
+  assert.match(dashboardPage, /:aria-label="'Hapus sesi dan buat QR baru untuk ' \+ bot\.label"/);
   assert.match(dashboardPage, /:disabled="Boolean\(whatsappResetting\)"/);
   assert.match(dashboardPage, /Hapus sesi dan buat QR baru/);
 
