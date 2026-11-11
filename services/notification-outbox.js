@@ -108,9 +108,14 @@ class NotificationOutboxProcessor {
 
   async #process(job) {
     try {
-      await this.deliver(job);
-      await this.store.markSent(job.id);
+      const result = await this.deliver(job);
+      await this.store.markSent(job.id, result?.key?.id || null);
     } catch (error) {
+      if (error?.code === "WA_DELIVERY_UNCERTAIN") {
+        await this.store.markUncertain(job.id, error);
+        this.onError?.({ job, error, failed: true, uncertain: true, delayMs: 0 });
+        return;
+      }
       const retryable = this.isRetryable(error, job);
       const failed = !retryable || job.attempts >= this.maxAttempts;
       const exponent = Math.max(0, job.attempts - 1);

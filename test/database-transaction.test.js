@@ -35,3 +35,24 @@ test("failed batch rolls back SQLite and cache, then accepts another update", as
   const loaded = await initJsonStore({ roles: { path: "missing-roles.json", fallback: { "old@c.us": "admin" } } });
   assert.deepEqual(loaded.roles, {});
 });
+
+test("inbound WhatsApp messages are claimed once across repeated events", async () => {
+  const { claimIncomingWhatsappMessage } = require("../models/database");
+  await sequelize.sync();
+  assert.equal(await claimIncomingWhatsappMessage("wali:1", "123@lid", "wamid.1"), true);
+  assert.equal(await claimIncomingWhatsappMessage("wali:1", "123@lid", "wamid.1"), false);
+  assert.equal(await claimIncomingWhatsappMessage("wali:2", "123@lid", "wamid.1"), true);
+  assert.equal(await claimIncomingWhatsappMessage("wali:1", "123@lid", "wamid.2"), true);
+});
+
+test("recovery holds in-flight sends but retries not-yet-started jobs", async () => {
+  const { NotificationOutbox, recoverNotificationOutbox } = require("../models/database");
+  await sequelize.sync();
+  const a = await NotificationOutbox.create({ botKey: "wali:1", recipientId: "1", status: "processing" });
+  const b = await NotificationOutbox.create({ botKey: "wali:1", recipientId: "2", status: "sending" });
+  await recoverNotificationOutbox();
+  await a.reload();
+  await b.reload();
+  assert.equal(a.status, "pending");
+  assert.equal(b.status, "uncertain");
+});

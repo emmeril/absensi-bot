@@ -18,6 +18,7 @@ const {
   attendanceStatus,
   cancelNotificationsForMediaPaths,
   claimNextNotification,
+  claimIncomingWhatsappMessage,
   closeDatabase,
   compactDatabase,
   createAttendance,
@@ -25,9 +26,12 @@ const {
   fillAttendanceSnapshot,
   initJsonStore,
   markNotificationSent,
+  markNotificationSending,
+  markNotificationUncertain,
   migrateLegacyAttendance,
   notificationOutboxStats,
   purgeSentNotifications,
+  purgeIncomingWhatsappMessages,
   recoverNotificationOutbox,
   renameAttendanceStudent,
   renamePendingNotificationRecipient,
@@ -1120,20 +1124,33 @@ notificationOutboxProcessor = new NotificationOutboxProcessor({
     recover: recoverNotificationOutbox,
     claim: claimNextNotification,
     markSent: markNotificationSent,
+    markSending: markNotificationSending,
+    markUncertain: markNotificationUncertain,
     reschedule: rescheduleNotification,
     purgeSent: purgeSentNotifications,
   },
   deliver: async (job) => {
     const media = await mediaForOutboxJob(job);
     return sendWhatsappWithRetry(
-      () =>
-        media
-          ? whatsapp.sendImage(job.botKey, job.recipientId, media, job.text)
-          : whatsapp.sendText(job.botKey, job.recipientId, job.text),
+      async () => {
+        // Failures before this transition are safe to retry.
+        whatsapp.requireReady(job.botKey);
+        await markNotificationSending(job.id);
+        // A failed/terminated call after this point has an unknown delivery outcome.
+        try {
+          return media
+            ? await whatsapp.sendImage(job.botKey, job.recipientId, media, job.text)
+            : await whatsapp.sendText(job.botKey, job.recipientId, job.text);
+        } catch (error) {
+          error.code = "WA_DELIVERY_UNCERTAIN";
+          throw error;
+        }
+      },
       {
         recipientId: `${job.botKey}:${job.recipientId}`,
         priority: job.priority > 0 ? "high" : "normal",
         senderKey: job.botKey,
+        noRetry: true,
       }
     );
   },
@@ -1146,8 +1163,8 @@ notificationOutboxProcessor = new NotificationOutboxProcessor({
   retryMaxDelayMs: Number(process.env.NOTIFICATION_RETRY_MAX_DELAY_MS) || 15 * 60_000,
   maxAttempts: Number(process.env.NOTIFICATION_MAX_ATTEMPTS) || 12,
   retentionMs: Number(process.env.NOTIFICATION_SENT_RETENTION_MS) || 7 * 24 * 60 * 60_000,
-  onError: ({ job, error, failed, delayMs }) => {
-    const action = failed ? "dihentikan" : `diulang dalam ${delayMs} ms`;
+  onError: ({ job, error, failed, uncertain, delayMs }) => {
+    const action = uncertain ? "perlu verifikasi manual" : failed ? "dihentikan" : `diulang dalam ${delayMs} ms`;
     console.error(
       `[Notification Outbox] ${job?.id || "processor"} ke ${job?.recipientId || "-"} ${action}:`,
       error.message
@@ -1195,6 +1212,7 @@ whatsapp.on("message", safeAsyncListener(async ({
   message: msg,
 }) => {
   const commandStartedAt = Date.now();
+  if (!await claimIncomingWhatsappMessage(botKey, msg.chatJid, msg.messageId)) return;
   const sender = msg.author || msg.from;
   const body = String(msg.body || "").trim().toLowerCase();
   const kontak = loadJSON(KONTAK_PATH);
@@ -2673,6 +2691,7 @@ function startHttpServer() {
 async function startBot() {
   try {
     jsonState.replace(await initJsonStore(JSON_STORES));
+    await purgeIncomingWhatsappMessages(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
     console.log(`Database Sequelize siap: ${DB_PATH}`);
     const syncedWaliTeachers = await syncWaliKelasToTeachers();
     if (syncedWaliTeachers) console.log(`[Sinkronisasi Guru] ${syncedWaliTeachers} wali kelas ditambahkan atau diperbarui.`);

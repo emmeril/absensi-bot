@@ -51,3 +51,52 @@ test("outbox memproses paralel dan menyimpan kegagalan untuk retry", async () =>
   assert.equal(rescheduled[0].failed, false);
   assert.ok(rescheduled[0].availableAt > new Date());
 });
+
+test("uncertain delivery is held for manual review and never retried automatically", async () => {
+  const pending = [{ id: "uncertain-1", attempts: 1 }];
+  const sent = [], retried = [], uncertain = [];
+  const processor = new NotificationOutboxProcessor({
+    concurrency: 1,
+    pollIntervalMs: 250,
+    store: {
+      recover: async () => {},
+      purgeSent: async () => {},
+      claim: async () => pending.shift() || null,
+      markSent: async (id) => sent.push(id),
+      markUncertain: async (id) => uncertain.push(id),
+      reschedule: async (id) => retried.push(id),
+    },
+    deliver: async () => {
+      const error = new Error("Network connection terminated after sending started");
+      error.code = "WA_DELIVERY_UNCERTAIN";
+      throw error;
+    },
+  });
+  await processor.start();
+  await waitFor(() => uncertain.length === 1);
+  await processor.stop();
+  assert.deepEqual(uncertain, ["uncertain-1"]);
+  assert.deepEqual(retried, []);
+  assert.deepEqual(sent, []);
+});
+
+test("successful delivery passes Baileys message id to receipt storage", async () => {
+  const pending = [{ id: "ok-1", attempts: 1 }];
+  const saved = [];
+  const processor = new NotificationOutboxProcessor({
+    concurrency: 1,
+    pollIntervalMs: 250,
+    store: {
+      recover: async () => {},
+      purgeSent: async () => {},
+      claim: async () => pending.shift() || null,
+      markSent: async (id, messageId) => saved.push([id, messageId]),
+      reschedule: async () => {},
+    },
+    deliver: async () => ({ key: { id: "WA-123" } }),
+  });
+  await processor.start();
+  await waitFor(() => saved.length === 1);
+  await processor.stop();
+  assert.deepEqual(saved, [["ok-1", "WA-123"]]);
+});

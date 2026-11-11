@@ -225,3 +225,14 @@ Direktori seperti `.baileys_auth`, `data`, `face_db`, `face_rec`, `attendance_ph
 Absensi masuk/pulang dan izin diproses otomatis tanpa konfirmasi admin/wali kelas. Pencocokan wajah, pemeriksaan koordinat dan radius sekolah untuk absensi, jadwal, serta larangan pencatatan ganda tetap berlaku. Izin memerlukan selfie terverifikasi dan unggahan bukti; lokasinya tidak dibatasi radius sekolah.
 
 Browser mengirim gambar dan koordinat yang dapat dimanipulasi. Pencocokan wajah bukan pemeriksaan liveness dan tidak membuktikan bahwa foto baru diambil. Alur otomatis ini tidak menjamin pencegahan foto lama atau GPS palsu.
+
+
+## Keandalan WhatsApp (Baileys v7)
+
+- Pesan masuk dengan ID WhatsApp yang sama hanya diproses sekali per sesi bot. Identitas dipetakan dari LID ke nomor telepon melalui penyimpanan Signal Baileys saat tersedia.
+- Pengiriman notifikasi menggunakan status SQLite `pending`, `processing`, `sending`, `sent`, `failed`, dan `uncertain`. Status `uncertain` berarti server kehilangan kepastian apakah pesan sudah diterima oleh WhatsApp, **bukan berarti pesan gagal**.
+- **Jangan mengirim ulang notifikasi `uncertain` secara otomatis.** Periksa dulu percakapan WhatsApp dengan penerima agar tidak mengirim pesan ganda. Pesan `processing` yang belum memasuki pengiriman boleh dipulihkan sesudah restart.
+- Bukti pengiriman yang mengembalikan ID WhatsApp dicatat di tabel `notification_receipts`.
+- Gunakan **satu proses PM2** untuk setiap database dan direktori autentikasi; dua instance yang berbagi sesi dan database tidak didukung.
+- Untuk akun aktif, direktori `.baileys_auth` masih menggunakan `useMultiFileAuthState`. Jangan menghapus folder ini atau mengganti auth store tanpa migrasi dan backup kredensial yang benar.
+- Pengujian tanpa jaringan dapat dijalankan dengan `npm test`. Tetap lakukan smoke test koneksi QR, LID, reconnect, dan restart pada akun uji sebelum deployment produksi.
