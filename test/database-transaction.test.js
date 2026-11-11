@@ -1,4 +1,4 @@
-const test = require("node:test");
+const { test, after } = require("node:test");
 const assert = require("node:assert/strict");
 
 // This test process never opens the application's database.
@@ -6,8 +6,9 @@ process.env.DB_PATH = ":memory:";
 const { JsonStore, sequelize, initJsonStore, saveJsonBatch, closeDatabase } = require("../models/database");
 const { JsonState } = require("../lib/json-state");
 
-test("failed batch rolls back SQLite and cache, then accepts another update", async (t) => {
-  t.after(closeDatabase);
+after(closeDatabase);
+
+test("failed batch rolls back SQLite and cache, then accepts another update", async () => {
   await sequelize.sync();
   const initial = { contacts: { name: "Before" }, classes: { name: "Before" } };
   await saveJsonBatch(initial);
