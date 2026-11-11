@@ -426,3 +426,38 @@ test("izin guru memakai modal serta aksi edit dan hapus", () => {
   assert.match(teacherScript, /"Edit izin guru"/);
   assert.match(teacherScript, /"Hapus izin guru"/);
 });
+
+test("reset WhatsApp tersedia saat terhubung, dengan konfirmasi dan busy state", async () => {
+  assert.match(dashboardPage, /x-show="bot\.ready \|\| \['mismatch','logged_out','error'\]\.includes\(bot\.state\)"/);
+  assert.match(dashboardPage, /:disabled="Boolean\(whatsappResetting\)"/);
+  assert.match(dashboardPage, /Hapus sesi dan buat QR baru/);
+
+  const script = dashboardPage.match(/<script>\s*(function dashboard\(\)[\s\S]*?)\s*<\/script>/);
+  assert.ok(script);
+  const confirmMessages = [];
+  const dashboard = vm.runInNewContext(`${script[1]}; dashboard;`, {
+    confirm: (text) => { confirmMessages.push(text); return true; },
+  });
+  const state = dashboard();
+  const requests = [];
+  let finishReset;
+  state.request = async (url, options) => {
+    requests.push({ url, method: options.method });
+    return new Promise((resolve) => { finishReset = resolve; });
+  };
+  state.refreshWhatsapp = async () => {};
+  state.notify = () => {};
+
+  const bot = { key: "wali:628111", label: "Wali kelas", ready: true };
+  const first = state.resetWhatsapp(bot);
+  assert.equal(state.whatsappResetting, bot.key);
+  const duplicate = state.resetWhatsapp(bot);
+  await duplicate;
+  assert.equal(requests.length, 1);
+  assert.match(confirmMessages[0], /sedang terhubung akan diputus/);
+  finishReset({ ok: true });
+  await first;
+  assert.equal(state.whatsappResetting, "");
+  assert.equal(requests[0].method, "POST");
+  assert.equal(requests[0].url, "/api/whatsapp/wali%3A628111/reset");
+});

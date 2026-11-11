@@ -159,7 +159,7 @@ Pada proses pertama, masuk ke dashboard lalu buka **Pengaturan > Bot Siswa** unt
 
 - Dashboard: `http://localhost:3200`
 
-Submenu Bot Siswa dan Bot Guru di Pengaturan tersedia untuk pengguna yang sudah login tanpa password koneksi terpisah. Administrator dapat melihat keduanya, sedangkan wali kelas hanya dapat melihat dan mengelola Bot Siswa yang nomornya sesuai dengan akun wali tersebut. Pindai QR memakai nomor yang tertulis pada kartu. Satu wali yang menangani beberapa kelas tetap memakai satu sesi. Sesi disimpan di `.baileys_auth`, sehingga pemindaian biasanya hanya diperlukan sekali. Jika akun salah atau sudah logout, tombol pada kartu dapat menghapus sesi tersebut dan menampilkan QR baru.
+Submenu Bot Siswa dan Bot Guru di Pengaturan tersedia untuk pengguna yang sudah login tanpa password koneksi terpisah. Administrator dapat melihat keduanya, sedangkan wali kelas hanya dapat melihat dan mengelola Bot Siswa yang nomornya sesuai dengan akun wali tersebut. Pindai QR memakai nomor yang tertulis pada kartu. Satu wali yang menangani beberapa kelas tetap memakai satu sesi. Sesi disimpan di `.baileys_auth`, sehingga pemindaian biasanya hanya diperlukan sekali. Tombol **Hapus sesi dan buat QR baru** tersedia juga ketika bot berstatus **Terhubung**. Setelah konfirmasi, aplikasi menutup koneksi untuk bot tersebut, menunggu proses simpan kredensial selesai, menghapus berkas sesi lokal bot itu saja, lalu menyiapkan QR baru. Bot tersebut tidak dapat membalas command atau mengirim notifikasi sampai nomor ditautkan ulang; bot lain tidak ikut dihapus. Jika perangkat lama masih terlihat pada menu **Perangkat tertaut** di telepon, putuskan secara manual dari WhatsApp.
 
 Untuk produksi menggunakan PM2:
 
