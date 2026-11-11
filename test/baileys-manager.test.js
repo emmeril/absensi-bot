@@ -223,3 +223,74 @@ test("ignores events from a closed socket and stops reconnect timers on shutdown
   await manager.close();
   assert.equal(manager.sessions.size, 0);
 });
+
+test("buffers live messages during connection handshake without replaying history", async () => {
+  const { EventEmitter } = require("node:events");
+  const { BaileysManager } = require("../lib/baileys-manager");
+  const manager = new BaileysManager();
+  manager.waVersion = [2, 3000, 1];
+  manager.versionResolvedAt = Date.now();
+  let socket;
+  manager.library = {
+    default: () => {
+      socket = {
+        ev: new EventEmitter(),
+        user: { id: "628111:1@s.whatsapp.net" },
+        end: () => {},
+      };
+      return socket;
+    },
+    Browsers: { ubuntu: () => ["Ubuntu", "Chrome", "1"] },
+    DisconnectReason: { loggedOut: 401 },
+    makeCacheableSignalKeyStore: (keys) => keys,
+    useMultiFileAuthState: async () => ({ state: { creds: {}, keys: {} }, saveCreds: async () => {} }),
+  };
+  const received = [];
+  manager.on("message", ({ message }) => received.push(message.body));
+  await manager.sync({ "7A": { waliKelas: "628111@c.us", siswa: {} } });
+  const event = (id, text) => ({
+    key: { id, remoteJid: "628222@s.whatsapp.net" },
+    message: { conversation: text },
+  });
+  socket.ev.emit("messages.upsert", { type: "notify", messages: [event("1", "!bantuan")] });
+  socket.ev.emit("messages.upsert", { type: "append", messages: [event("2", "!masuk")] });
+  assert.deepEqual(received, []);
+  socket.ev.emit("connection.update", { connection: "open" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(received, ["!bantuan"]);
+  await manager.close();
+});
+
+test("restarts a live but stuck WhatsApp connection once and ignores the old socket", async () => {
+  const { EventEmitter } = require("node:events");
+  const { BaileysManager, RecentMessageStore } = require("../lib/baileys-manager");
+  const manager = new BaileysManager();
+  let ended = 0;
+  let connected = 0;
+  const socket = { ev: new EventEmitter(), end: () => { ended += 1; } };
+  const session = {
+    definition: { key: "wali:628111", role: "wali", expectedNumber: "628111", classNames: [], studentNumbers: [] },
+    ready: true, socket, stopped: false, generation: 1,
+    state: "open", error: "", reconnectTimer: null, reconnectAttempts: 0,
+    lidMap: new Map(), recentMessages: new RecentMessageStore(),
+  };
+  manager.sessions.set("wali:628111", session);
+  manager.connect = async () => { connected += 1; };
+  assert.equal(await manager.restartConnection("wali:628111"), true);
+  assert.equal(ended, 1);
+  assert.equal(connected, 1);
+  assert.equal(session.ready, false);
+  assert.equal(await manager.restartConnection("wali:628111"), false);
+  manager.stopping = true;
+  manager.sessions.clear();
+});
+
+test("nested Baileys message wrappers are unwrapped", async () => {
+  const msg = await adaptIncomingMessage({
+    key: { id: "nested", remoteJid: "628222@s.whatsapp.net" },
+    message: { viewOnceMessage: { message: { ephemeralMessage: {
+      message: { extendedTextMessage: { text: "!bantuan" } },
+    } } } },
+  }, { sendMessage: async () => {} }, new Map());
+  assert.equal(msg.body, "!bantuan");
+});
