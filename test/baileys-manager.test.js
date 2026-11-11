@@ -528,3 +528,47 @@ test("failed remote logout does not prevent generating a new WhatsApp session", 
   assert.equal(manager.statuses()[0].ready, false);
   assert.ok(warn.mock.calls.some((call) => call.arguments.join(" ").includes("Logout perangkat tertaut gagal")));
 });
+
+test("parallel connection attempts use one Baileys socket for the same bot", async (t) => {
+  const { EventEmitter } = require("node:events");
+  const { BaileysManager } = require("../lib/baileys-manager");
+  const manager = new BaileysManager();
+  t.after(async () => manager.close());
+  manager.waVersion = [2, 3000, 1];
+  manager.versionResolvedAt = Date.now();
+  const sockets = [];
+  manager.library = {
+    default: () => {
+      const socket = {
+        ev: new EventEmitter(),
+        user: { id: "628111@s.whatsapp.net" },
+        end() {},
+      };
+      sockets.push(socket);
+      return socket;
+    },
+    Browsers: { ubuntu: () => ["Ubuntu", "Chrome", "1"] },
+    DisconnectReason: { loggedOut: 401 },
+    makeCacheableSignalKeyStore: (keys) => keys,
+    useMultiFileAuthState: async () => ({ state: { creds: {}, keys: {} }, saveCreds: async () => {} }),
+  };
+  await manager.sync({ "7A": { waliKelas: "628111@c.us", siswa: {} } });
+  const first = sockets[0];
+  first.ev.emit("connection.update", { connection: "open" });
+  const session = manager.sessions.get("wali:628111");
+  await Promise.all([manager.connect(session), manager.connect(session)]);
+  assert.equal(sockets.length, 2);
+  assert.equal(first.ev.listenerCount("messages.upsert"), 0);
+});
+
+test("document captions wrapped by Baileys are readable as commands", async () => {
+  const message = await adaptIncomingMessage({
+    key: { id: "wrapped-command", remoteJid: "628222@s.whatsapp.net" },
+    message: {
+      documentWithCaptionMessage: {
+        message: { documentMessage: { caption: "!bantuan" } },
+      },
+    },
+  }, { sendMessage: async () => {} }, new Map());
+  assert.equal(message.body, "!bantuan");
+});
