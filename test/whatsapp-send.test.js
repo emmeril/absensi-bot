@@ -203,3 +203,40 @@ test("noRetry prevents duplicate sends even if the first attempt times out", asy
   }, { noRetry: true }), /ambiguous timeout/);
   assert.equal(attempts, 1);
 });
+
+test("a hung send releases the queue and is never retried automatically", async () => {
+  const expired = [];
+  const send = createWhatsappSender({
+    safetyMode: "off",
+    maxRetries: 3,
+    sendTimeoutMs: 20,
+    onTimeout: ({ error }) => expired.push(error.code),
+  });
+  let attempts = 0;
+  const first = send(() => {
+    attempts += 1;
+    return new Promise(() => {});
+  }, { noRetry: true });
+  const second = send(async () => "balasan berikutnya", { noRetry: true });
+
+  await assert.rejects(first, { code: "WA_DELIVERY_UNCERTAIN" });
+  assert.equal(await second, "balasan berikutnya");
+  assert.equal(attempts, 1);
+  assert.deepEqual(expired, ["WA_DELIVERY_UNCERTAIN"]);
+});
+
+test("sendTimeoutMs is not counted from rate-limit waiting time", async () => {
+  const waited = [];
+  const send = createWhatsappSender({
+    safetyMode: "automatic",
+    minIntervalMs: 200,
+    maxIntervalMs: 200,
+    recipientIntervalMs: 0,
+    maxPerMinute: 0,
+    sendTimeoutMs: 20,
+    now: () => 0,
+    sleep: async (ms) => waited.push(ms),
+  });
+  assert.equal(await send(async () => "ok"), "ok");
+  assert.deepEqual(waited, [200]);
+});

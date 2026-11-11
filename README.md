@@ -121,6 +121,8 @@ Variabel lingkungan opsional:
 | `FACE_REFERENCE_CACHE_LIMIT` | `500` | Jumlah descriptor foto referensi yang disimpan per worker |
 | `FACE_TINY_INPUT_SIZE` | `320` | Resolusi detektor wajah cepat; kelipatan 32 antara 128–608 |
 | `FACE_TINY_SCORE_THRESHOLD` | `0.45` | Ambang keyakinan detektor wajah cepat |
+| `WA_SEND_TIMEOUT_MS` | `45000` | Maksimum waktu pemanggilan API kirim WhatsApp; timeout dianggap hasil tidak pasti dan tidak otomatis dikirim ulang |
+| `WA_DIAGNOSTICS` | kosong | Isi `1` saat investigasi untuk melihat event dan command tanpa mencatat isi chat maupun nomor pengirim |
 | `WA_SEND_MAX_RETRIES` | `3` | Jumlah percobaan ulang pengiriman WhatsApp setelah kegagalan |
 | `WA_SEND_RETRY_BASE_DELAY_MS` | `5000` | Jeda awal retry pengiriman WhatsApp dalam milidetik |
 | `WA_SEND_RETRY_MAX_DELAY_MS` | `60000` | Batas maksimum jeda retry pengiriman WhatsApp dalam milidetik |
@@ -236,3 +238,14 @@ Browser mengirim gambar dan koordinat yang dapat dimanipulasi. Pencocokan wajah 
 - Gunakan **satu proses PM2** untuk setiap database dan direktori autentikasi; dua instance yang berbagi sesi dan database tidak didukung.
 - Untuk akun aktif, direktori `.baileys_auth` masih menggunakan `useMultiFileAuthState`. Jangan menghapus folder ini atau mengganti auth store tanpa migrasi dan backup kredensial yang benar.
 - Pengujian tanpa jaringan dapat dijalankan dengan `npm test`. Tetap lakukan smoke test koneksi QR, LID, reconnect, dan restart pada akun uji sebelum deployment produksi.
+
+### Troubleshooting: WhatsApp terhubung tetapi command tidak dijawab
+
+Periksa dulu apakah satu instance PM2 menangani setiap sesi Baileys. Ketika bot tidak menjawab `!bantuan`, set `WA_DIAGNOSTICS=1` di `.env`, restart terkontrol, lalu jalankan `pm2 logs absensi-bot --lines 150 --nostream`.
+
+- Ada `[Baileys ...] upsert`, tetapi tidak ada `[WhatsApp Command] diterima`: pesan mungkin bukan real-time `notify`, belum siap diproses, atau bukan pesan langsung.
+- Ada `[WhatsApp Command] diterima`, lalu `[WhatsApp Message ERROR]`: periksa detail error dari database, validasi pengirim, atau pengiriman balasan.
+- Ada `[WhatsApp ...] Pengiriman melewati batas waktu`: antrean lama sempat macet; socket dipulihkan tanpa mengirim ulang pesan dengan hasil yang belum pasti.
+- Pesan berasal dari `@lid` yang belum bisa dipetakan ke nomor: nomor siswa/guru tidak dapat dicocokkan dengan data aplikasi sampai pasangan identitas tersedia dari WhatsApp.
+
+Nonaktifkan `WA_DIAGNOSTICS` setelah investigasi. Jangan menghapus `.baileys_auth` hanya karena dashboard masih menampilkan koneksi aktif. Jika proses pengiriman yang macet sudah mencapai WhatsApp, balasan lama dapat muncul terlambat, sehingga timeout tidak boleh langsung diulang.
