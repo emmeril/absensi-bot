@@ -261,6 +261,12 @@ function sendWhatsappWithRetry(send, metadata = {}) {
           error.message
         );
       },
+      onTimeout: ({ error }) => {
+        console.error(`[WhatsApp ${senderKey}] Pengiriman melewati batas waktu: ${error.message}`);
+        void whatsapp.restartConnection(senderKey).catch((reconnectError) => {
+          console.error(`[WhatsApp ${senderKey}] Gagal memulihkan koneksi:`, reconnectError);
+        });
+      },
       onThrottle: ({ delayMs, queueSize }) => {
         if (delayMs >= 10_000) {
           console.log(
@@ -1213,8 +1219,16 @@ whatsapp.on("message", safeAsyncListener(async ({
 }) => {
   const commandStartedAt = Date.now();
   const sender = msg.author || msg.from;
-  if (!await claimIncomingWhatsappMessage(botKey, sender, msg.messageId)) return;
   const body = String(msg.body || "").trim().toLowerCase();
+  const command = body.split(/\s+/, 1)[0];
+  const diagnostics = process.env.WA_DIAGNOSTICS === "1";
+  if (diagnostics && command.startsWith("!")) {
+    console.log(`[WhatsApp Command] diterima bot=${botKey} perintah=${command} identitas=${sender.endsWith("@lid") ? "lid" : "phone"}`);
+  }
+  if (!await claimIncomingWhatsappMessage(botKey, sender, msg.messageId)) {
+    if (diagnostics) console.log(`[WhatsApp Command] pesan duplikat diabaikan bot=${botKey}`);
+    return;
+  }
   const kontak = loadJSON(KONTAK_PATH);
   const roles = loadJSON(ROLE_PATH);
   const jamResmi = loadJSON(JAM_PATH, {
@@ -1239,11 +1253,12 @@ whatsapp.on("message", safeAsyncListener(async ({
         senderKey: botKey,
         // A command response may already have been accepted before a timeout.
         noRetry: true,
+        timeoutMs: 15000,
       });
     } finally {
       if (body.startsWith("!")) {
         console.log(
-          `[Command Performance] ${body.split(/\s+/)[0]} ${sender}: ` +
+          `[Command Performance] ${command} bot=${botKey}: ` +
             `handler=${replyStartedAt - commandStartedAt}ms reply=${Date.now() - replyStartedAt}ms ` +
             `total=${Date.now() - commandStartedAt}ms`
         );
