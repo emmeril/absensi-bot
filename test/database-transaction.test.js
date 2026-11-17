@@ -57,3 +57,17 @@ test("recovery holds in-flight sends but retries not-yet-started jobs", async ()
   assert.equal(a.status, "pending");
   assert.equal(b.status, "uncertain");
 });
+
+test("concurrent inbound commands are each claimed once without transaction conflicts", async () => {
+  const { claimIncomingWhatsappMessage } = require("../models/database");
+  await sequelize.sync();
+  const ids = Array.from({ length: 12 }, (_, i) => `concurrent.${i}`);
+  const results = await Promise.all(ids.flatMap((id) =>
+    Array.from({ length: 3 }, async () => ({
+      id, claimed: await claimIncomingWhatsappMessage("wali:concurrent", "123@lid", id),
+    }))
+  ));
+  for (const id of ids) {
+    assert.equal(results.filter((result) => result.id === id && result.claimed).length, 1);
+  }
+});

@@ -1,7 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const { createHash } = require("node:crypto");
-const { Sequelize, DataTypes, Op } = require("sequelize");
+const { Sequelize, DataTypes, Op, UniqueConstraintError } = require("sequelize");
 
 const DATA_DIR = path.join(__dirname, "..", "data");
 const DB_PATH = process.env.DB_PATH || path.join(DATA_DIR, "absensi.sqlite");
@@ -108,8 +108,13 @@ const NotificationReceipt = sequelize.define("NotificationReceipt", {
 async function claimIncomingWhatsappMessage(botKey, chatJid, messageId) {
   if (!botKey || !chatJid || !messageId) return true;
   const id = createHash("sha256").update(JSON.stringify([botKey, chatJid, messageId])).digest("hex");
-  const [record, created] = await InboundWhatsappMessage.findOrCreate({ where: { id }, defaults: { id } });
-  return created;
+  try {
+    await InboundWhatsappMessage.create({ id });
+    return true;
+  } catch (error) {
+    if (error instanceof UniqueConstraintError) return false;
+    throw error;
+  }
 }
 
 async function purgeIncomingWhatsappMessages(before) {
